@@ -894,7 +894,6 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     from types import SimpleNamespace
 
     from dnd_combat_simulator import app
-    from dnd_combat_simulator.sharing import deserialize_shared_configuration
 
     calls: list[tuple[str, object]] = []
 
@@ -940,6 +939,11 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
     monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
 
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: _FakeShareStore())
+    state[app.GENERATED_SHARE_URL_KEY] = (
+        "https://first-party.example/sim?share=yiEwgVR97pGY"
+    )
+
     app._render_share_configuration_button()
 
     registrations = [call[1] for call in calls if call[0] == "component_register"]
@@ -953,17 +957,7 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     assert len(mounts) == 1
     assert list(mounts[0]) == ["data"]
     share_url = mounts[0]["data"]["url"]
-    assert share_url.startswith("https://first-party.example/sim?config=")
-    assert "_generated_share_url" not in state
-
-    token = share_url.split("config=", 1)[1]
-    config = deserialize_shared_configuration(token)
-    assert config.compare_enabled is True
-    assert config.scenario.target_armor_class == 18
-    assert config.scenario.seed == 99
-    assert config.build_a.name == "Build A Exact"
-    assert config.build_b.name == "Build B Exact"
-    assert config.build_b.attack_profiles[0].affected_targets == 3
+    assert share_url == "https://first-party.example/sim?share=yiEwgVR97pGY"
 
 
 def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
@@ -982,7 +976,7 @@ def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
             "\ndef main"
         )
     ]
-    assert 'st.button("Share Configuration", disabled=True)' in share_source
+    assert "disabled=True" in share_source
     assert "st.code" not in source
     assert "Share link ready" not in source
     assert "GENERATED_SHARE_URL_SESSION_KEY" not in source
@@ -1376,3 +1370,189 @@ def test_correcting_invalid_damage_clears_field_error_and_valid_build_runs() -> 
         SingleBuildInputs(valid, ScenarioConfig(1, 1, 1), seed=1)
     )
     assert result.simulations_run == 1
+
+
+def _sample_shared_configuration():
+    from dnd_combat_simulator.sharing import shared_configuration_from_configs
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    return shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(17, 2, 3, 100),
+        seed=42,
+        build_a=BuildConfig("A", 6, "1d10+4", 2),
+        build_b=BuildConfig("B", 5, "1d8+3", 1),
+    )
+
+
+class _FakeShareStore:
+    def __init__(self, configuration=None, *, load_error=None, save_error=None):
+        self.configuration = configuration or _sample_shared_configuration()
+        self.load_error = load_error
+        self.save_error = save_error
+        self.loaded = []
+        self.saved = []
+
+    def load(self, share_id):
+        self.loaded.append(share_id)
+        if self.load_error:
+            raise self.load_error
+        return self.configuration
+
+    def save(self, configuration):
+        self.saved.append(configuration)
+        if self.save_error:
+            raise self.save_error
+        return "yiEwgVR97pGY"
+
+
+def test_share_query_loads_and_hydrates_session_state(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    state = {}
+    fake_streamlit = SimpleNamespace(
+        query_params={"share": "abc123"},
+        session_state=state,
+        error=lambda message: None,
+    )
+    store = _FakeShareStore()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+
+    app.load_shared_configuration_from_query()
+
+    assert store.loaded == ["abc123"]
+    assert state[app.SCENARIO_WIDGET_KEYS["target_armor_class"]] == 17
+    assert state[app.LOADED_SHARE_ID_KEY] == "abc123"
+    assert state[app.LOADED_SHARED_CONFIG_MESSAGE_KEY] is True
+
+    app.load_shared_configuration_from_query()
+    assert store.loaded == ["abc123"]
+
+
+def test_legacy_config_query_still_loads(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.sharing import serialize_shared_configuration
+
+    token = serialize_shared_configuration(_sample_shared_configuration())
+    state = {}
+    fake_streamlit = SimpleNamespace(
+        query_params={"config": token}, session_state=state
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    app.load_shared_configuration_from_query()
+
+    assert state[app.SCENARIO_WIDGET_KEYS["target_armor_class"]] == 17
+    assert state[app.LOADED_SHARED_CONFIG_TOKEN_KEY] == token
+
+
+def test_share_query_takes_precedence_over_config(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.sharing import serialize_shared_configuration
+
+    legacy = _sample_shared_configuration()
+    token = serialize_shared_configuration(legacy)
+    state = {}
+    fake_streamlit = SimpleNamespace(
+        query_params={"share": "short", "config": token},
+        session_state=state,
+        error=lambda message: None,
+    )
+    store = _FakeShareStore()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+
+    app.load_shared_configuration_from_query()
+
+    assert store.loaded == ["short"]
+    assert app.LOADED_SHARED_CONFIG_TOKEN_KEY not in state
+
+
+def test_share_load_errors_are_safe(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.share_store import (
+        InvalidShareIdError,
+        ShareNotFoundError,
+        ShareStoreError,
+    )
+
+    cases = [
+        (
+            ShareNotFoundError("missing secret detail"),
+            "This shared configuration could not be found.",
+        ),
+        (
+            InvalidShareIdError("bad secret detail"),
+            "Invalid shared configuration link.",
+        ),
+        (
+            ShareStoreError("database secret detail"),
+            "Shared configurations are temporarily unavailable. Try again later.",
+        ),
+    ]
+    for error, expected in cases:
+        messages = []
+        fake_streamlit = SimpleNamespace(
+            query_params={"share": "abc"}, session_state={}, error=messages.append
+        )
+        monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+        monkeypatch.setattr(
+            app,
+            "get_streamlit_share_store",
+            lambda e=error: _FakeShareStore(load_error=e),
+        )
+
+        app.load_shared_configuration_from_query()
+
+        assert messages == [expected]
+
+
+def test_missing_streamlit_secrets_returns_no_store():
+    from dnd_combat_simulator import app
+
+    assert app.get_supabase_share_store_from_secrets({}) is None
+
+
+def test_short_share_save_success_and_failure(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.share_store import ShareStoreError
+
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+    }
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim?old=1"),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    store = _FakeShareStore()
+
+    url = app._current_short_shared_configuration_url(store)
+
+    assert url == "https://example.test/sim?share=yiEwgVR97pGY"
+    assert len(store.saved) == 1
+
+    failing = _FakeShareStore(save_error=ShareStoreError("database detail"))
+    with pytest.raises(ShareStoreError):
+        app._current_short_shared_configuration_url(failing)
+    assert len(failing.saved) == 1

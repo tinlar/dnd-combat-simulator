@@ -269,6 +269,13 @@ def build_share_url(base_url: str, token: str) -> str:
     return f"{clean_base}?{urlencode({'config': token})}"
 
 
+def build_short_share_url(base_url: str, share_id: str) -> str:
+    """Build a short share URL, preserving origin/path and dropping old query params."""
+    parts = urlsplit(base_url)
+    clean_base = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    return f"{clean_base}?{urlencode({'share': share_id})}"
+
+
 def _required_dict(raw: object, name: str) -> dict[str, object]:
     if not isinstance(raw, dict):
         raise SharedConfigurationError(f"{name} must be an object.")
