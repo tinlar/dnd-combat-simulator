@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 from contextlib import nullcontext
 from dataclasses import dataclass
 from html import escape
 from json import JSONDecodeError
 from textwrap import dedent
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from dnd_combat_simulator import APP_TITLE
@@ -123,133 +123,106 @@ class ShortenedUrlResult:
     url: str
     shortened: bool
     error_message: str | None = None
+    rate_limited: bool = False
 
 
-def get_tinyurl_api_token() -> str | None:
-    """Return the configured TinyURL API token without logging or displaying it."""
-    token = None
-    try:
-        import streamlit as st
-
-        token = st.secrets.get("TINYURL_API_TOKEN")
-    except Exception:  # noqa: BLE001 - Streamlit secrets may be unavailable in tests/CLI.
-        token = None
-    if token is None or not str(token).strip():
-        token = os.environ.get("TINYURL_API_TOKEN")
-    if token is None:
-        return None
-    stripped = str(token).strip()
-    return stripped or None
+def _is_valid_isgd_short_url(url: object) -> bool:
+    return (
+        isinstance(url, str)
+        and url.startswith("https://is.gd/")
+        and not any(character.isspace() for character in url)
+        and ("/preview/" + "deprecated/") not in url
+    )
 
 
-def _tinyurl_http_error_message(status_code: int) -> str:
-    if status_code == 400:
-        return "TinyURL rejected the request."
-    if status_code in {401, 403}:
-        return "TinyURL API token or permissions problem."
-    if status_code == 422:
-        return "TinyURL validation problem."
-    if status_code == 429:
-        return "TinyURL rate limit reached."
-    if 500 <= status_code <= 599:
-        return "TinyURL service failure."
-    return "TinyURL shortening failed."
+def _isgd_error_result(
+    url: str, message: str, *, rate_limited: bool = False
+) -> ShortenedUrlResult:
+    return ShortenedUrlResult(
+        url=url, shortened=False, error_message=message, rate_limited=rate_limited
+    )
 
 
-def _validate_tinyurl_response(raw: object) -> str:
-    if not isinstance(raw, dict):
-        msg = "TinyURL returned an invalid response."
-        raise ValueError(msg)
-    data = raw.get("data")
-    if not isinstance(data, dict):
-        msg = "TinyURL returned an invalid response."
-        raise ValueError(msg)
-    tiny_url = data.get("tiny_url")
-    if not isinstance(tiny_url, str):
-        msg = "TinyURL returned an invalid response."
-        raise ValueError(msg)
-    if not tiny_url.startswith("https://tinyurl.com/"):
-        msg = "TinyURL returned an invalid response."
-        raise ValueError(msg)
-    if ("/preview/" + "deprecated/") in tiny_url:
-        msg = "TinyURL returned an invalid response."
-        raise ValueError(msg)
-    return tiny_url
+def _isgd_error_message(error_code: object) -> tuple[str, bool]:
+    if error_code == 3:
+        return "The is.gd rate limit was reached.", True
+    if error_code in {1, 2}:
+        return "is.gd rejected the configuration URL.", False
+    if error_code == 4:
+        return "is.gd is temporarily unavailable.", False
+    return "is.gd returned an invalid response.", False
 
 
-def shorten_share_url_with_tinyurl(
+def _isgd_http_error_message(status_code: int) -> tuple[str, bool]:
+    if status_code == 502:
+        return "The is.gd rate limit was reached.", True
+    if status_code in {400, 406}:
+        return "is.gd rejected the configuration URL.", False
+    if status_code == 503 or 500 <= status_code <= 599:
+        return "is.gd is temporarily unavailable.", False
+    return "is.gd returned an invalid response.", False
+
+
+def _isgd_result_from_payload(url: str, payload: object) -> ShortenedUrlResult:
+    if not isinstance(payload, dict):
+        return _isgd_error_result(url, "is.gd returned an invalid response.")
+    if "errorcode" in payload:
+        message, rate_limited = _isgd_error_message(payload.get("errorcode"))
+        return _isgd_error_result(url, message, rate_limited=rate_limited)
+    short_url = payload.get("shorturl")
+    if not _is_valid_isgd_short_url(short_url):
+        return _isgd_error_result(url, "is.gd returned an invalid response.")
+    return ShortenedUrlResult(url=short_url, shortened=True)
+
+
+def shorten_share_url_with_isgd(
     url: str,
     *,
-    api_token: str | None = None,
     timeout: float = 4.0,
 ) -> ShortenedUrlResult:
-    """Return a TinyURL-shortened URL result using TinyURL's authenticated API."""
+    """Return an is.gd-shortened URL result using the official API."""
     if not url:
-        return ShortenedUrlResult(
-            url=url, shortened=False, error_message="A share URL is required."
-        )
-    if api_token is None or not api_token.strip():
-        return ShortenedUrlResult(
-            url=url,
-            shortened=False,
-            error_message="TinyURL is not configured.",
-        )
+        return _isgd_error_result(url, "A share URL is required.")
+    body = urlencode({"format": "json", "url": url}).encode("utf-8")
     request = Request(
-        TINYURL_CREATE_API_URL,
-        data=json.dumps({"url": url, "domain": "tinyurl.com"}).encode("utf-8"),
+        ISGD_CREATE_API_URL,
+        data=body,
         headers={
-            "Authorization": f"Bearer {api_token.strip()}",
             "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
         },
         method="POST",
     )
     try:
         with urlopen(request, timeout=timeout) as response:
-            body = response.read(8192).decode("utf-8")
-        raw = json.loads(body)
-        return ShortenedUrlResult(url=_validate_tinyurl_response(raw), shortened=True)
+            payload_text = response.read(8192).decode("utf-8")
+        if not payload_text:
+            return _isgd_error_result(url, "is.gd returned an invalid response.")
+        return _isgd_result_from_payload(url, json.loads(payload_text))
     except HTTPError as error:
-        return ShortenedUrlResult(
-            url=url,
-            shortened=False,
-            error_message=_tinyurl_http_error_message(error.code),
-        )
+        message, rate_limited = _isgd_http_error_message(error.code)
+        return _isgd_error_result(url, message, rate_limited=rate_limited)
     except TimeoutError:
-        return ShortenedUrlResult(
-            url=url, shortened=False, error_message="TinyURL request timed out."
-        )
+        return _isgd_error_result(url, "The is.gd request timed out.")
     except URLError:
-        return ShortenedUrlResult(
-            url=url, shortened=False, error_message="TinyURL network error."
-        )
-    except (OSError, UnicodeDecodeError, JSONDecodeError, ValueError):
-        return ShortenedUrlResult(
-            url=url,
-            shortened=False,
-            error_message="TinyURL returned an invalid response.",
-        )
+        return _isgd_error_result(url, "is.gd is temporarily unavailable.")
+    except (OSError, UnicodeDecodeError, JSONDecodeError):
+        return _isgd_error_result(url, "is.gd returned an invalid response.")
 
 
 def resolve_share_url_to_copy(
     long_url: str,
     session_state: dict[str, object],
-    *,
-    api_token: str | None,
 ) -> ShortenedUrlResult:
-    """Return the share URL to copy while reusing matching session TinyURLs."""
+    """Return the share URL to copy while reusing matching session is.gd links."""
     previous_long_url = session_state.get(GENERATED_LONG_SHARE_URL_SESSION_KEY)
     previous_short_url = session_state.get(GENERATED_SHORT_SHARE_URL_SESSION_KEY)
-    if (
-        long_url == previous_long_url
-        and isinstance(previous_short_url, str)
-        and previous_short_url.startswith("https://tinyurl.com/")
-    ):
+    if long_url == previous_long_url and _is_valid_isgd_short_url(previous_short_url):
         result = ShortenedUrlResult(url=previous_short_url, shortened=True)
     else:
         session_state[GENERATED_LONG_SHARE_URL_SESSION_KEY] = long_url
         session_state.pop(GENERATED_SHORT_SHARE_URL_SESSION_KEY, None)
-        result = shorten_share_url_with_tinyurl(long_url, api_token=api_token)
+        result = shorten_share_url_with_isgd(long_url)
         if result.shortened:
             session_state[GENERATED_SHORT_SHARE_URL_SESSION_KEY] = result.url
     session_state[GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] = result.url
@@ -304,7 +277,7 @@ LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 GENERATED_LONG_SHARE_URL_SESSION_KEY = "_generated_long_share_url"
 GENERATED_SHORT_SHARE_URL_SESSION_KEY = "_generated_short_share_url"
 GENERATED_SHARE_URL_TO_COPY_SESSION_KEY = "_generated_share_url_to_copy"
-TINYURL_CREATE_API_URL = "https://api.tinyurl.com/create"
+ISGD_CREATE_API_URL = "https://is.gd/create.php"
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1588,20 +1561,21 @@ def _render_share_configuration_button() -> None:
             shortening_result = resolve_share_url_to_copy(
                 long_url,
                 st.session_state,
-                api_token=get_tinyurl_api_token(),
             )
             url_to_copy = shortening_result.url
             _copy_share_url_to_clipboard(url_to_copy)
             if shortening_result.shortened:
-                st.success("Copied TinyURL share link.")
-            elif shortening_result.error_message == "TinyURL is not configured.":
-                st.info(
-                    "Copied the full share link because the TinyURL API "
-                    "is not configured."
+                st.success("Copied is.gd share link.")
+            elif shortening_result.rate_limited:
+                st.warning(
+                    "Copied the full share link because the is.gd rate limit "
+                    "was reached."
                 )
+                if shortening_result.error_message:
+                    st.caption(shortening_result.error_message)
             else:
                 st.warning(
-                    "Copied the full share link because TinyURL shortening failed."
+                    "Copied the full share link because is.gd shortening failed."
                 )
                 if shortening_result.error_message:
                     st.caption(shortening_result.error_message)
