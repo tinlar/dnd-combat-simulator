@@ -662,9 +662,13 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
         "Elven Accuracy",
         "Great Weapon Fighting",
         "Tavern Brawler",
+        "Stop on Miss",
     ]
     assert checkbox_calls[0]["key"] == "first-primary-feature-elven_accuracy"
     assert checkbox_calls[0]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
+    assert checkbox_calls[3]["key"] == "first-primary-feature-stop_on_miss"
+    assert checkbox_calls[3]["help"] == FEATURE_HELP[AttackFeature.STOP_ON_MISS]
+    assert checkbox_calls[3]["disabled"] is False
 
 
 def test_profile_breakdown_rows_include_formatted_features() -> None:
@@ -806,3 +810,37 @@ def test_attack_roll_saving_throw_and_automatic_profiles_appear_in_chart_data() 
         "Automatic Damage",
     }
     assert [row["Build"] for row in use_rows] == [build.name, build.name, build.name]
+
+
+def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import _feature_inputs
+    from dnd_combat_simulator.combat import ResolutionType
+
+    disabled_by_label: dict[str, bool] = {}
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def checkbox(label, **kwargs):
+        disabled_by_label[label] = kwargs["disabled"]
+        return True
+
+    fake_streamlit = SimpleNamespace(
+        expander=lambda *args, **kwargs: Context(),
+        checkbox=checkbox,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    _feature_inputs("save", ResolutionType.SAVING_THROW, 1)
+    assert disabled_by_label["Stop on Miss"] is True
+
+    disabled_by_label.clear()
+    _feature_inputs("multi", ResolutionType.ATTACK_ROLL, 2)
+    assert disabled_by_label["Stop on Miss"] is True
