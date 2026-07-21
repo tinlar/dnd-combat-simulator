@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import streamlit as st
-
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import AttackRollMode
-from dnd_combat_simulator.simulation import SimulationResult, run_damage_simulations
+from dnd_combat_simulator.simulation import (
+    BuildComparisonResult,
+    BuildConfig,
+    ScenarioConfig,
+    SimulationResult,
+    compare_builds,
+    run_damage_simulations,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,16 @@ class SimulationInputs:
     attacks_per_round: int
     simulations: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
+
+
+@dataclass(frozen=True)
+class ComparisonInputs:
+    """Validated user inputs for a named build comparison."""
+
+    first_build: BuildConfig
+    second_build: BuildConfig
+    scenario: ScenarioConfig
+    seed: int
 
 
 def validate_simulation_inputs(inputs: SimulationInputs) -> None:
@@ -58,6 +73,16 @@ def format_rate(value: float) -> str:
     return f"{value:.2%}"
 
 
+def format_signed_damage(value: float) -> str:
+    """Format a signed damage delta for display."""
+    return f"{value:+.2f}"
+
+
+def format_signed_rate(value: float) -> str:
+    """Format a signed fractional rate as a percentage-point delta."""
+    return f"{value:+.2%}"
+
+
 def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
     """Validate inputs and run the shared simulation engine."""
     validate_simulation_inputs(inputs)
@@ -73,8 +98,59 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
     )
 
 
+def run_comparison_from_inputs(inputs: ComparisonInputs) -> BuildComparisonResult:
+    """Validate inputs and run the shared comparison engine."""
+    return compare_builds(
+        first_build=inputs.first_build,
+        second_build=inputs.second_build,
+        scenario=inputs.scenario,
+        seed=inputs.seed,
+    )
+
+
+def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
+    """Build side-by-side display rows for comparison results."""
+    first = comparison.first_result
+    second = comparison.second_result
+    difference = comparison.difference
+    return [
+        {
+            "Metric": "Average damage per round",
+            comparison.first_build.name: format_damage(first.average_damage_per_round),
+            comparison.second_build.name: format_damage(
+                second.average_damage_per_round
+            ),
+            "Difference": format_signed_damage(difference.average_damage_per_round),
+        },
+        {
+            "Metric": "Average total damage",
+            comparison.first_build.name: format_damage(
+                first.average_total_damage_per_simulation
+            ),
+            comparison.second_build.name: format_damage(
+                second.average_total_damage_per_simulation
+            ),
+            "Difference": format_signed_damage(difference.average_total_damage),
+        },
+        {
+            "Metric": "Hit percentage",
+            comparison.first_build.name: format_rate(first.hit_rate),
+            comparison.second_build.name: format_rate(second.hit_rate),
+            "Difference": format_signed_rate(difference.hit_rate),
+        },
+        {
+            "Metric": "Critical hit percentage",
+            comparison.first_build.name: format_rate(first.critical_hit_rate),
+            comparison.second_build.name: format_rate(second.critical_hit_rate),
+            "Difference": format_signed_rate(difference.critical_hit_rate),
+        },
+    ]
+
+
 def _render_results(result: SimulationResult) -> None:
     """Render simulation results in a compact metric grid."""
+    import streamlit as st
+
     st.subheader("Results")
 
     first_row = st.columns(4)
@@ -104,62 +180,110 @@ def _render_results(result: SimulationResult) -> None:
     st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
 
 
+def _render_comparison_results(comparison: BuildComparisonResult) -> None:
+    """Render two build results side by side with deltas."""
+    import streamlit as st
+
+    st.subheader("Build comparison")
+    if comparison.higher_average_damage_build_name is None:
+        st.success("Both builds have the same average damage per round.")
+    else:
+        st.success(
+            f"{comparison.higher_average_damage_build_name} has higher average damage."
+        )
+    st.table(_result_rows(comparison))
+    st.caption(
+        "Difference is first build minus second build. Both builds used separate "
+        "random-number-generator instances initialized with the same seed."
+    )
+
+
+def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
+    """Render and collect one build's input controls."""
+    import streamlit as st
+
+    st.markdown(f"#### {default_name}")
+    name = st.text_input("Build name", value=default_name, key=f"{prefix}-name")
+    row_one = st.columns(2)
+    attack_bonus = row_one[0].number_input(
+        "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
+    )
+    damage_dice = row_one[1].text_input(
+        "Damage dice", value="1d8", key=f"{prefix}-damage-dice"
+    )
+    row_two = st.columns(3)
+    damage_modifier = row_two[0].number_input(
+        "Damage modifier", value=3, step=1, key=f"{prefix}-damage-modifier"
+    )
+    attacks_per_round = row_two[1].number_input(
+        "Attacks per round", min_value=1, value=1, step=1, key=f"{prefix}-attacks"
+    )
+    attack_roll_mode_label = row_two[2].selectbox(
+        "Attack roll mode",
+        options=[mode.value.title() for mode in AttackRollMode],
+        index=0,
+        key=f"{prefix}-mode",
+    )
+    return BuildConfig(
+        name=name,
+        attack_bonus=int(attack_bonus),
+        damage_dice=damage_dice,
+        damage_modifier=int(damage_modifier),
+        attacks_per_round=int(attacks_per_round),
+        attack_roll_mode=AttackRollMode(attack_roll_mode_label.lower()),
+    )
+
+
 def main() -> None:
     """Render the Streamlit simulation page."""
+    import streamlit as st
+
     st.set_page_config(page_title=APP_TITLE, page_icon="🎲")
     st.title(APP_TITLE)
     st.write(
-        "Estimate weapon damage over repeated combats with one or more "
-        "attacks per round."
+        "Compare two named DnD combat builds against the same target Armor "
+        "Class, round count, and simulation count."
     )
 
-    with st.form("simulation-inputs"):
-        first_row = st.columns(2)
-        attack_bonus = first_row[0].number_input("Attack bonus", value=5, step=1)
-        target_armor_class = first_row[1].number_input(
+    with st.form("comparison-inputs"):
+        st.subheader("Shared scenario")
+        scenario_row = st.columns(4)
+        target_armor_class = scenario_row[0].number_input(
             "Target Armor Class", min_value=1, value=15, step=1
         )
-
-        second_row = st.columns(2)
-        damage_dice = second_row[0].text_input("Damage dice", value="1d8")
-        damage_modifier = second_row[1].number_input("Damage modifier", value=3, step=1)
-
-        third_row = st.columns(3)
-        attack_roll_mode_label = third_row[0].selectbox(
-            "Attack roll mode",
-            options=[mode.value.title() for mode in AttackRollMode],
-            index=0,
-        )
-        rounds = third_row[1].number_input(
+        rounds = scenario_row[1].number_input(
             "Number of rounds", min_value=1, value=5, step=1
         )
-        attacks_per_round = third_row[2].number_input(
-            "Attacks per round", min_value=1, value=1, step=1
-        )
-        fourth_row = st.columns(1)
-        simulations = fourth_row[0].number_input(
+        simulations = scenario_row[2].number_input(
             "Number of simulations", min_value=1, value=10_000, step=1
         )
+        seed = scenario_row[3].number_input("Random seed", value=20240721, step=1)
 
-        submitted = st.form_submit_button("Run Simulation")
+        build_columns = st.columns(2)
+        with build_columns[0]:
+            first_build = _build_inputs("first", "Build A")
+        with build_columns[1]:
+            second_build = _build_inputs("second", "Build B")
+
+        submitted = st.form_submit_button("Compare Builds")
 
     if submitted:
-        inputs = SimulationInputs(
-            attack_bonus=int(attack_bonus),
-            target_armor_class=int(target_armor_class),
-            damage_dice=damage_dice,
-            damage_modifier=int(damage_modifier),
-            rounds=int(rounds),
-            attacks_per_round=int(attacks_per_round),
-            simulations=int(simulations),
-            attack_roll_mode=AttackRollMode(attack_roll_mode_label.lower()),
+        inputs = ComparisonInputs(
+            first_build=first_build,
+            second_build=second_build,
+            scenario=ScenarioConfig(
+                target_armor_class=int(target_armor_class),
+                rounds=int(rounds),
+                simulations=int(simulations),
+            ),
+            seed=int(seed),
         )
         try:
-            result = run_simulation_from_inputs(inputs)
+            comparison = run_comparison_from_inputs(inputs)
         except ValueError as error:
             st.error(str(error))
         else:
-            _render_results(result)
+            _render_comparison_results(comparison)
 
 
 if __name__ == "__main__":
