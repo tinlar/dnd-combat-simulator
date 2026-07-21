@@ -1082,3 +1082,210 @@ def test_average_damage_per_use_with_restricted_and_no_active_rounds() -> None:
     assert active.average_damage_per_use == pytest.approx(4)
     assert never.total_profile_uses == 0
     assert never.average_damage_per_use == 0
+
+
+@pytest.mark.parametrize(
+    ("d20s", "expected_uses", "expected_skips", "expected_calls"),
+    [
+        (
+            [10, 10, 10, 10],
+            4,
+            0,
+            [(1, 20), (1, 1), (1, 20), (1, 1), (1, 20), (1, 1), (1, 20), (1, 1)],
+        ),
+        ([2], 1, 3, [(1, 20)]),
+        ([10, 2], 2, 2, [(1, 20), (1, 1), (1, 20)]),
+        ([10, 10, 2], 3, 1, [(1, 20), (1, 1), (1, 20), (1, 1), (1, 20)]),
+        (
+            [10, 10, 10, 2],
+            4,
+            0,
+            [(1, 20), (1, 1), (1, 20), (1, 1), (1, 20), (1, 1), (1, 20)],
+        ),
+    ],
+)
+def test_stop_on_miss_basic_sequences(
+    d20s, expected_uses, expected_skips, expected_calls
+) -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rolls = []
+    for d20 in d20s:
+        rolls.append(d20)
+        if d20 + 5 >= 15 and d20 != 1:
+            rolls.append(1)
+    rng = PredictableRng(rolls)
+
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                name="Chain",
+                attack_bonus=5,
+                damage_dice="1d1",
+                attacks_per_round=4,
+                features=frozenset({AttackFeature.STOP_ON_MISS}),
+            ),
+        ),
+        rng=rng,
+    )
+    profile = result.attack_profile_results[0]
+
+    assert profile.total_profile_uses == expected_uses
+    assert profile.total_target_resolutions == expected_uses
+    assert profile.total_skipped_profile_uses == expected_skips
+    assert profile.average_skipped_profile_uses_per_simulation == expected_skips
+    assert result.total_attacks_made == expected_uses
+    assert result.total_skipped_profile_uses == expected_skips
+    assert rng.calls == expected_calls
+
+
+def test_stop_on_miss_resets_by_round_and_honors_active_rounds() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([2, 10, 1, 2])
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d1",
+        rounds=3,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                name="Chain",
+                attack_bonus=5,
+                damage_dice="1d1",
+                attacks_per_round=3,
+                active_rounds="1,3",
+                features=frozenset({AttackFeature.STOP_ON_MISS}),
+            ),
+        ),
+        rng=rng,
+    )
+
+    profile = result.attack_profile_results[0]
+    assert profile.total_profile_uses == 3
+    assert profile.total_skipped_profile_uses == 3
+    assert tuple(
+        round_result.average_attacks for round_result in result.round_results
+    ) == (1, 0, 2)
+
+
+def test_stop_on_miss_is_profile_independent() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([2, 10, 1, 2])
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "First", 5, "1d1", 3, features=frozenset({AttackFeature.STOP_ON_MISS})
+            ),
+            AttackProfile(
+                "Second", 5, "1d1", 2, features=frozenset({AttackFeature.STOP_ON_MISS})
+            ),
+        ),
+        rng=rng,
+    )
+
+    first, second = result.attack_profile_results
+    assert first.total_profile_uses == 1
+    assert first.total_skipped_profile_uses == 2
+    assert second.total_profile_uses == 2
+    assert second.total_skipped_profile_uses == 0
+
+
+@pytest.mark.parametrize(
+    ("mode", "rolls", "expected_uses"),
+    [
+        (AttackRollMode.NORMAL, [20, 1, 1, 2], 2),
+        (AttackRollMode.NORMAL, [10, 1, 2], 2),
+        (AttackRollMode.NORMAL, [1], 1),
+        (AttackRollMode.ADVANTAGE, [2, 10, 1, 2, 3], 2),
+        (AttackRollMode.DISADVANTAGE, [10, 2], 1),
+        (AttackRollMode.ADVANTAGE, [2, 10, 15, 1, 2, 3, 4], 2),
+    ],
+)
+def test_stop_on_miss_waits_for_attack_mechanics(mode, rolls, expected_uses) -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    features = {AttackFeature.STOP_ON_MISS}
+    if mode is AttackRollMode.ADVANTAGE and len(rolls) == 7:
+        features.add(AttackFeature.ELVEN_ACCURACY)
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d1-1",
+        rounds=1,
+        simulations=1,
+        attack_roll_mode=mode,
+        attack_profiles=(
+            AttackProfile(
+                "Chain",
+                5,
+                "1d1-1",
+                2,
+                attack_roll_mode=mode,
+                features=frozenset(features),
+            ),
+        ),
+        rng=PredictableRng(rolls),
+    )
+    assert result.attack_profile_results[0].total_profile_uses == expected_uses
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        AttackProfile(
+            "Save",
+            None,
+            "1d1",
+            1,
+            resolution_type=ResolutionType.SAVING_THROW,
+            save_dc=10,
+            features=frozenset({"stop_on_miss"}),
+        ),
+        AttackProfile(
+            "Auto",
+            None,
+            "1d1",
+            1,
+            resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            features=frozenset({"stop_on_miss"}),
+        ),
+        AttackProfile(
+            "Multi",
+            5,
+            "1d1",
+            1,
+            affected_targets=2,
+            features=frozenset({"stop_on_miss"}),
+        ),
+    ],
+)
+def test_stop_on_miss_validation(profile) -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Stop on Miss requires an Attack Roll profile with "
+            "exactly 1 Affected Target"
+        ),
+    ):
+        run_damage_simulations(
+            attack_bonus=5,
+            target_armor_class=15,
+            damage_dice="1d1",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(profile,),
+            rng=PredictableRng([]),
+        )

@@ -29,6 +29,7 @@ FEATURE_LABELS = {
     AttackFeature.ELVEN_ACCURACY: "Elven Accuracy",
     AttackFeature.GREAT_WEAPON_FIGHTING: "Great Weapon Fighting",
     AttackFeature.TAVERN_BRAWLER: "Tavern Brawler",
+    AttackFeature.STOP_ON_MISS: "Stop on Miss",
 }
 
 FEATURE_HELP = {
@@ -47,12 +48,18 @@ FEATURE_HELP = {
         "reroll that die once. The replacement result must be used, even if it "
         "is another 1."
     ),
+    AttackFeature.STOP_ON_MISS: (
+        "Resolve this profile's attacks in order. When one attack misses, skip all "
+        "remaining attacks from this profile during that round. The sequence resets "
+        "at the beginning of the next active round."
+    ),
 }
 
 FEATURE_ORDER = (
     AttackFeature.ELVEN_ACCURACY,
     AttackFeature.GREAT_WEAPON_FIGHTING,
     AttackFeature.TAVERN_BRAWLER,
+    AttackFeature.STOP_ON_MISS,
 )
 
 DAMAGE_FORMULA_HELP = dedent(
@@ -290,8 +297,12 @@ def _profile_metadata(
         "Build": build_name,
         "Resolution type": profile.resolution_type.value.replace("_", " ").title(),
         "Active Rounds": profile.active_rounds or "Every round",
+        "Maximum attacks per active round": profile.attacks_per_round,
         "Attacks per active round": profile.attacks_per_round,
         "Affected targets": profile.affected_targets,
+        "Actual profile uses": profile_result.total_profile_uses,
+        "Skipped profile uses": profile_result.total_skipped_profile_uses,
+        "Average damage per use": profile_result.average_damage_per_use,
     }
 
 
@@ -321,7 +332,8 @@ def _profile_damage_per_use_chart_data(
         {
             **_profile_metadata(profile_result, index, build_name),
             "Average damage per use": profile_result.average_damage_per_use,
-            "Total profile uses": profile_result.total_profile_uses,
+            "Actual profile uses": profile_result.total_profile_uses,
+            "Skipped profile uses": profile_result.total_skipped_profile_uses,
         }
         for index, profile_result in enumerate(result.attack_profile_results, start=1)
     ]
@@ -375,7 +387,15 @@ def _profile_contribution_bar_chart(data):
                 ),
                 alt.Tooltip("Active Rounds:N", title="Active Rounds"),
                 alt.Tooltip(
-                    "Attacks per active round:Q", title="Attacks per active round"
+                    "Maximum attacks per active round:Q",
+                    title="Maximum attacks per active round",
+                ),
+                alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
+                alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
+                alt.Tooltip(
+                    "Average damage per use:Q",
+                    title="Average damage per use",
+                    format=".2f",
                 ),
                 alt.Tooltip("Affected targets:Q", title="Affected Targets"),
             ],
@@ -404,7 +424,12 @@ def _profile_damage_per_use_bar_chart(data):
                     title="Average damage per use",
                     format=".2f",
                 ),
-                alt.Tooltip("Total profile uses:Q", title="Total profile uses"),
+                alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
+                alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
+                alt.Tooltip(
+                    "Maximum attacks per active round:Q",
+                    title="Maximum attacks per active round",
+                ),
                 alt.Tooltip("Affected targets:Q", title="Affected Targets"),
                 alt.Tooltip("Active Rounds:N", title="Active Rounds"),
             ],
@@ -660,16 +685,20 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
         row = {
             "Attack profile": profile.name,
             "Resolution type": profile.resolution_type.value.replace("_", " ").title(),
-            "Attacks per active round": str(profile.attacks_per_round),
+            "Maximum attacks per active round": str(profile.attacks_per_round),
             "Affected targets": str(profile.affected_targets),
             "Active Rounds": profile.active_rounds or "Every round",
             "Feats and Features": format_features(profile.features),
-            "Profile uses": f"{profile_result.total_profile_uses:,}",
+            "Actual profile uses": f"{profile_result.total_profile_uses:,}",
+            "Skipped profile uses": f"{profile_result.total_skipped_profile_uses:,}",
+            "Average skipped uses per simulation": format_damage(
+                profile_result.average_skipped_profile_uses_per_simulation
+            ),
             "Target resolutions": f"{profile_result.total_target_resolutions:,}",
             "Average damage per use": format_damage(
                 profile_result.average_damage_per_use
             ),
-            "Contribution to total Damage per Round": format_damage(
+            "Damage per Round contribution": format_damage(
                 profile_result.average_damage_per_round
             ),
             "Average damage per target per round": format_damage(
@@ -892,7 +921,7 @@ def format_features(features: frozenset[AttackFeature]) -> str:
 
 
 def _feature_inputs(
-    prefix: str, resolution_type: ResolutionType
+    prefix: str, resolution_type: ResolutionType, affected_targets: int = 1
 ) -> frozenset[AttackFeature]:
     """Render feats and features controls for one attack profile."""
     import streamlit as st
@@ -907,6 +936,12 @@ def _feature_inputs(
             disabled = (
                 feature is AttackFeature.ELVEN_ACCURACY
                 and resolution_type is not ResolutionType.ATTACK_ROLL
+            ) or (
+                feature is AttackFeature.STOP_ON_MISS
+                and (
+                    resolution_type is not ResolutionType.ATTACK_ROLL
+                    or affected_targets != 1
+                )
             )
             checked = checkbox(
                 FEATURE_LABELS[feature],
@@ -999,7 +1034,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
         key=f"{prefix}-active-rounds",
     )
-    features = _feature_inputs(prefix, resolution_type)
+    features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,
         attack_bonus=None if attack_bonus is None else int(attack_bonus),

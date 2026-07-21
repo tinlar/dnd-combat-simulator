@@ -23,6 +23,7 @@ class AttackFeature(StrEnum):
     ELVEN_ACCURACY = "elven_accuracy"
     GREAT_WEAPON_FIGHTING = "great_weapon_fighting"
     TAVERN_BRAWLER = "tavern_brawler"
+    STOP_ON_MISS = "stop_on_miss"
 
 
 class ResolutionType(StrEnum):

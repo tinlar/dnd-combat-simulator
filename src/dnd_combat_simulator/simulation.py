@@ -66,6 +66,8 @@ class AttackProfileResult:
     average_damage_per_target_per_round: float = field(default=0, compare=False)
     automatic_damage_applications: int = field(default=0, compare=False)
     average_automatic_damage_per_application: float = field(default=0, compare=False)
+    total_skipped_profile_uses: int = field(default=0, compare=False)
+    average_skipped_profile_uses_per_simulation: float = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -98,6 +100,8 @@ class SimulationResult:
         default_factory=tuple, compare=False
     )
     round_results: tuple[RoundResult, ...] = field(default_factory=tuple, compare=False)
+    total_skipped_profile_uses: int = field(default=0, compare=False)
+    average_skipped_profile_uses_per_simulation: float = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -232,6 +236,15 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
     ):
         msg = f"{label} Elven Accuracy requires an Attack Roll resolution type."
         raise ValueError(msg)
+    if AttackFeature.STOP_ON_MISS in features and (
+        resolution_type is not ResolutionType.ATTACK_ROLL
+        or profile.affected_targets != 1
+    ):
+        msg = (
+            f"{label} Stop on Miss requires an Attack Roll profile with "
+            "exactly 1 Affected Target."
+        )
+        raise ValueError(msg)
     if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
         msg = f"{label} Attack Bonus is required for attack-roll profiles."
         raise ValueError(msg)
@@ -326,6 +339,7 @@ def run_damage_simulations(
     random_number_generator = rng if rng is not None else Random()
     total_rounds = rounds * simulations
     total_attacks = 0
+    total_skipped_attacks = 0
     total_target_resolutions = 0
     total_attack_roll_resolutions = 0
     total_saving_throw_resolutions = 0
@@ -337,6 +351,7 @@ def run_damage_simulations(
     total_successful_saves = 0
     profile_damage_totals = dict.fromkeys(range(len(profiles)), 0)
     profile_attacks = dict.fromkeys(range(len(profiles)), 0)
+    profile_skipped_attacks = dict.fromkeys(range(len(profiles)), 0)
     profile_target_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_attack_roll_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_saving_throw_resolutions = dict.fromkeys(range(len(profiles)), 0)
@@ -367,7 +382,13 @@ def run_damage_simulations(
                     and round_number not in active_round_set
                 ):
                     continue
-                for _ in range(profile.attacks_per_round):
+                stop_profile_after_miss = False
+                for attack_index in range(profile.attacks_per_round):
+                    if stop_profile_after_miss:
+                        skipped = profile.attacks_per_round - attack_index
+                        total_skipped_attacks += skipped
+                        profile_skipped_attacks[profile_index] += skipped
+                        break
                     total_attacks += 1
                     round_attacks[round_number] += 1
                     profile_attacks[profile_index] += 1
@@ -404,6 +425,11 @@ def run_damage_simulations(
                             profile_critical_hits[profile_index] += int(
                                 attack.critical_hit
                             )
+                            if (
+                                AttackFeature.STOP_ON_MISS in profile.features
+                                and not attack.hit
+                            ):
+                                stop_profile_after_miss = True
                     elif (
                         ResolutionType(profile.resolution_type)
                         is ResolutionType.SAVING_THROW
@@ -545,6 +571,10 @@ def run_damage_simulations(
                 profile_damage_totals[index] / total_rounds / profile.affected_targets
             ),
             automatic_damage_applications=profile_automatic_damage_applications[index],
+            total_skipped_profile_uses=profile_skipped_attacks[index],
+            average_skipped_profile_uses_per_simulation=(
+                profile_skipped_attacks[index] / simulations
+            ),
             average_automatic_damage_per_application=(
                 profile_damage_totals[index]
                 / profile_automatic_damage_applications[index]
@@ -639,6 +669,8 @@ def run_damage_simulations(
         average_total_damage=total_damage_all_simulations / simulations,
         attack_profile_results=profile_results,
         round_results=round_results,
+        total_skipped_profile_uses=total_skipped_attacks,
+        average_skipped_profile_uses_per_simulation=total_skipped_attacks / simulations,
     )
 
 

@@ -61,7 +61,7 @@ Total damage metrics include damage dealt across all affected targets. Per-targe
 
 ## Feats and Features
 
-Every attack profile includes a collapsed **Feats and Features** expander after its normal configuration fields. The expander contains stable, profile-specific checkboxes for **Elven Accuracy**, **Great Weapon Fighting**, and **Tavern Brawler**. Selected features are stored on the attack profile as an extensible feature set, and the per-profile detailed results show selected features in that order or **None** when no feature is selected.
+Every attack profile includes a collapsed **Feats and Features** expander after its normal configuration fields. The expander contains stable, profile-specific checkboxes for **Elven Accuracy**, **Great Weapon Fighting**, **Tavern Brawler**, and **Stop on Miss**. Selected features are stored on the attack profile as an extensible feature set, and the per-profile detailed results show selected features in that order or **None** when no feature is selected. **Stop on Miss** is available only for Attack Roll profiles with exactly one affected target; Saving Throw, Automatic Damage, and multi-target Attack Roll profiles cannot use it because chained attacks should be modeled as single-target profile uses.
 
 Feature behavior is independent from Streamlit:
 
@@ -83,6 +83,18 @@ For every initial or explosion-generated damage die, feature processing order is
 
 For multi-target Saving Throw profiles, damage is still rolled once per profile use and shared by all affected targets; Great Weapon Fighting and Tavern Brawler are applied during that single shared damage roll. Automatic Damage profiles apply damage-die features normally and never apply Elven Accuracy.
 
+
+
+### Stop on Miss
+
+Use **Stop on Miss** for chained attacks where each successful attack permits the next attack and the first miss ends that round's chain. For example, model a Chromatic Orb chain as:
+
+- Resolution Type: Attack Roll
+- Attacks per Active Round: 4
+- Affected Targets: 1
+- Stop on Miss: enabled
+
+The simulator resolves the profile's attacks in order each active round. If attack 1, 2, or 3 misses, all later attacks from that same profile are skipped for that round only; the chain resets at the beginning of the next active round. Skipped profile uses do not consume attack rolls or damage rolls and are reported separately from actual profile uses.
 
 ## Damage simulations
 
