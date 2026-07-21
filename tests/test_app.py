@@ -24,6 +24,71 @@ def test_format_rate_uses_percentage() -> None:
     assert format_rate(0.625) == "62.50%"
 
 
+def test_damage_formula_help_uses_markdown_lists() -> None:
+    from dnd_combat_simulator.app import DAMAGE_FORMULA_HELP
+
+    assert "•" not in DAMAGE_FORMULA_HELP
+    examples = [
+        "1d8",
+        "2d6+4",
+        "1d10-1",
+        "2d8r<2",
+        "2d8r8",
+        "2d8r1r3r5r7",
+        "3d6!",
+        "3d6!>4",
+        "3d6!3",
+        "4d6kh3",
+        "4d6kl3",
+        "8d100dl3",
+        "8d100dh3",
+        "4d6r1!kh3+2",
+    ]
+    lines = DAMAGE_FORMULA_HELP.splitlines()
+
+    for example in examples:
+        matches = [line for line in lines if f"`{example}`" in line]
+        assert len(matches) == 1
+        assert matches[0].startswith(f"- `{example}`")
+
+
+def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import DAMAGE_FORMULA_HELP, _attack_profile_inputs
+
+    text_input_calls: list[dict[str, object]] = []
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            text_input_calls.append({"label": label, **kwargs})
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+    col = Column()
+    fake_streamlit = SimpleNamespace(
+        selectbox=col.selectbox,
+        text_input=col.text_input,
+        columns=lambda spec: [
+            col for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    _attack_profile_inputs("test", "Attack")
+
+    damage_call = next(
+        call for call in text_input_calls if call["label"] == "Damage Formula"
+    )
+    assert damage_call["help"] == DAMAGE_FORMULA_HELP
+
+
 @pytest.mark.parametrize(
     ("inputs", "message"),
     [
