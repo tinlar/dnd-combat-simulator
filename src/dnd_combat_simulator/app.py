@@ -16,6 +16,37 @@ from dnd_combat_simulator.simulation import (
     run_damage_simulations,
 )
 
+PAGE_WIDTH_CSS = """
+<style>
+    .stApp .block-container {
+        width: 90vw;
+        max-width: 90vw;
+        margin-left: auto;
+        margin-right: auto;
+        padding-left: clamp(1rem, 2vw, 2.5rem);
+        padding-right: clamp(1rem, 2vw, 2.5rem);
+        box-sizing: border-box;
+    }
+
+    @media (max-width: 640px) {
+        .stApp .block-container {
+            width: 100%;
+            max-width: 100%;
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+    }
+</style>
+"""
+
+
+def configure_page() -> None:
+    """Configure Streamlit to use a wide, centered application layout."""
+    import streamlit as st
+
+    st.set_page_config(page_title=APP_TITLE, page_icon="🎲", layout="wide")
+    st.markdown(PAGE_WIDTH_CSS, unsafe_allow_html=True)
+
 
 @dataclass(frozen=True)
 class SimulationInputs:
@@ -325,7 +356,7 @@ def main() -> None:
     """Render the Streamlit simulation page."""
     import streamlit as st
 
-    st.set_page_config(page_title=APP_TITLE, page_icon="🎲")
+    configure_page()
     st.title(APP_TITLE)
     st.write(
         "Compare two named DnD combat builds against the same target Armor "
