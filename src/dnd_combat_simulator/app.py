@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from dnd_combat_simulator import APP_TITLE
@@ -31,6 +32,16 @@ PAGE_WIDTH_CSS = """
         padding-left: clamp(1rem, 2vw, 2.5rem);
         padding-right: clamp(1rem, 2vw, 2.5rem);
         box-sizing: border-box;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 14px;
+        border-color: rgba(128, 128, 128, 0.28);
+        box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.06);
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        padding: clamp(0.75rem, 1.3vw, 1.25rem);
     }
 
     @media (max-width: 640px) {
@@ -159,6 +170,224 @@ def run_comparison_from_inputs(inputs: ComparisonInputs) -> BuildComparisonResul
         scenario=inputs.scenario,
         seed=inputs.seed,
     )
+
+
+def _render_section_container():
+    """Return a bordered Streamlit container when available."""
+    import streamlit as st
+
+    container = getattr(st, "container", None)
+    if container is None:
+        return nullcontext()
+    try:
+        return container(border=True)
+    except TypeError:
+        return container()
+
+
+def _round_chart_data(
+    result: SimulationResult, build_name: str
+) -> list[dict[str, int | float | str]]:
+    """Build round-level chart data for one simulation result."""
+    return [
+        {
+            "Round": round_result.round_number,
+            "Average total damage": round_result.average_damage,
+            "Build": build_name,
+        }
+        for round_result in result.round_results
+    ]
+
+
+def _comparison_round_chart_data(
+    comparison: BuildComparisonResult,
+) -> list[dict[str, int | float | str]]:
+    """Build round-level chart data for both compared builds."""
+    return [
+        *_round_chart_data(comparison.first_result, comparison.first_build.name),
+        *_round_chart_data(comparison.second_result, comparison.second_build.name),
+    ]
+
+
+def _profile_chart_data(
+    result: SimulationResult, build_name: str
+) -> list[dict[str, int | float | str]]:
+    """Build profile-level chart data in configured attack-profile order."""
+    total = result.average_damage_per_round
+    return [
+        {
+            "Profile": profile_result.attack_profile.name,
+            "Average damage per round": profile_result.average_damage_per_round,
+            "Damage contribution %": (
+                profile_result.average_damage_per_round / total * 100 if total else 0
+            ),
+            "Order": index,
+            "Build": build_name,
+            "Resolution type": (
+                profile_result.attack_profile.resolution_type.value.replace(
+                    "_", " "
+                ).title()
+            ),
+        }
+        for index, profile_result in enumerate(result.attack_profile_results, start=1)
+    ]
+
+
+def _comparison_metric_chart_data(
+    comparison: BuildComparisonResult,
+) -> list[dict[str, float | str]]:
+    """Build chart rows for headline comparison damage metrics."""
+    return [
+        {"Metric": metric, "Build": build_name, "Damage": value}
+        for build_name, result in (
+            (comparison.first_build.name, comparison.first_result),
+            (comparison.second_build.name, comparison.second_result),
+        )
+        for metric, value in (
+            ("Average damage per round", result.average_damage_per_round),
+            ("Round 1 burst damage", result.first_round_burst_damage),
+            ("Average damage after round 1", result.average_damage_after_round_1),
+        )
+    ]
+
+
+def _line_chart(data, *, x: str, y: str, color: str):
+    import altair as alt
+    import pandas as pd
+
+    return (
+        alt.Chart(pd.DataFrame(data))
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(x, title="Round number", axis=alt.Axis(format="d")),
+            y=alt.Y(y, title="Average total damage"),
+            color=alt.Color(color, title="Build"),
+            tooltip=[
+                alt.Tooltip(x, title="Round"),
+                alt.Tooltip(y, title="Average damage", format=".2f"),
+                alt.Tooltip(color, title="Build"),
+            ],
+        )
+    )
+
+
+def _profile_bar_chart(data):
+    import altair as alt
+    import pandas as pd
+
+    return (
+        alt.Chart(pd.DataFrame(data))
+        .mark_bar()
+        .encode(
+            x=alt.X("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
+            y=alt.Y("Average damage per round:Q", title="Average damage per round"),
+            tooltip=[
+                alt.Tooltip("Profile:N", title="Attack profile"),
+                alt.Tooltip("Resolution type:N", title="Resolution type"),
+                alt.Tooltip(
+                    "Average damage per round:Q", title="Average damage", format=".2f"
+                ),
+            ],
+        )
+    )
+
+
+def _render_single_build_charts(build: BuildConfig, result: SimulationResult) -> None:
+    """Render all single-build charts above detailed result tables."""
+    import altair as alt
+    import pandas as pd
+    import streamlit as st
+
+    st.markdown("##### Damage by Round")
+    st.caption("Average total damage in each round, including zero-damage rounds.")
+    st.altair_chart(
+        _line_chart(
+            _round_chart_data(result, build.name),
+            x="Round:O",
+            y="Average total damage:Q",
+            color="Build:N",
+        ),
+        use_container_width=True,
+    )
+
+    profile_data = _profile_chart_data(result, build.name)
+    st.markdown("##### Damage by Attack Profile")
+    st.caption("Average damage per round for each configured attack profile.")
+    st.altair_chart(_profile_bar_chart(profile_data), use_container_width=True)
+
+    st.markdown("##### Damage Contribution")
+    st.caption(
+        "Percent contribution of each profile to average total damage per round."
+    )
+    contribution_chart = (
+        alt.Chart(pd.DataFrame(profile_data))
+        .mark_bar()
+        .encode(
+            x=alt.X("Damage contribution %:Q", title="Contribution (%)"),
+            y=alt.Y("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
+            tooltip=[
+                alt.Tooltip("Profile:N", title="Attack profile"),
+                alt.Tooltip(
+                    "Damage contribution %:Q", title="Contribution", format=".2f"
+                ),
+            ],
+        )
+    )
+    st.altair_chart(contribution_chart, use_container_width=True)
+
+
+def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
+    """Render comparison charts while keeping unrelated profiles separate."""
+    import altair as alt
+    import pandas as pd
+    import streamlit as st
+
+    st.markdown("##### Damage by Round")
+    st.caption("Round-by-round damage for each build on the same round axis.")
+    st.altair_chart(
+        _line_chart(
+            _comparison_round_chart_data(comparison),
+            x="Round:O",
+            y="Average total damage:Q",
+            color="Build:N",
+        ),
+        use_container_width=True,
+    )
+
+    st.markdown("##### Key Damage Comparison")
+    st.caption("Burst, sustained, and overall damage metrics for each build.")
+    metric_chart = (
+        alt.Chart(pd.DataFrame(_comparison_metric_chart_data(comparison)))
+        .mark_bar()
+        .encode(
+            x=alt.X("Metric:N", title="Metric"),
+            xOffset="Build:N",
+            y=alt.Y("Damage:Q", title="Damage"),
+            color=alt.Color("Build:N", title="Build"),
+            tooltip=[
+                alt.Tooltip("Metric:N"),
+                alt.Tooltip("Build:N"),
+                alt.Tooltip("Damage:Q", format=".2f"),
+            ],
+        )
+    )
+    st.altair_chart(metric_chart, use_container_width=True)
+
+    st.markdown("##### Attack Profile Damage")
+    st.caption(
+        "Each build keeps its own profile chart to avoid cross-build profile merging."
+    )
+    first_col, second_col = st.columns(2)
+    for column, build, result in (
+        (first_col, comparison.first_build, comparison.first_result),
+        (second_col, comparison.second_build, comparison.second_result),
+    ):
+        with column:
+            st.markdown(f"###### {build.name}")
+            st.altair_chart(
+                _profile_bar_chart(_profile_chart_data(result, build.name)),
+                use_container_width=True,
+            )
 
 
 def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
@@ -423,76 +652,121 @@ def _render_single_build_results(build: BuildConfig, result: SimulationResult) -
     import streamlit as st
 
     heading = build.name.strip() or "Simulation"
-    st.subheader(f"{heading} results")
-    metric_rows = st.columns(3)
-    metric_rows[0].metric(
-        "Average total damage per round", format_damage(result.average_damage_per_round)
-    )
-    metric_rows[1].metric(
-        "Average total damage across the combat",
-        format_damage(result.average_total_damage_per_simulation),
-    )
-    metric_rows[2].metric(
-        "Average damage per target per round",
-        format_damage(result.average_damage_per_target_per_round),
-    )
-    st.table(_single_result_rows(result))
-    st.markdown("##### Per-round breakdown")
-    st.table(_single_round_breakdown_rows(result))
-    st.markdown("##### Per-attack-profile breakdown")
-    st.table(_profile_breakdown_rows(result))
+    with _render_section_container():
+        st.subheader(f"{heading} results")
+        metric_rows = st.columns(5)
+        metric_rows[0].metric(
+            "Average damage per round", format_damage(result.average_damage_per_round)
+        )
+        metric_rows[1].metric(
+            "Average total damage",
+            format_damage(result.average_total_damage_per_simulation),
+        )
+        metric_rows[2].metric(
+            "Round 1 burst", format_damage(result.first_round_burst_damage)
+        )
+        metric_rows[3].metric(
+            "Sustained after round 1",
+            format_damage(result.average_damage_after_round_1),
+        )
+        metric_rows[4].metric(
+            "Highest-damage round",
+            (
+                f"{result.highest_damage_round} "
+                f"({format_damage(result.highest_round_average_damage)})"
+            ),
+        )
+        _render_single_build_charts(build, result)
+        with st.expander("Detailed Results", expanded=False):
+            st.table(_single_result_rows(result))
+            st.markdown("##### Per-round breakdown")
+            st.table(_single_round_breakdown_rows(result))
+            st.markdown("##### Per-attack-profile breakdown")
+            st.table(_profile_breakdown_rows(result))
 
 
 def _render_comparison_results(comparison: BuildComparisonResult) -> None:
     """Render two build results side by side with deltas."""
     import streamlit as st
 
-    st.subheader("Build comparison")
-    if comparison.higher_average_damage_build_name is None:
-        st.success("Both builds have the same average damage per round.")
-    else:
-        st.success(
-            f"{comparison.higher_average_damage_build_name} has higher average damage."
+    with _render_section_container():
+        st.subheader("Build comparison")
+        if comparison.higher_average_damage_build_name is None:
+            st.success("Both builds have the same average damage per round.")
+        else:
+            st.success(
+                f"{comparison.higher_average_damage_build_name} has higher "
+                "average damage."
+            )
+        first_cols = st.columns(5)
+        for cols, build, result in (
+            (first_cols, comparison.first_build, comparison.first_result),
+            (st.columns(5), comparison.second_build, comparison.second_result),
+        ):
+            cols[0].metric(
+                f"{build.name} avg/round",
+                format_damage(result.average_damage_per_round),
+            )
+            cols[1].metric(
+                f"{build.name} total",
+                format_damage(result.average_total_damage_per_simulation),
+            )
+            cols[2].metric(
+                f"{build.name} round 1", format_damage(result.first_round_burst_damage)
+            )
+            cols[3].metric(
+                f"{build.name} sustained",
+                format_damage(result.average_damage_after_round_1),
+            )
+            cols[4].metric(
+                f"{build.name} highest round",
+                (
+                    f"{result.highest_damage_round} "
+                    f"({format_damage(result.highest_round_average_damage)})"
+                ),
+            )
+        st.markdown("##### Winners")
+        st.write(
+            "Round 1 burst: "
+            + _winner_label(
+                comparison.first_build.name,
+                comparison.first_result.first_round_burst_damage,
+                comparison.second_build.name,
+                comparison.second_result.first_round_burst_damage,
+            )
         )
-    st.table(_result_rows(comparison))
-    st.markdown("##### Winners")
-    st.write(
-        "Round 1 burst: "
-        + _winner_label(
-            comparison.first_build.name,
-            comparison.first_result.first_round_burst_damage,
-            comparison.second_build.name,
-            comparison.second_result.first_round_burst_damage,
+        st.write(
+            "Sustained damage after round 1: "
+            + _winner_label(
+                comparison.first_build.name,
+                comparison.first_result.average_damage_after_round_1,
+                comparison.second_build.name,
+                comparison.second_result.average_damage_after_round_1,
+            )
         )
-    )
-    st.write(
-        "Sustained damage after round 1: "
-        + _winner_label(
-            comparison.first_build.name,
-            comparison.first_result.average_damage_after_round_1,
-            comparison.second_build.name,
-            comparison.second_result.average_damage_after_round_1,
+        st.write(
+            "Total average damage: "
+            + _winner_label(
+                comparison.first_build.name,
+                comparison.first_result.average_total_damage_per_simulation,
+                comparison.second_build.name,
+                comparison.second_result.average_total_damage_per_simulation,
+            )
         )
-    )
-    st.write(
-        "Total average damage: "
-        + _winner_label(
-            comparison.first_build.name,
-            comparison.first_result.average_total_damage_per_simulation,
-            comparison.second_build.name,
-            comparison.second_result.average_total_damage_per_simulation,
-        )
-    )
-    st.markdown("##### Per-round damage")
-    st.table(_round_breakdown_rows(comparison))
-    st.markdown(f"##### {comparison.first_build.name} attack breakdown")
-    st.table(_profile_breakdown_rows(comparison.first_result))
-    st.markdown(f"##### {comparison.second_build.name} attack breakdown")
-    st.table(_profile_breakdown_rows(comparison.second_result))
-    st.caption(
-        "Difference is first build minus second build. Both builds used separate "
-        "random-number-generator instances initialized with the same seed."
-    )
+        _render_comparison_charts(comparison)
+        with st.expander("Detailed Results", expanded=False):
+            st.table(_result_rows(comparison))
+            st.markdown("##### Per-round damage")
+            st.table(_round_breakdown_rows(comparison))
+            st.markdown(f"##### {comparison.first_build.name} attack breakdown")
+            st.table(_profile_breakdown_rows(comparison.first_result))
+            st.markdown(f"##### {comparison.second_build.name} attack breakdown")
+            st.table(_profile_breakdown_rows(comparison.second_result))
+            st.caption(
+                "Difference is first build minus second build. Both builds used "
+                "separate random-number-generator instances initialized with the "
+                "same seed."
+            )
 
 
 def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
@@ -633,23 +907,31 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
     """Render and collect one build's input controls."""
     import streamlit as st
 
-    st.markdown(f"#### {default_name}")
-    name = st.text_input("Build name", value=default_name, key=f"{prefix}-build-name")
-    additional_attack_count = st.number_input(
-        "Additional Distinct Attacks",
-        min_value=0,
-        max_value=10,
-        value=0,
-        step=1,
-        key=f"{prefix}-additional-attack-count",
-    )
+    with _render_section_container():
+        st.markdown(f"#### {default_name}")
+        name = st.text_input(
+            "Build name", value=default_name, key=f"{prefix}-build-name"
+        )
+        additional_attack_count = st.number_input(
+            "Additional Distinct Attacks",
+            min_value=0,
+            max_value=10,
+            value=0,
+            step=1,
+            key=f"{prefix}-additional-attack-count",
+        )
 
-    profiles = []
-    for profile_prefix, heading, default_attack_name in _profile_definitions(
-        prefix, int(additional_attack_count)
-    ):
-        st.markdown(f"##### {heading}")
-        profiles.append(_attack_profile_inputs(profile_prefix, default_attack_name))
+        profiles = []
+        for profile_prefix, heading, default_attack_name in _profile_definitions(
+            prefix, int(additional_attack_count)
+        ):
+            divider = getattr(st, "divider", None)
+            if divider is None:
+                st.markdown("---")
+            else:
+                divider()
+            st.markdown(f"##### {heading}")
+            profiles.append(_attack_profile_inputs(profile_prefix, default_attack_name))
 
     return _build_config_from_profiles(name, tuple(profiles))
 
@@ -665,33 +947,38 @@ def main() -> None:
         "Class, round count, and simulation count."
     )
 
-    st.subheader("Shared scenario")
-    scenario_row = st.columns(5)
-    target_armor_class = scenario_row[0].number_input(
-        "Target Armor Class", min_value=1, value=15, step=1, key="scenario-target-ac"
-    )
-    enemy_save_bonus = scenario_row[1].number_input(
-        "Enemy Save Bonus", value=3, step=1, key="scenario-enemy-save-bonus"
-    )
-    rounds = scenario_row[2].number_input(
-        "Number of rounds", min_value=1, value=5, step=1, key="scenario-rounds"
-    )
-    simulations = scenario_row[3].number_input(
-        "Number of simulations",
-        min_value=1,
-        value=10_000,
-        step=1,
-        key="scenario-simulations",
-    )
-    seed = scenario_row[4].number_input(
-        "Random seed", value=20240721, step=1, key="scenario-seed"
-    )
+    with _render_section_container():
+        st.subheader("Shared scenario")
+        scenario_row = st.columns(5)
+        target_armor_class = scenario_row[0].number_input(
+            "Target Armor Class",
+            min_value=1,
+            value=15,
+            step=1,
+            key="scenario-target-ac",
+        )
+        enemy_save_bonus = scenario_row[1].number_input(
+            "Enemy Save Bonus", value=3, step=1, key="scenario-enemy-save-bonus"
+        )
+        rounds = scenario_row[2].number_input(
+            "Number of rounds", min_value=1, value=5, step=1, key="scenario-rounds"
+        )
+        simulations = scenario_row[3].number_input(
+            "Number of simulations",
+            min_value=1,
+            value=10_000,
+            step=1,
+            key="scenario-simulations",
+        )
+        seed = scenario_row[4].number_input(
+            "Random seed", value=20240721, step=1, key="scenario-seed"
+        )
 
-    compare_enabled = st.toggle(
-        "Compare with another build",
-        value=False,
-        key="compare-builds-enabled",
-    )
+        compare_enabled = st.toggle(
+            "Compare with another build",
+            value=False,
+            key="compare-builds-enabled",
+        )
 
     scenario = ScenarioConfig(
         target_armor_class=int(target_armor_class),
@@ -721,9 +1008,7 @@ def main() -> None:
             else:
                 _render_comparison_results(comparison)
     else:
-        _, build_column, _ = st.columns([1, 6, 1])
-        with build_column:
-            first_build = _build_inputs("first", "Build A")
+        first_build = _build_inputs("first", "Build A")
 
         if st.button("Run Simulation"):
             inputs = SingleBuildInputs(
