@@ -99,9 +99,12 @@ def validate_feature_resolution_combination(
     selected_features = frozenset(AttackFeature(feature) for feature in features)
     selected_resolution_type = ResolutionType(resolution_type)
     for feature in ATTACK_ROLL_ONLY_FEATURES:
-        if not is_feature_available(
-            feature, selected_resolution_type, affected_targets=affected_targets
-        ) and feature in selected_features:
+        if (
+            not is_feature_available(
+                feature, selected_resolution_type, affected_targets=affected_targets
+            )
+            and feature in selected_features
+        ):
             feature_label = feature.value.replace("_", " ").title()
             msg = f"{label} {feature_label} requires an Attack Roll resolution type."
             raise ValueError(msg)
@@ -269,11 +272,14 @@ def resolve_weapon_attack(
             features=frozenset(feature.value for feature in attack_features),
         )
     elif AttackFeature.POTENT_CANTRIP in attack_features:
-        damage_dealt = _roll_noncritical_damage(
-            damage_dice=damage_dice,
-            rng=random_number_generator,
-            features=attack_features,
-        ) // 2
+        damage_dealt = (
+            _roll_noncritical_damage(
+                damage_dice=damage_dice,
+                rng=random_number_generator,
+                features=attack_features,
+            )
+            // 2
+        )
 
     return AttackResult(
         attack_roll_mode=attack_roll.mode,
