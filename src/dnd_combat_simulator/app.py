@@ -337,13 +337,13 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
             y="Average total damage:Q",
             color="Build:N",
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
     profile_data = _profile_chart_data(result, build.name)
     st.markdown("##### Damage by Attack Profile")
     st.caption("Average damage per round for each configured attack profile.")
-    st.altair_chart(_profile_bar_chart(profile_data), use_container_width=True)
+    st.altair_chart(_profile_bar_chart(profile_data), width="stretch")
 
     st.markdown("##### Damage Contribution")
     st.caption(
@@ -363,7 +363,7 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
             ],
         )
     )
-    st.altair_chart(contribution_chart, use_container_width=True)
+    st.altair_chart(contribution_chart, width="stretch")
 
 
 def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
@@ -381,7 +381,7 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
             y="Average total damage:Q",
             color="Build:N",
         ),
-        use_container_width=True,
+        width="stretch",
     )
 
     st.markdown("##### Key Damage Comparison")
@@ -401,7 +401,7 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
             ],
         )
     )
-    st.altair_chart(metric_chart, use_container_width=True)
+    st.altair_chart(metric_chart, width="stretch")
 
     st.markdown("##### Attack Profile Damage")
     st.caption(
@@ -416,7 +416,7 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
             st.markdown(f"###### {build.name}")
             st.altair_chart(
                 _profile_bar_chart(_profile_chart_data(result, build.name)),
-                use_container_width=True,
+                width="stretch",
             )
 
 
