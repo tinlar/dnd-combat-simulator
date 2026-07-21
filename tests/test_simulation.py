@@ -1,6 +1,10 @@
 import pytest
 
-from dnd_combat_simulator.combat import AttackRollMode, ResolutionType
+from dnd_combat_simulator.combat import (
+    AttackRollMode,
+    ResolutionType,
+    SuccessfulSaveDamage,
+)
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
@@ -574,3 +578,204 @@ def test_existing_attack_roll_profiles_default_correctly() -> None:
         rng=PredictableRng([10, 4]),
     )
     assert result.hit_rate == 1
+
+
+def test_attack_profile_defaults_to_one_affected_target() -> None:
+    assert AttackProfile("Strike", 5, "1d6", 2, 1).affected_targets == 1
+
+
+def test_attack_roll_profile_resolves_each_target_independently() -> None:
+    rng = PredictableRng([10, 1, 20, 2, 3, 1])
+
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(AttackProfile("Cleave", 5, "1d4", 0, 1, affected_targets=3),),
+        rng=rng,
+    )
+
+    assert result.total_attacks_made == 1
+    assert result.total_target_resolutions == 3
+    assert result.average_total_damage_per_simulation == 6
+    assert result.average_damage_per_target_per_round == 2
+    assert result.hit_rate == 2 / 3
+    assert result.critical_hit_rate == 1 / 3
+    assert rng.calls == [(1, 20), (1, 4), (1, 20), (1, 4), (1, 4), (1, 20)]
+
+
+@pytest.mark.parametrize(
+    ("mode", "rolls", "expected_damage", "expected_calls"),
+    [
+        (
+            AttackRollMode.ADVANTAGE,
+            [1, 12, 1, 7, 8],
+            1,
+            [(1, 20), (1, 20), (1, 4), (1, 20), (1, 20)],
+        ),
+        (
+            AttackRollMode.DISADVANTAGE,
+            [20, 12, 1, 20, 8],
+            1,
+            [(1, 20), (1, 20), (1, 4), (1, 20), (1, 20)],
+        ),
+    ],
+)
+def test_advantage_and_disadvantage_are_independent_per_target(
+    mode: AttackRollMode,
+    rolls: list[int],
+    expected_damage: int,
+    expected_calls: list[tuple[int, int]],
+) -> None:
+    rng = PredictableRng(rolls)
+
+    result = run_damage_simulations(
+        attack_bonus=3,
+        target_armor_class=15,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Swing", 3, "1d4", 0, 1, affected_targets=2, attack_roll_mode=mode
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.average_total_damage_per_simulation == expected_damage
+    assert result.total_target_resolutions == 2
+    assert rng.calls == expected_calls
+
+
+def test_saving_throw_profile_uses_one_shared_damage_roll_and_independent_saves() -> (
+    None
+):
+    rng = PredictableRng([5, 7, 10, 12, 20])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8",
+        damage_modifier=2,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Blast",
+                None,
+                "1d8",
+                2,
+                1,
+                affected_targets=4,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=12,
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.average_total_damage_per_simulation == 14
+    assert result.failed_save_rate == 0.5
+    assert result.successful_save_rate == 0.5
+    assert result.total_target_resolutions == 4
+    assert rng.calls == [(1, 8), (1, 20), (1, 20), (1, 20), (1, 20)]
+
+
+def test_saving_throw_half_damage_rounds_down_for_every_successful_target() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8",
+        damage_modifier=2,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Half Blast",
+                None,
+                "1d8",
+                2,
+                1,
+                affected_targets=3,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=12,
+                successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([5, 7, 12, 20]),
+    )
+
+    assert result.average_total_damage_per_simulation == 13
+    assert result.average_damage_per_target_per_round == 13 / 3
+
+
+def test_multiple_uses_active_rounds_and_multi_target_totals() -> None:
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=2,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Volley", 5, "1d4", 0, 2, affected_targets=2, active_rounds="2"
+            ),
+        ),
+        rng=PredictableRng([10, 1, 10, 2, 10, 3, 10, 4]),
+    )
+
+    assert [round_result.average_damage for round_result in result.round_results] == [
+        0,
+        10,
+    ]
+    assert result.total_attacks_made == 2
+    assert result.total_target_resolutions == 4
+    assert result.average_damage_per_target_per_round == 2.5
+
+
+def test_affected_targets_must_be_positive_integer() -> None:
+    with pytest.raises(ValueError, match="affected targets must be an integer"):
+        run_damage_simulations(
+            attack_bonus=5,
+            target_armor_class=15,
+            damage_dice="1d4",
+            damage_modifier=0,
+            rounds=1,
+            simulations=1,
+            attack_profiles=(AttackProfile("Bad", 5, "1d4", 0, 1, affected_targets=0),),
+            rng=PredictableRng([]),
+        )
+
+
+def test_comparison_reports_total_and_per_target_damage_for_multi_target_builds() -> (
+    None
+):
+    comparison = compare_builds(
+        first_build=BuildConfig("Single", 20, "1d4", 0, 1),
+        second_build=BuildConfig(
+            "Multi",
+            20,
+            "1d4",
+            0,
+            1,
+            attack_profiles=(
+                AttackProfile("Multi", 20, "1d4", 0, 1, affected_targets=2),
+            ),
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert (
+        comparison.second_result.average_damage_per_round
+        > comparison.first_result.average_damage_per_round
+    )
+    assert comparison.difference.average_damage_per_target_per_round == 0

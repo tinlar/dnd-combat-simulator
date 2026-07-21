@@ -161,7 +161,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Difference": format_signed_damage(difference.average_damage_per_round),
         },
         {
-            "Metric": "Average total damage",
+            "Metric": "Average total damage across all affected targets",
             comparison.first_build.name: format_damage(
                 first.average_total_damage_per_simulation
             ),
@@ -175,6 +175,18 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.first_build.name: format_rate(first.hit_rate),
             comparison.second_build.name: format_rate(second.hit_rate),
             "Difference": format_signed_rate(difference.hit_rate),
+        },
+        {
+            "Metric": "Average damage per target per round",
+            comparison.first_build.name: format_damage(
+                first.average_damage_per_target_per_round
+            ),
+            comparison.second_build.name: format_damage(
+                second.average_damage_per_target_per_round
+            ),
+            "Difference": format_signed_damage(
+                difference.average_damage_per_target_per_round
+            ),
         },
         {
             "Metric": "Critical hit percentage",
@@ -271,10 +283,11 @@ def _render_results(result: SimulationResult) -> None:
 
     first_row = st.columns(4)
     first_row[0].metric(
-        "Average damage per round", format_damage(result.average_damage_per_round)
+        "Average total damage per round",
+        format_damage(result.average_damage_per_round),
     )
     first_row[1].metric(
-        "Average total damage",
+        "Average total damage across targets",
         format_damage(result.average_total_damage_per_simulation),
     )
     first_row[2].metric("Full Damage Success Rate", format_rate(result.hit_rate))
@@ -282,7 +295,7 @@ def _render_results(result: SimulationResult) -> None:
         "Critical hit percentage", format_rate(result.critical_hit_rate)
     )
 
-    second_row = st.columns(3)
+    second_row = st.columns(4)
     second_row[0].metric(
         "Minimum total damage",
         format_damage(result.minimum_total_damage_in_simulation),
@@ -292,6 +305,9 @@ def _render_results(result: SimulationResult) -> None:
         format_damage(result.maximum_total_damage_in_simulation),
     )
     second_row[2].metric("Total attacks simulated", f"{result.total_attacks_made:,}")
+    second_row[3].metric(
+        "Target resolutions simulated", f"{result.total_target_resolutions:,}"
+    )
 
     st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
 
@@ -301,10 +317,22 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
     return [
         {
             "Attack profile": profile_result.attack_profile.name,
-            "Average damage per round": format_damage(
+            "Resolution type": (
+                profile_result.attack_profile.resolution_type.value.replace(
+                    "_", " "
+                ).title()
+            ),
+            "Attacks per active round": str(
+                profile_result.attack_profile.attacks_per_round
+            ),
+            "Affected targets": str(profile_result.attack_profile.affected_targets),
+            "Average total damage per round": format_damage(
                 profile_result.average_damage_per_round
             ),
-            "Average total damage": format_damage(
+            "Average damage per target per round": format_damage(
+                profile_result.average_damage_per_target_per_round
+            ),
+            "Average total damage across all affected targets": format_damage(
                 profile_result.average_total_damage_per_simulation
             ),
             "Full Damage Success Rate": format_rate(profile_result.hit_rate),
@@ -413,15 +441,22 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     damage_dice = row_one[1].text_input(
         "Damage dice", value="1d8", key=f"{prefix}-damage-dice"
     )
-    row_two = st.columns(3)
+    row_two = st.columns(4)
     damage_modifier = row_two[0].number_input(
         "Damage modifier", value=3, step=1, key=f"{prefix}-damage-modifier"
     )
     attacks_per_round = row_two[1].number_input(
         "Attacks per round", min_value=1, value=1, step=1, key=f"{prefix}-attacks"
     )
+    affected_targets = row_two[2].number_input(
+        "Affected Targets",
+        min_value=1,
+        value=1,
+        step=1,
+        key=f"{prefix}-affected-targets",
+    )
     if resolution_type is ResolutionType.ATTACK_ROLL:
-        attack_roll_mode_label = row_two[2].selectbox(
+        attack_roll_mode_label = row_two[3].selectbox(
             "Attack roll mode",
             options=[mode.value.title() for mode in AttackRollMode],
             index=0,
@@ -430,7 +465,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
         successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
     else:
-        successful_save_damage_label = row_two[2].selectbox(
+        successful_save_damage_label = row_two[3].selectbox(
             "Successful Save Damage",
             options=["No damage", "Half damage"],
             index=0,
@@ -454,6 +489,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         damage_dice=damage_dice,
         damage_modifier=int(damage_modifier),
         attacks_per_round=int(attacks_per_round),
+        affected_targets=int(affected_targets),
         attack_roll_mode=attack_roll_mode,
         active_rounds=active_rounds,
         resolution_type=resolution_type,
