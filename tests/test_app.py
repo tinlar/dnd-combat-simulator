@@ -844,3 +844,47 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     disabled_by_label.clear()
     _feature_inputs("multi", ResolutionType.ATTACK_ROLL, 2)
     assert disabled_by_label["Stop on Miss"] is True
+
+
+def test_shorten_share_url_uses_tinyurl(monkeypatch) -> None:
+    from urllib.parse import parse_qs, urlparse
+
+    from dnd_combat_simulator import app
+
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size):
+            return b"https://tinyurl.com/example\n"
+
+    def fake_urlopen(url, *, timeout):
+        calls.append((url, timeout))
+        return Response()
+
+    monkeypatch.setattr(app, "urlopen", fake_urlopen)
+
+    shortened = app.shorten_share_url("https://example.test/sim?config=abc+123")
+
+    assert shortened == "https://tinyurl.com/example"
+    assert calls[0][1] == 4.0
+    query = parse_qs(urlparse(calls[0][0]).query)
+    assert query["url"] == ["https://example.test/sim?config=abc+123"]
+
+
+def test_shorten_share_url_falls_back_to_original_on_failure(monkeypatch) -> None:
+    from dnd_combat_simulator import app
+
+    def fake_urlopen(url, *, timeout):
+        raise OSError("offline")
+
+    monkeypatch.setattr(app, "urlopen", fake_urlopen)
+
+    url = "https://example.test/sim?config=abc"
+
+    assert app.shorten_share_url(url) == url
