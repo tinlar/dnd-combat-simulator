@@ -643,11 +643,15 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
         calls.append(("checkbox", {"label": label, **kwargs}))
         return label == "Great Weapon Fighting"
 
+    def columns(spec, **kwargs):
+        calls.append(("columns", {"spec": spec, **kwargs}))
+        return [col for _ in range(spec)]
+
     fake_streamlit = SimpleNamespace(
         selectbox=col.selectbox,
         text_input=col.text_input,
         number_input=col.number_input,
-        columns=lambda spec, **kwargs: [col for _ in range(spec)],
+        columns=columns,
         expander=expander,
         checkbox=checkbox,
     )
@@ -657,12 +661,14 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
 
     assert profile.features == frozenset({AttackFeature.GREAT_WEAPON_FIGHTING})
     assert ("expander", {"label": "Feats and Features", "expanded": False}) in calls
+    assert ("columns", {"spec": 3}) in calls
     checkbox_calls = [call for kind, call in calls if kind == "checkbox"]
     assert [call["label"] for call in checkbox_calls] == [
         "Elven Accuracy",
         "Great Weapon Fighting",
         "Tavern Brawler",
         "Stop on Miss",
+        "Potent Cantrip",
     ]
     assert checkbox_calls[0]["key"] == "first-primary-feature-elven_accuracy"
     assert checkbox_calls[0]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
@@ -839,7 +845,16 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
     _feature_inputs("save", ResolutionType.SAVING_THROW, 1)
+    assert disabled_by_label["Great Weapon Fighting"] is True
+    assert disabled_by_label["Tavern Brawler"] is True
+    assert disabled_by_label["Potent Cantrip"] is False
     assert disabled_by_label["Stop on Miss"] is True
+
+    disabled_by_label.clear()
+    _feature_inputs("auto", ResolutionType.AUTOMATIC_DAMAGE, 1)
+    assert disabled_by_label["Great Weapon Fighting"] is True
+    assert disabled_by_label["Tavern Brawler"] is True
+    assert disabled_by_label["Potent Cantrip"] is True
 
     disabled_by_label.clear()
     _feature_inputs("multi", ResolutionType.ATTACK_ROLL, 2)

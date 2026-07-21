@@ -924,51 +924,36 @@ def test_elven_accuracy_rejected_for_non_attack_profiles() -> None:
         )
 
 
-def test_saving_throw_shared_damage_applies_features_once_for_multiple_targets() -> (
-    None
-):
+def test_saving_throw_rejects_attack_roll_only_damage_features() -> None:
     from dnd_combat_simulator.combat import AttackFeature, ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, run_damage_simulations
 
-    class Rng:
-        def __init__(self):
-            self.rolls = [1, 2, 1, 1]
-            self.calls = []
-
-        def randint(self, a, b):
-            self.calls.append((a, b))
-            return self.rolls.pop(0)
-
-    rng = Rng()
-    result = run_damage_simulations(
-        attack_bonus=0,
-        target_armor_class=10,
-        damage_dice="1d6",
-        rounds=1,
-        simulations=1,
-        enemy_save_bonus=0,
-        attack_profiles=(
-            AttackProfile(
-                "Shared save",
-                None,
-                "1d6",
-                1,
-                affected_targets=2,
-                resolution_type=ResolutionType.SAVING_THROW,
-                save_dc=10,
-                features=frozenset(
-                    {
-                        AttackFeature.TAVERN_BRAWLER,
-                        AttackFeature.GREAT_WEAPON_FIGHTING,
-                    }
+    with pytest.raises(ValueError, match="requires an Attack Roll"):
+        run_damage_simulations(
+            attack_bonus=0,
+            target_armor_class=10,
+            damage_dice="1d6",
+            rounds=1,
+            simulations=1,
+            enemy_save_bonus=0,
+            attack_profiles=(
+                AttackProfile(
+                    "Shared save",
+                    None,
+                    "1d6",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=10,
+                    features=frozenset(
+                        {
+                            AttackFeature.TAVERN_BRAWLER,
+                            AttackFeature.GREAT_WEAPON_FIGHTING,
+                        }
+                    ),
                 ),
             ),
-        ),
-        rng=rng,
-    )
-
-    assert result.average_total_damage == 6
-    assert rng.calls == [(1, 6), (1, 6), (1, 20), (1, 20)]
+        )
 
 
 def test_average_damage_per_use_for_successful_attack_and_misses() -> None:
@@ -1288,4 +1273,90 @@ def test_stop_on_miss_validation(profile) -> None:
             simulations=1,
             attack_profiles=(profile,),
             rng=PredictableRng([]),
+        )
+
+
+def test_potent_cantrip_multi_target_saving_throw_shares_damage_roll() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([5, 2, 15, 3])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d8+1",
+        enemy_save_bonus=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                name="Cantrip",
+                attack_bonus=None,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+                damage_dice="1d8+1",
+                attacks_per_round=1,
+                affected_targets=3,
+                features=frozenset({AttackFeature.POTENT_CANTRIP}),
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.average_total_damage == 15
+    assert rng.calls == [(1, 8), (1, 20), (1, 20), (1, 20)]
+
+
+def test_automatic_damage_rejects_potent_cantrip() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    with pytest.raises(ValueError, match="Potent Cantrip cannot be used"):
+        run_damage_simulations(
+            attack_bonus=0,
+            target_armor_class=10,
+            damage_dice="1d8",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    name="Auto",
+                    attack_bonus=None,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    damage_dice="1d8",
+                    attacks_per_round=1,
+                    features=frozenset({AttackFeature.POTENT_CANTRIP}),
+                ),
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "feature",
+    [
+        "ELVEN_ACCURACY",
+        "GREAT_WEAPON_FIGHTING",
+        "TAVERN_BRAWLER",
+    ],
+)
+def test_attack_roll_only_features_rejected_for_saving_throw(feature: str) -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    with pytest.raises(ValueError, match="requires an Attack Roll"):
+        run_damage_simulations(
+            attack_bonus=0,
+            target_armor_class=10,
+            damage_dice="1d8",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    name="Save",
+                    attack_bonus=None,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=10,
+                    damage_dice="1d8",
+                    attacks_per_round=1,
+                    features=frozenset({getattr(AttackFeature, feature)}),
+                ),
+            ),
         )

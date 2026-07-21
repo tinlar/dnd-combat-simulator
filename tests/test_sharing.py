@@ -71,9 +71,7 @@ def shared(compare=False):
                 save_dc=15,
                 successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
                 affected_targets=3,
-                features=frozenset(
-                    {AttackFeature.GREAT_WEAPON_FIGHTING, AttackFeature.TAVERN_BRAWLER}
-                ),
+                features=frozenset({AttackFeature.POTENT_CANTRIP}),
             ),
             profile(
                 "Auto",
@@ -177,7 +175,11 @@ def test_all_features_stop_on_miss_and_complex_formula_round_trip():
                 profile(
                     "p",
                     damage_dice="4d6r1!kh3+2",
-                    features=frozenset(AttackFeature),
+                    features=frozenset(
+                        feature
+                        for feature in AttackFeature
+                        if feature is not AttackFeature.POTENT_CANTRIP
+                    ),
                     attack_roll_mode=AttackRollMode.ADVANTAGE,
                 ),
             ),
@@ -185,7 +187,11 @@ def test_all_features_stop_on_miss_and_complex_formula_round_trip():
         build_b=BuildConfig("B", 5, "1d8", 1),
     )
     loaded = deserialize_shared_configuration(serialize_shared_configuration(config))
-    assert loaded.build_a.attack_profiles[0].features == frozenset(AttackFeature)
+    assert loaded.build_a.attack_profiles[0].features == frozenset(
+        feature
+        for feature in AttackFeature
+        if feature is not AttackFeature.POTENT_CANTRIP
+    )
     assert loaded.build_a.attack_profiles[0].damage_formula == "4d6r1!kh3+2"
 
 
@@ -274,7 +280,7 @@ def test_hydration_loads_scenario_compare_counts_profiles_both_builds_and_replac
         state[profile_widget_key("second-primary", "resolution_type")] == "Saving Throw"
     )
     assert (
-        state[feature_widget_key("second-primary", AttackFeature.TAVERN_BRAWLER)]
+        state[feature_widget_key("second-primary", AttackFeature.POTENT_CANTRIP)]
         is True
     )
     new = shared(False)

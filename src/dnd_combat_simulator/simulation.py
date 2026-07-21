@@ -14,6 +14,7 @@ from dnd_combat_simulator.combat import (
     resolve_automatic_damage,
     resolve_saving_throw_damage,
     resolve_weapon_attack,
+    validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
 
@@ -230,12 +231,7 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
         raise ValueError(msg)
     resolution_type = ResolutionType(profile.resolution_type)
     features = frozenset(AttackFeature(feature) for feature in profile.features)
-    if (
-        AttackFeature.ELVEN_ACCURACY in features
-        and resolution_type is not ResolutionType.ATTACK_ROLL
-    ):
-        msg = f"{label} Elven Accuracy requires an Attack Roll resolution type."
-        raise ValueError(msg)
+    validate_feature_resolution_combination(features, resolution_type, label=label)
     if AttackFeature.STOP_ON_MISS in features and (
         resolution_type is not ResolutionType.ATTACK_ROLL
         or profile.affected_targets != 1
@@ -482,6 +478,7 @@ def run_damage_simulations(
                             elif (
                                 profile.successful_save_damage
                                 is SuccessfulSaveDamage.HALF_DAMAGE
+                                or AttackFeature.POTENT_CANTRIP in profile.features
                             ):
                                 damage = shared_damage // 2
                             else:
