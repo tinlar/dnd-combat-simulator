@@ -171,12 +171,6 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Difference": format_signed_damage(difference.average_total_damage),
         },
         {
-            "Metric": "Full Damage Success Rate",
-            comparison.first_build.name: format_rate(first.hit_rate),
-            comparison.second_build.name: format_rate(second.hit_rate),
-            "Difference": format_signed_rate(difference.hit_rate),
-        },
-        {
             "Metric": "Average damage per target per round",
             comparison.first_build.name: format_damage(
                 first.average_damage_per_target_per_round
@@ -258,12 +252,6 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
                 f"{comparison.second_build.name} avg attacks": format_damage(
                     second_round.average_attacks
                 ),
-                f"{comparison.first_build.name} full dmg success %": format_rate(
-                    first_round.hit_rate
-                ),
-                f"{comparison.second_build.name} full dmg success %": format_rate(
-                    second_round.hit_rate
-                ),
                 f"{comparison.first_build.name} crit %": format_rate(
                     first_round.critical_hit_rate
                 ),
@@ -290,9 +278,9 @@ def _render_results(result: SimulationResult) -> None:
         "Average total damage across targets",
         format_damage(result.average_total_damage_per_simulation),
     )
-    first_row[2].metric("Full Damage Success Rate", format_rate(result.hit_rate))
+    first_row[2].metric("Attack-roll hit percentage", format_rate(result.hit_rate))
     first_row[3].metric(
-        "Critical hit percentage", format_rate(result.critical_hit_rate)
+        "Attack-roll critical hit percentage", format_rate(result.critical_hit_rate)
     )
 
     second_row = st.columns(4)
@@ -314,18 +302,15 @@ def _render_results(result: SimulationResult) -> None:
 
 def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
     """Build per-profile damage breakdown rows."""
-    return [
-        {
-            "Attack profile": profile_result.attack_profile.name,
-            "Resolution type": (
-                profile_result.attack_profile.resolution_type.value.replace(
-                    "_", " "
-                ).title()
-            ),
-            "Attacks per active round": str(
-                profile_result.attack_profile.attacks_per_round
-            ),
-            "Affected targets": str(profile_result.attack_profile.affected_targets),
+    rows = []
+    for profile_result in result.attack_profile_results:
+        profile = profile_result.attack_profile
+        row = {
+            "Attack profile": profile.name,
+            "Resolution type": profile.resolution_type.value.replace("_", " ").title(),
+            "Attacks per active round": str(profile.attacks_per_round),
+            "Affected targets": str(profile.affected_targets),
+            "Active Rounds": profile.active_rounds or "Every round",
             "Average total damage per round": format_damage(
                 profile_result.average_damage_per_round
             ),
@@ -335,28 +320,23 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Average total damage across all affected targets": format_damage(
                 profile_result.average_total_damage_per_simulation
             ),
-            "Full Damage Success Rate": format_rate(profile_result.hit_rate),
-            "Critical hit percentage": (
-                "—"
-                if profile_result.attack_profile.resolution_type
-                is ResolutionType.SAVING_THROW
-                else format_rate(profile_result.critical_hit_rate)
-            ),
-            "Failed save percentage": (
-                format_rate(profile_result.failed_save_rate)
-                if profile_result.attack_profile.resolution_type
-                is ResolutionType.SAVING_THROW
-                else "—"
-            ),
-            "Successful save percentage": (
-                format_rate(profile_result.successful_save_rate)
-                if profile_result.attack_profile.resolution_type
-                is ResolutionType.SAVING_THROW
-                else "—"
-            ),
         }
-        for profile_result in result.attack_profile_results
-    ]
+        if profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
+            row["Automatic damage applications"] = (
+                f"{profile_result.automatic_damage_applications:,}"
+            )
+        elif profile.resolution_type is ResolutionType.SAVING_THROW:
+            row["Failed save percentage"] = format_rate(profile_result.failed_save_rate)
+            row["Successful save percentage"] = format_rate(
+                profile_result.successful_save_rate
+            )
+        else:
+            row["Hit percentage"] = format_rate(profile_result.hit_rate)
+            row["Critical hit percentage"] = format_rate(
+                profile_result.critical_hit_rate
+            )
+        rows.append(row)
+    return rows
 
 
 def _render_comparison_results(comparison: BuildComparisonResult) -> None:
@@ -418,26 +398,29 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     attack_name = st.text_input("Attack name", value=default_name, key=f"{prefix}-name")
     resolution_type_label = st.selectbox(
         "Resolution Type",
-        options=["Attack Roll", "Saving Throw"],
+        options=["Attack Roll", "Saving Throw", "Automatic Damage"],
         index=0,
         key=f"{prefix}-resolution-type",
     )
-    resolution_type = (
-        ResolutionType.ATTACK_ROLL
-        if resolution_type_label == "Attack Roll"
-        else ResolutionType.SAVING_THROW
-    )
+    resolution_type = {
+        "Attack Roll": ResolutionType.ATTACK_ROLL,
+        "Saving Throw": ResolutionType.SAVING_THROW,
+        "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+    }[resolution_type_label]
     row_one = st.columns(2)
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus = row_one[0].number_input(
             "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
         )
         save_dc = None
-    else:
+    elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc = row_one[0].number_input(
             "Save DC", min_value=1, value=13, step=1, key=f"{prefix}-save-dc"
         )
+    else:
+        attack_bonus = None
+        save_dc = None
     damage_dice = row_one[1].text_input(
         "Damage dice", value="1d8", key=f"{prefix}-damage-dice"
     )
@@ -464,7 +447,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         )
         attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
         successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
-    else:
+    elif resolution_type is ResolutionType.SAVING_THROW:
         successful_save_damage_label = row_two[3].selectbox(
             "Successful Save Damage",
             options=["No damage", "Half damage"],
@@ -477,6 +460,9 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
             if successful_save_damage_label == "Half damage"
             else SuccessfulSaveDamage.NO_DAMAGE
         )
+    else:
+        attack_roll_mode = AttackRollMode.NORMAL
+        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
     active_rounds = st.text_input(
         "Active Rounds",
         value="",

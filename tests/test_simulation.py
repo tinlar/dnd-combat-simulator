@@ -493,7 +493,7 @@ def test_mixed_attack_roll_and_saving_throw_profiles_in_one_build() -> None:
     assert result.average_total_damage_per_simulation == 14
     assert result.hit_rate == 1
     assert result.critical_hit_rate == 0
-    assert result.failed_save_rate == 0.5
+    assert result.failed_save_rate == 1
     assert result.successful_save_rate == 0
 
 
@@ -779,3 +779,136 @@ def test_comparison_reports_total_and_per_target_damage_for_multi_target_builds(
         > comparison.first_result.average_damage_per_round
     )
     assert comparison.difference.average_damage_per_target_per_round == 0
+
+
+def test_automatic_damage_always_applies_without_d20_or_critical_hits() -> None:
+    rng = PredictableRng([3])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=99,
+        damage_dice="1d4",
+        damage_modifier=2,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Magic Missile",
+                None,
+                "1d4",
+                2,
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.average_total_damage_per_simulation == 5
+    assert result.hit_rate == 0
+    assert result.critical_hit_rate == 0
+    assert result.automatic_damage_applications == 1
+    assert result.average_automatic_damage_per_application == 5
+    assert result.attack_profile_results[0].automatic_damage_applications == 1
+    assert rng.calls == [(1, 4)]
+
+
+def test_automatic_damage_multiple_uses_targets_and_separate_rolls() -> None:
+    rng = PredictableRng([1, 2, 3, 4, 5, 6])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d6",
+        damage_modifier=1,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Darts",
+                None,
+                "1d6",
+                1,
+                3,
+                affected_targets=2,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.total_attacks_made == 3
+    assert result.total_target_resolutions == 6
+    assert result.automatic_damage_applications == 6
+    assert result.average_total_damage_per_simulation == 27
+    assert result.average_damage_per_target_per_round == 13.5
+    assert rng.calls == [(1, 6)] * 6
+
+
+def test_automatic_damage_respects_active_rounds() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=3,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Acid",
+                None,
+                "1d4",
+                0,
+                1,
+                active_rounds="2-3",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([2, 4]),
+    )
+
+    assert [round_result.average_damage for round_result in result.round_results] == [
+        0,
+        2,
+        4,
+    ]
+    assert result.automatic_damage_applications == 2
+
+
+def test_mixed_profiles_exclude_automatic_damage_from_rate_denominators() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=0,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Slash", 5, "1d4", 0, 1),
+            AttackProfile(
+                "Burn",
+                None,
+                "1d4",
+                0,
+                1,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+            ),
+            AttackProfile(
+                "Missile",
+                None,
+                "1d4",
+                0,
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([10, 1, 9, 2, 4]),
+    )
+
+    assert result.average_total_damage_per_simulation == 7
+    assert result.hit_rate == 1
+    assert result.failed_save_rate == 1
+    assert result.successful_save_rate == 0
+    assert result.automatic_damage_applications == 1
