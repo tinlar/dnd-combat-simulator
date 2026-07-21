@@ -846,58 +846,15 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     assert disabled_by_label["Stop on Miss"] is True
 
 
-def test_get_tinyurl_api_token_prefers_streamlit_secret(monkeypatch) -> None:
-    import sys
-    from types import SimpleNamespace
-
-    from dnd_combat_simulator import app
-
-    monkeypatch.setenv("TINYURL_API_TOKEN", " env-token ")
-    monkeypatch.setitem(
-        sys.modules,
-        "streamlit",
-        SimpleNamespace(secrets={"TINYURL_API_TOKEN": " secret-token "}),
-    )
-
-    assert app.get_tinyurl_api_token() == "secret-token"
-
-
-def test_get_tinyurl_api_token_falls_back_to_environment(monkeypatch) -> None:
-    import sys
-    from types import SimpleNamespace
-
-    from dnd_combat_simulator import app
-
-    monkeypatch.setenv("TINYURL_API_TOKEN", " env-token ")
-    monkeypatch.setitem(
-        sys.modules,
-        "streamlit",
-        SimpleNamespace(secrets={"TINYURL_API_TOKEN": "   "}),
-    )
-
-    assert app.get_tinyurl_api_token() == "env-token"
-
-
-def test_get_tinyurl_api_token_returns_none_when_missing(monkeypatch) -> None:
-    import sys
-    from types import SimpleNamespace
-
-    from dnd_combat_simulator import app
-
-    monkeypatch.delenv("TINYURL_API_TOKEN", raising=False)
-    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(secrets={}))
-
-    assert app.get_tinyurl_api_token() is None
-
-
-def test_shorten_share_url_with_tinyurl_constructs_authenticated_request(
+def test_shorten_share_url_with_isgd_constructs_official_form_request(
     monkeypatch,
 ) -> None:
-    import json
+    from urllib.parse import parse_qs, urlparse
 
     from dnd_combat_simulator import app
 
     calls = []
+    long_url = "https://example.test/sim?config=a&b+c#frag=x=y%25;semi"
 
     class Response:
         def __enter__(self):
@@ -907,9 +864,8 @@ def test_shorten_share_url_with_tinyurl_constructs_authenticated_request(
             return False
 
         def read(self, size):
-            return json.dumps(
-                {"data": {"tiny_url": "https://tinyurl.com/example"}}
-            ).encode()
+            assert size == 8192
+            return b'{"shorturl": "https://is.gd/R709K6"}'
 
     def fake_urlopen(request, *, timeout):
         calls.append((request, timeout))
@@ -917,66 +873,79 @@ def test_shorten_share_url_with_tinyurl_constructs_authenticated_request(
 
     monkeypatch.setattr(app, "urlopen", fake_urlopen)
 
-    result = app.shorten_share_url_with_tinyurl(
-        "https://example.test/sim?config=abc+123", api_token="token"
-    )
+    result = app.shorten_share_url_with_isgd(long_url)
 
-    assert result.url == "https://tinyurl.com/example"
+    assert result.url == "https://is.gd/R709K6"
     assert result.shortened is True
+    assert result.rate_limited is False
     request, timeout = calls[0]
     assert timeout == 4.0
-    assert request.full_url == app.TINYURL_CREATE_API_URL
+    assert request.full_url == app.ISGD_CREATE_API_URL
+    assert urlparse(request.full_url).query == ""
     assert request.get_method() == "POST"
-    assert request.headers["Authorization"] == "Bearer token"
     assert request.headers["Accept"] == "application/json"
-    assert request.headers["Content-type"] == "application/json"
-    assert "token" not in request.full_url
-    body = json.loads(request.data.decode("utf-8"))
-    assert body == {
-        "url": "https://example.test/sim?config=abc+123",
-        "domain": "tinyurl.com",
-    }
-
-
-@pytest.mark.parametrize("status", [400, 401, 403, 422, 429, 500])
-def test_shorten_share_url_with_tinyurl_falls_back_on_http_errors(
-    monkeypatch, status
-) -> None:
-    from urllib.error import HTTPError
-
-    from dnd_combat_simulator import app
-
-    def fake_urlopen(request, *, timeout):
-        raise HTTPError(request.full_url, status, "bad", {}, None)
-
-    monkeypatch.setattr(app, "urlopen", fake_urlopen)
-    url = "https://example.test/sim?config=abc"
-
-    result = app.shorten_share_url_with_tinyurl(url, api_token="token")
-
-    assert result.url == url
-    assert result.shortened is False
-    assert result.error_message
+    assert request.headers["Content-type"] == "application/x-www-form-urlencoded"
+    assert "Authorization" not in request.headers
+    body = parse_qs(request.data.decode("utf-8"), keep_blank_values=True)
+    assert body == {"format": ["json"], "url": [long_url]}
+    assert "logstats" not in body
+    assert "callback" not in body
+    assert "shorturl" not in body
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "expected_message", "rate_limited"),
     [
-        b"{",
-        b"[]",
-        b'{"data": null}',
-        b'{"data": {}}',
-        b'{"data": {"tiny_url": 3}}',
-        b'{"data": {"tiny_url": "http://tinyurl.com/example"}}',
-        b'{"data": {"tiny_url": "https://example.com/not-tiny"}}',
-        bytes.fromhex(
-            "7b2264617461223a207b2274696e795f75726c223a202268747470733a2f2f74696e7975726c2e636f6d2f707265766965772f646570726563617465642f78227d7d"
+        (
+            b'{"errorcode": 1, "errormessage": "bad"}',
+            "is.gd rejected the configuration URL.",
+            False,
         ),
-        b"\xff",
+        (
+            b'{"errorcode": 2, "errormessage": "bad"}',
+            "is.gd rejected the configuration URL.",
+            False,
+        ),
+        (
+            b'{"errorcode": 3, "errormessage": "slow"}',
+            "The is.gd rate limit was reached.",
+            True,
+        ),
+        (
+            b'{"errorcode": 4, "errormessage": "down"}',
+            "is.gd is temporarily unavailable.",
+            False,
+        ),
+        (b"", "is.gd returned an invalid response.", False),
+        (b"{}", "is.gd returned an invalid response.", False),
+        (b"{", "is.gd returned an invalid response.", False),
+        (b"[]", "is.gd returned an invalid response.", False),
+        (b'{"shorturl": 3}', "is.gd returned an invalid response.", False),
+        (
+            b'{"shorturl": "http://is.gd/R709K6"}',
+            "is.gd returned an invalid response.",
+            False,
+        ),
+        (
+            b'{"shorturl": "https://example.com/R709K6"}',
+            "is.gd returned an invalid response.",
+            False,
+        ),
+        (
+            b'{"shorturl": "https://is.gd/R709 K6"}',
+            "is.gd returned an invalid response.",
+            False,
+        ),
+        (
+            ('{"shorturl": "https://is.gd/preview/' + 'deprecated/R709K6"}').encode(),
+            "is.gd returned an invalid response.",
+            False,
+        ),
+        (b"\xff", "is.gd returned an invalid response.", False),
     ],
 )
-def test_shorten_share_url_with_tinyurl_rejects_invalid_responses(
-    monkeypatch, payload
+def test_shorten_share_url_with_isgd_falls_back_on_invalid_responses(
+    monkeypatch, payload, expected_message, rate_limited
 ) -> None:
     from dnd_combat_simulator import app
 
@@ -993,42 +962,97 @@ def test_shorten_share_url_with_tinyurl_rejects_invalid_responses(
     monkeypatch.setattr(app, "urlopen", lambda request, *, timeout: Response())
     url = "https://example.test/sim?config=abc"
 
-    result = app.shorten_share_url_with_tinyurl(url, api_token="token")
+    result = app.shorten_share_url_with_isgd(url)
 
     assert result.url == url
     assert result.shortened is False
-    assert result.error_message == "TinyURL returned an invalid response."
+    assert result.rate_limited is rate_limited
+    assert result.error_message == expected_message
 
 
-def test_shorten_share_url_with_tinyurl_missing_token_and_empty_url() -> None:
+@pytest.mark.parametrize(
+    ("status", "expected_message", "rate_limited"),
+    [
+        (400, "is.gd rejected the configuration URL.", False),
+        (406, "is.gd rejected the configuration URL.", False),
+        (502, "The is.gd rate limit was reached.", True),
+        (503, "is.gd is temporarily unavailable.", False),
+    ],
+)
+def test_shorten_share_url_with_isgd_falls_back_on_http_errors(
+    monkeypatch, status, expected_message, rate_limited
+) -> None:
+    from urllib.error import HTTPError
+
     from dnd_combat_simulator import app
 
+    def fake_urlopen(request, *, timeout):
+        raise HTTPError(request.full_url, status, "bad", {}, None)
+
+    monkeypatch.setattr(app, "urlopen", fake_urlopen)
     url = "https://example.test/sim?config=abc"
-    assert app.shorten_share_url_with_tinyurl(url).url == url
-    assert app.shorten_share_url_with_tinyurl(url).shortened is False
-    assert app.shorten_share_url_with_tinyurl("").shortened is False
+
+    result = app.shorten_share_url_with_isgd(url)
+
+    assert result.url == url
+    assert result.shortened is False
+    assert result.rate_limited is rate_limited
+    assert result.error_message == expected_message
 
 
-def test_resolve_share_url_to_copy_reuses_existing_tinyurl(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("exception", "message"),
+    [
+        (TimeoutError(), "The is.gd request timed out."),
+        (OSError("network"), "is.gd returned an invalid response."),
+    ],
+)
+def test_shorten_share_url_with_isgd_falls_back_on_request_errors(
+    monkeypatch, exception, message
+) -> None:
+    from dnd_combat_simulator import app
+
+    def fake_urlopen(request, *, timeout):
+        raise exception
+
+    monkeypatch.setattr(app, "urlopen", fake_urlopen)
+    url = "https://example.test/sim?config=abc"
+
+    result = app.shorten_share_url_with_isgd(url)
+
+    assert result.url == url
+    assert result.shortened is False
+    assert result.error_message == message
+
+
+def test_shorten_share_url_with_isgd_empty_url() -> None:
+    from dnd_combat_simulator import app
+
+    result = app.shorten_share_url_with_isgd("")
+
+    assert result.url == ""
+    assert result.shortened is False
+    assert result.error_message == "A share URL is required."
+
+
+def test_resolve_share_url_to_copy_reuses_existing_isgd_link(monkeypatch) -> None:
     from dnd_combat_simulator import app
 
     calls = []
 
-    def fake_shorten(url, *, api_token):
+    def fake_shorten(url):
         calls.append(url)
-        return app.ShortenedUrlResult("https://tinyurl.com/new", True)
+        return app.ShortenedUrlResult("https://is.gd/new", True)
 
-    monkeypatch.setattr(app, "shorten_share_url_with_tinyurl", fake_shorten)
+    monkeypatch.setattr(app, "shorten_share_url_with_isgd", fake_shorten)
     state = {
         app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://tinyurl.com/old",
+        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://is.gd/old",
     }
 
-    result = app.resolve_share_url_to_copy(
-        "https://example.test/?config=1", state, api_token="token"
-    )
+    result = app.resolve_share_url_to_copy("https://example.test/?config=1", state)
 
-    assert result.url == "https://tinyurl.com/old"
+    assert result.url == "https://is.gd/old"
     assert calls == []
     assert state[app.GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] == result.url
 
@@ -1038,20 +1062,46 @@ def test_resolve_share_url_to_copy_changed_config_requests_new_and_clears_old(
 ) -> None:
     from dnd_combat_simulator import app
 
-    def fake_shorten(url, *, api_token):
-        return app.ShortenedUrlResult(url, False, "TinyURL rejected the request.")
+    calls = []
 
-    monkeypatch.setattr(app, "shorten_share_url_with_tinyurl", fake_shorten)
+    def fake_shorten(url):
+        calls.append(url)
+        return app.ShortenedUrlResult(
+            url, False, "is.gd rejected the configuration URL."
+        )
+
+    monkeypatch.setattr(app, "shorten_share_url_with_isgd", fake_shorten)
     state = {
         app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://tinyurl.com/old",
+        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://is.gd/old",
     }
 
-    result = app.resolve_share_url_to_copy(
-        "https://example.test/?config=2", state, api_token="token"
-    )
+    result = app.resolve_share_url_to_copy("https://example.test/?config=2", state)
 
+    assert calls == ["https://example.test/?config=2"]
     assert result.url == "https://example.test/?config=2"
     assert result.shortened is False
     assert app.GENERATED_SHORT_SHARE_URL_SESSION_KEY not in state
     assert state[app.GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] == result.url
+
+
+def test_repository_does_not_reference_removed_url_shorteners() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    forbidden = [
+        "api." + "tiny" + "url.com",
+        "api" + "-create.php",
+        "TINY" + "URL_API_TOKEN",
+        "api." + "dub.co",
+    ]
+    for path in root.rglob("*"):
+        if (
+            path.is_file()
+            and ".git" not in path.parts
+            and ".pytest_cache" not in path.parts
+            and "__pycache__" not in path.parts
+        ):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for value in forbidden:
+                assert value not in text
