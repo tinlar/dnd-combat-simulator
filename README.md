@@ -19,6 +19,24 @@ Attack resolution follows these rules:
 
 Single-attack resolution returns the natural d20 roll, modified attack total, whether the attack hit, whether it was a critical hit, and damage dealt. Random number generation can be injected for deterministic tests.
 
+
+## Damage simulations
+
+The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs one weapon attack per round for a requested number of rounds. That full combat is repeated for the requested number of simulations.
+
+Simulation inputs are:
+
+- Attack bonus
+- Target Armor Class
+- Damage dice, without an embedded modifier
+- Damage modifier
+- Number of rounds
+- Number of simulations
+
+Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation.
+
+Random number generation can be injected so simulations are deterministic in tests. Rounds and simulation counts must both be at least 1; lower values are rejected with clear errors.
+
 ## Dice notation
 
 The dice foundation supports simple notation in the form `XdY`, where `X` is the number of dice to roll and `Y` is the number of sides on each die. An optional flat modifier may be added with `+N` or `-N`.
