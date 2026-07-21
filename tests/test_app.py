@@ -955,7 +955,8 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
 
     mounts = [call[1] for call in calls if call[0] == "component_mount"]
     assert len(mounts) == 1
-    assert list(mounts[0]) == ["data"]
+    assert list(mounts[0]) == ["data", "key"]
+    assert mounts[0]["key"] == "unified-share-configuration"
     share_url = mounts[0]["data"]["url"]
     assert share_url == "https://first-party.example/sim?share=yiEwgVR97pGY"
 
@@ -976,12 +977,12 @@ def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
             "\ndef main"
         )
     ]
-    assert "disabled=True" in share_source
+    assert "disabled" in share_source
     assert "st.code" not in source
     assert "Share link ready" not in source
     assert "GENERATED_SHARE_URL_SESSION_KEY" not in source
     assert "Open Shared Configuration" not in source
-    assert "setTriggerValue" not in app.SHARE_TOOLBAR_JS
+    assert "setTriggerValue" in app.SHARE_TOOLBAR_JS
     assert "setStateValue" not in app.SHARE_TOOLBAR_JS
 
 
@@ -993,21 +994,23 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
 
     from dnd_combat_simulator import app
 
-    calls: list[tuple[str, dict[str, object]]] = []
+    mounts: list[dict[str, object]] = []
     state = {
         "first-build-name": "Build A",
         "first-additional-attack-count": 0,
         app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
     }
 
-    def button(label, **kwargs):
-        calls.append(("button", {"label": label, **kwargs}))
-        return False
+    def component(**kwargs):
+        mounts.append(kwargs)
+        return None
 
     fake_streamlit = SimpleNamespace(
         session_state=state,
         context=SimpleNamespace(url="https://example.test/app"),
-        button=button,
+        components=SimpleNamespace(
+            v2=SimpleNamespace(component=lambda *a, **k: component)
+        ),
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
@@ -1018,7 +1021,8 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
 
     app._render_share_configuration_button()
 
-    assert calls == [("button", {"label": "Share Configuration", "disabled": True})]
+    assert len(mounts) == 1
+    assert mounts[0]["data"]["disabled"] is True
 
 
 def test_validate_configuration_for_ui_scopes_damage_error_to_exact_build_profile() -> (
@@ -1076,6 +1080,9 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
         app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
     }
 
+    def component(**kwargs):
+        return None
+
     class Column:
         def number_input(self, label, **kwargs):
             return state.get(kwargs.get("key"), kwargs.get("value", 1))
@@ -1105,6 +1112,9 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
         warning=lambda *a, **k: None,
         error=lambda *a, **k: None,
         button=button,
+        components=SimpleNamespace(
+            v2=SimpleNamespace(component=lambda *a, **k: component)
+        ),
         columns=lambda spec, **kwargs: [
             col for _ in range(spec if isinstance(spec, int) else len(spec))
         ],
@@ -1137,13 +1147,14 @@ def test_share_component_copies_inside_button_click_with_fallback() -> None:
 
     js = app.SHARE_TOOLBAR_JS
     onclick_index = js.index("button.onclick = async () =>")
-    write_index = js.index("navigator.clipboard.writeText(data.url)")
-    fallback_index = js.index("fallbackInput.value = data.url")
-    exec_index = js.index("document.execCommand('copy')")
-    assert onclick_index < write_index < fallback_index < exec_index
-    assert "showTemporaryStatus('Link copied')" in js
-    assert "showTemporaryStatus('Copy blocked. Link selected.')" in js
-    assert "setTriggerValue" not in js[:write_index]
+    trigger_index = js.index("setTriggerValue('create_share'")
+    write_index = js.index("navigator.clipboard.writeText(targetUrl)")
+    fallback_index = js.index('document.execCommand("copy")')
+    assert write_index < fallback_index
+    assert onclick_index < trigger_index
+    assert "setStatus('Link copied'" in js
+    assert "Copy blocked" in js
+    assert "setTriggerValue" in js
     assert "setStateValue" not in js[:write_index]
 
 
@@ -1556,3 +1567,186 @@ def test_short_share_save_success_and_failure(monkeypatch):
     with pytest.raises(ShareStoreError):
         app._current_short_shared_configuration_url(failing)
     assert len(failing.saved) == 1
+
+
+def test_unified_share_trigger_saves_once_and_rerun_does_not_repeat(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    mounts = []
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+    }
+
+    def mount(**kwargs):
+        mounts.append(kwargs)
+        return {"create_share": "nonce-1"}
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim?old=1"),
+        components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
+        error=lambda message: None,
+    )
+    store = _FakeShareStore()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+
+    app._render_share_configuration_button()
+    app._render_share_configuration_button()
+
+    assert len(store.saved) == 1
+    assert (
+        state[app.GENERATED_SHARE_URL_KEY]
+        == "https://example.test/sim?share=yiEwgVR97pGY"
+    )
+    assert state[app.GENERATED_SHARE_COPY_NONCE_KEY] == 1
+    assert len(mounts) == 2
+
+
+def test_unified_share_existing_url_copy_causes_no_insert(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+        app.GENERATED_SHARE_URL_KEY: "https://example.test/sim?share=existing",
+        app.GENERATED_SHARE_FINGERPRINT_KEY: "fp",
+    }
+
+    def mount(**kwargs):
+        return {"create_share": "copy-click"}
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim"),
+        components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
+    )
+    store = _FakeShareStore()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+    monkeypatch.setattr(
+        app, "_share_configuration_fingerprint", lambda configuration: "fp"
+    )
+
+    app._render_share_configuration_button()
+
+    assert store.saved == []
+
+
+def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    triggers = iter([None, {"create_share": "nonce-2"}])
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+        app.GENERATED_SHARE_URL_KEY: "https://example.test/sim?share=old",
+        app.GENERATED_SHARE_FINGERPRINT_KEY: "stale",
+    }
+
+    def mount(**kwargs):
+        return next(triggers)
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim"),
+        components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
+        error=lambda message: None,
+    )
+    store = _FakeShareStore()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+
+    app._render_share_configuration_button()
+    assert app.GENERATED_SHARE_URL_KEY not in state
+    app._render_share_configuration_button()
+
+    assert len(store.saved) == 1
+    assert (
+        state[app.GENERATED_SHARE_URL_KEY]
+        == "https://example.test/sim?share=yiEwgVR97pGY"
+    )
+
+
+def test_unified_share_save_error_is_safe(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.share_store import ShareStoreError
+
+    messages = []
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+    }
+
+    def mount(**kwargs):
+        return {"create_share": "nonce-error"}
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim"),
+        components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
+        error=messages.append,
+    )
+    store = _FakeShareStore(save_error=ShareStoreError("database secret detail"))
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+
+    app._render_share_configuration_button()
+
+    assert messages == ["Unable to create a share link right now. Try again later."]
+    assert app.GENERATED_SHARE_URL_KEY not in state
+
+
+def test_missing_secrets_disable_unified_component(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    mounts = []
+    fake_streamlit = SimpleNamespace(
+        session_state={},
+        context=SimpleNamespace(url="https://example.test/sim"),
+        components=SimpleNamespace(
+            v2=SimpleNamespace(component=lambda *a, **k: lambda **kw: mounts.append(kw))
+        ),
+        caption=lambda message: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: None)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+
+    app._render_share_configuration_button()
+
+    assert len(mounts) == 1
+    assert mounts[0]["data"]["disabled"] is True
+    assert "not configured" in mounts[0]["data"]["message"]
