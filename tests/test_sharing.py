@@ -27,6 +27,7 @@ from dnd_combat_simulator.sharing import (
     MAX_ENCODED_TOKEN_LENGTH,
     SharedConfigurationError,
     build_share_url,
+    build_short_share_url,
     deserialize_shared_configuration,
     serialize_shared_configuration,
     shared_configuration_from_configs,
@@ -343,3 +344,15 @@ def test_invalid_shared_configuration_can_decode_without_validation_for_field_ma
 
     decoded = deserialize_shared_configuration(token, validate=False)
     assert decoded.build_a.attack_profiles[0].damage_formula == "1d6+"
+
+
+def test_short_share_url_one_encoded_share_param_and_strips_query():
+    url = build_short_share_url("https://example.test/sim?old=1#frag", "id +/")
+    parsed = urlsplit(url)
+    qs = parse_qs(parsed.query)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "example.test"
+    assert parsed.path == "/sim"
+    assert parsed.fragment == ""
+    assert set(qs) == {"share"}
+    assert qs["share"] == ["id +/"]
