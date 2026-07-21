@@ -172,3 +172,51 @@ def test_builds_can_use_different_numbers_of_attack_profiles() -> None:
     assert len(comparison.second_build.attack_profiles) == 1
     assert comparison.first_result.total_attacks_made == 3
     assert comparison.second_result.total_attacks_made == 1
+
+
+def test_page_width_css_uses_centered_ninety_viewport_width() -> None:
+    from dnd_combat_simulator.app import PAGE_WIDTH_CSS
+
+    assert ".stApp .block-container" in PAGE_WIDTH_CSS
+    assert "width: 90vw;" in PAGE_WIDTH_CSS
+    assert "max-width: 90vw;" in PAGE_WIDTH_CSS
+    assert "margin-left: auto;" in PAGE_WIDTH_CSS
+    assert "margin-right: auto;" in PAGE_WIDTH_CSS
+    assert "box-sizing: border-box;" in PAGE_WIDTH_CSS
+    assert "padding-left: clamp(1rem, 2vw, 2.5rem);" in PAGE_WIDTH_CSS
+    assert "padding-right: clamp(1rem, 2vw, 2.5rem);" in PAGE_WIDTH_CSS
+    assert "@media (max-width: 640px)" in PAGE_WIDTH_CSS
+
+
+def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import PAGE_WIDTH_CSS, configure_page
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def set_page_config(**kwargs: object) -> None:
+        calls.append(("set_page_config", kwargs))
+
+    def markdown(body: str, **kwargs: object) -> None:
+        calls.append(("markdown", {"body": body, **kwargs}))
+
+    fake_streamlit = SimpleNamespace(
+        set_page_config=set_page_config,
+        markdown=markdown,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    configure_page()
+
+    assert calls == [
+        (
+            "set_page_config",
+            {"page_title": APP_TITLE, "page_icon": "🎲", "layout": "wide"},
+        ),
+        (
+            "markdown",
+            {"body": PAGE_WIDTH_CSS, "unsafe_allow_html": True},
+        ),
+    ]
