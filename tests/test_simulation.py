@@ -2,6 +2,7 @@ import pytest
 
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
+    AttackProfile,
     BuildConfig,
     ComparisonDifference,
     ScenarioConfig,
@@ -263,3 +264,72 @@ def test_compare_builds_reports_differences_and_higher_damage_build() -> None:
     assert comparison.difference.average_total_damage == pytest.approx(-2.4)
     assert comparison.difference.hit_rate == 0
     assert comparison.difference.critical_hit_rate == 0
+
+
+def test_build_with_two_attack_profiles_combines_damage_and_preserves_rates() -> None:
+    rng = PredictableRng(
+        [
+            10,
+            4,  # slash hits for 7
+            20,
+            1,
+            2,  # smite crits for 6
+        ]
+    )
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Slash", 0, "1d6", 3, 1),
+            AttackProfile("Smite", 0, "1d4", 3, 1),
+        ),
+        rng=rng,
+    )
+
+    assert result.total_attacks_made == 2
+    assert result.attacks_per_round == 2
+    assert result.average_total_damage_per_simulation == 13
+    assert result.average_damage_per_round == 13
+    assert result.hit_rate == 1
+    assert result.critical_hit_rate == 0.5
+    assert [
+        profile.attack_profile.name for profile in result.attack_profile_results
+    ] == [
+        "Slash",
+        "Smite",
+    ]
+    assert [
+        profile.average_damage_per_round for profile in result.attack_profile_results
+    ] == [
+        7,
+        6,
+    ]
+
+
+def test_compare_builds_accepts_explicit_two_profile_build_config() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            name="Sword and Bow",
+            attack_bonus=0,
+            damage_dice="1d4",
+            damage_modifier=0,
+            attacks_per_round=1,
+            attack_profiles=(
+                AttackProfile("Sword", 20, "1d4", 1, 1),
+                AttackProfile("Bow", 20, "1d6", 2, 1),
+            ),
+        ),
+        second_build=BuildConfig("Single", 20, "1d4", 1, 1),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert len(comparison.first_result.attack_profile_results) == 2
+    assert comparison.first_result.total_attacks_made == 2
+    assert comparison.second_result.total_attacks_made == 1
+    assert comparison.higher_average_damage_build_name == "Sword and Bow"

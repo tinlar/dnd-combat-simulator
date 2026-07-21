@@ -22,20 +22,22 @@ Single-attack resolution returns the attack roll mode, all natural d20 rolls, th
 
 ## Damage simulations
 
-The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs a requested number of weapon attacks per round for a requested number of rounds. That full combat is repeated for the requested number of simulations.
+The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs one or more distinct attack profiles per round for a requested number of rounds. Each attack profile has its own attack name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. That full combat is repeated for the requested number of simulations.
 
 Simulation inputs are:
 
-- Attack bonus
+- One or more attack profiles, each with:
+  - Attack name
+  - Attack bonus
+  - Damage dice, without an embedded modifier
+  - Damage modifier
+  - Attacks per round, defaulting to 1
+  - Attack roll mode, defaulting to normal
 - Target Armor Class
-- Damage dice, without an embedded modifier
-- Damage modifier
 - Number of rounds
-- Attacks per round, defaulting to 1
 - Number of simulations
-- Attack roll mode, defaulting to normal
 
-Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, attacks per round, attack roll mode, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation.
+Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, combined attacks per round across all attack profiles, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation. Results also include a per-attack-profile breakdown with each profile's total attacks, average damage, hit rate, and critical hit rate. Overall hit and critical-hit statistics are preserved across all attacks from all profiles.
 
 Random number generation can be injected so simulations are deterministic in tests. Rounds, attacks per round, and simulation counts must all be at least 1; lower values are rejected with clear errors.
 
@@ -47,7 +49,7 @@ The simulator can compare two named builds side by side while running both build
 - Number of rounds
 - Number of simulations
 
-Each compared build has its own build name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. The comparison output shows each build's average damage per round, average total damage, hit percentage, and critical hit percentage side by side, plus first-build-minus-second-build differences for those metrics. It also clearly identifies which build has the higher average damage per round, or reports a tie.
+Each compared build has its own build name and one or more attack profiles. Existing single-profile build configurations remain supported by treating the legacy attack fields as one default attack profile. The comparison output shows each build's average damage per round, average total damage, hit percentage, and critical hit percentage side by side, plus first-build-minus-second-build differences for those metrics. It also clearly identifies which build has the higher average damage per round, or reports a tie.
 
 Build comparisons are implemented in Streamlit-independent simulation code. For repeatable and fair comparisons, the comparison runner creates separate random-number-generator instances for the two builds and initializes both with the same seed.
 
@@ -92,7 +94,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, number of rounds, number of simulations, and random seed once, then enter each build's name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. Select **Compare Builds** to view side-by-side aggregate damage, hit-rate, and critical-hit-rate results with differences and the higher-damage build called out.
+The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, number of rounds, number of simulations, and random seed once, then enter each build's name plus one required attack profile. Enable the optional second attack profile checkbox for a build to add another distinct attack routine with its own attack name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. Select **Compare Builds** to view side-by-side aggregate damage, hit-rate, and critical-hit-rate results with differences and the higher-damage build called out.
 
 ## Run tests
 
