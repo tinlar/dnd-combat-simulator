@@ -190,6 +190,10 @@ def shorten_share_url_with_isgd(
         headers={
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; DnDCombatSimulator/1.0; "
+                "+https://github.com/tinlar/dnd-combat-simulator)"
+            ),
         },
         method="POST",
     )

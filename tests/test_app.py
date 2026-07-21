@@ -885,12 +885,44 @@ def test_shorten_share_url_with_isgd_constructs_official_form_request(
     assert request.get_method() == "POST"
     assert request.headers["Accept"] == "application/json"
     assert request.headers["Content-type"] == "application/x-www-form-urlencoded"
+    assert request.headers["User-agent"] == (
+        "Mozilla/5.0 (compatible; DnDCombatSimulator/1.0; "
+        "+https://github.com/tinlar/dnd-combat-simulator)"
+    )
     assert "Authorization" not in request.headers
     body = parse_qs(request.data.decode("utf-8"), keep_blank_values=True)
     assert body == {"format": ["json"], "url": [long_url]}
     assert "logstats" not in body
     assert "callback" not in body
     assert "shorturl" not in body
+
+
+def test_shorten_share_url_with_isgd_accepts_javascript_content_type(
+    monkeypatch,
+) -> None:
+    from dnd_combat_simulator import app
+
+    class Response:
+        headers = {"Content-Type": "text/javascript; charset=utf8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, size):
+            assert size == 8192
+            return b'{ "shorturl": "https://is.gd/jGamH3" }'
+
+    monkeypatch.setattr(app, "urlopen", lambda request, *, timeout: Response())
+
+    result = app.shorten_share_url_with_isgd("https://example.test/sim?config=abc")
+
+    assert result.url == "https://is.gd/jGamH3"
+    assert result.shortened is True
+    assert result.rate_limited is False
+    assert result.error_message is None
 
 
 @pytest.mark.parametrize(
