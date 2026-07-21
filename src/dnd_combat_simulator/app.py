@@ -12,6 +12,8 @@ from dnd_combat_simulator.combat import (
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
+    available_features,
+    is_feature_available,
 )
 from dnd_combat_simulator.sharing import (
     SharedBuildConfiguration,
@@ -1174,24 +1176,13 @@ def _feature_inputs(
         columns = getattr(st, "columns", None)
         feature_columns = columns(min(3, len(FEATURE_ORDER))) if columns else None
         for index, feature in enumerate(FEATURE_ORDER):
-            disabled = (
-                feature
-                in {
-                    AttackFeature.ELVEN_ACCURACY,
-                    AttackFeature.GREAT_WEAPON_FIGHTING,
-                    AttackFeature.TAVERN_BRAWLER,
-                }
-                and resolution_type is not ResolutionType.ATTACK_ROLL
-            ) or (
-                feature is AttackFeature.POTENT_CANTRIP
-                and resolution_type is ResolutionType.AUTOMATIC_DAMAGE
-            ) or (
-                feature is AttackFeature.STOP_ON_MISS
-                and (
-                    resolution_type is not ResolutionType.ATTACK_ROLL
-                    or affected_targets != 1
-                )
+            disabled = not is_feature_available(
+                feature, resolution_type, affected_targets=affected_targets
             )
+            if disabled:
+                getattr(st, "session_state", {}).pop(
+                    feature_widget_key(prefix, feature), None
+                )
             target = (
                 feature_columns[index % len(feature_columns)]
                 if feature_columns
@@ -1507,10 +1498,17 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
             ),
             ResolutionType.ATTACK_ROLL,
         )
-        features = frozenset(
-            feature
-            for feature in FEATURE_ORDER
-            if session_state.get(feature_widget_key(widget_prefix, feature), False)
+        affected_targets = int(
+            session_state.get(profile_widget_key(widget_prefix, "affected_targets"), 1)
+        )
+        features = available_features(
+            frozenset(
+                feature
+                for feature in FEATURE_ORDER
+                if session_state.get(feature_widget_key(widget_prefix, feature), False)
+            ),
+            resolution,
+            affected_targets=affected_targets,
         )
         profiles.append(
             AttackProfile(
@@ -1532,11 +1530,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         profile_widget_key(widget_prefix, "attacks_per_round"), 1
                     )
                 ),
-                int(
-                    session_state.get(
-                        profile_widget_key(widget_prefix, "affected_targets"), 1
-                    )
-                ),
+                affected_targets,
                 AttackRollMode(
                     str(
                         session_state.get(

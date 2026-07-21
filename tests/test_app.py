@@ -1031,3 +1031,141 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
     assert "focus-visible" in css
     assert "black" not in combined.lower()
     assert "white" not in combined.lower()
+
+
+def test_build_from_state_filters_attack_roll_feature_after_automatic_damage_change(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _build_from_state,
+        feature_widget_key,
+        profile_widget_key,
+    )
+    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
+
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        profile_widget_key("first-primary", "resolution_type"): "Automatic Damage",
+        feature_widget_key("first-primary", AttackFeature.ELVEN_ACCURACY): True,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    profile = _build_from_state("first", "Build A").attack_profiles[0]
+    assert profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE
+    assert AttackFeature.ELVEN_ACCURACY not in profile.features
+
+
+@pytest.mark.parametrize(
+    "resolution_label",
+    ["Saving Throw", "Automatic Damage"],
+)
+def test_build_from_state_ignores_stale_attack_roll_only_features(
+    monkeypatch, resolution_label
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _build_from_state,
+        feature_widget_key,
+        profile_widget_key,
+    )
+    from dnd_combat_simulator.combat import AttackFeature
+
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        profile_widget_key("first-primary", "resolution_type"): resolution_label,
+        feature_widget_key("first-primary", AttackFeature.GREAT_WEAPON_FIGHTING): True,
+        feature_widget_key("first-primary", AttackFeature.TAVERN_BRAWLER): True,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    profile = _build_from_state("first", "Build A").attack_profiles[0]
+    assert profile.features == frozenset()
+
+
+def test_build_from_state_filters_potent_cantrip_for_automatic_damage(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _build_from_state,
+        feature_widget_key,
+        profile_widget_key,
+    )
+    from dnd_combat_simulator.combat import AttackFeature
+
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        profile_widget_key("first-primary", "resolution_type"): "Automatic Damage",
+        feature_widget_key("first-primary", AttackFeature.POTENT_CANTRIP): True,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    profile = _build_from_state("first", "Build A").attack_profiles[0]
+    assert profile.features == frozenset()
+
+
+def test_build_from_state_filters_stop_on_miss_when_targets_exceed_one(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _build_from_state,
+        feature_widget_key,
+        profile_widget_key,
+    )
+    from dnd_combat_simulator.combat import AttackFeature
+
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        profile_widget_key("first-primary", "resolution_type"): "Attack Roll",
+        profile_widget_key("first-primary", "affected_targets"): 2,
+        feature_widget_key("first-primary", AttackFeature.STOP_ON_MISS): True,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    profile = _build_from_state("first", "Build A").attack_profiles[0]
+    assert profile.features == frozenset()
+
+
+def test_current_shared_configuration_url_ignores_stale_unavailable_features(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _current_shared_configuration_url,
+        feature_widget_key,
+        profile_widget_key,
+    )
+    from dnd_combat_simulator.combat import AttackFeature
+
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        profile_widget_key("first-primary", "resolution_type"): "Automatic Damage",
+        feature_widget_key("first-primary", AttackFeature.ELVEN_ACCURACY): True,
+        feature_widget_key("first-primary", AttackFeature.POTENT_CANTRIP): True,
+    }
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/app"),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    url = _current_shared_configuration_url()
+
+    assert url.startswith("https://example.test/app?")
