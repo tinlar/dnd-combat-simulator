@@ -27,19 +27,23 @@ def test_format_rate_uses_percentage() -> None:
     ("inputs", "message"),
     [
         (
-            SimulationInputs(5, 15, "", 3, 5, 10_000),
+            SimulationInputs(5, 15, "", 3, 5, 1, 10_000),
             "Damage dice is required",
         ),
         (
-            SimulationInputs(5, 0, "1d8", 3, 5, 10_000),
+            SimulationInputs(5, 0, "1d8", 3, 5, 1, 10_000),
             "Target Armor Class must be at least 1",
         ),
         (
-            SimulationInputs(5, 15, "1d8", 3, 0, 10_000),
+            SimulationInputs(5, 15, "1d8", 3, 0, 1, 10_000),
             "Number of rounds must be at least 1",
         ),
         (
-            SimulationInputs(5, 15, "1d8", 3, 5, 0),
+            SimulationInputs(5, 15, "1d8", 3, 5, 0, 10_000),
+            "Attacks per round must be at least 1",
+        ),
+        (
+            SimulationInputs(5, 15, "1d8", 3, 5, 1, 0),
             "Number of simulations must be at least 1",
         ),
     ],
@@ -59,10 +63,12 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
             damage_dice=" 1d8 ",
             damage_modifier=3,
             rounds=1,
+            attacks_per_round=2,
             simulations=1,
         )
     )
 
     assert result.simulations_run == 1
     assert result.rounds_per_simulation == 1
-    assert result.total_attacks_made == 1
+    assert result.attacks_per_round == 2
+    assert result.total_attacks_made == 2
