@@ -1,5 +1,3 @@
-import pytest
-
 from dnd_combat_simulator.combat import (
     AttackResult,
     AttackRollMode,
@@ -25,8 +23,7 @@ def test_natural_1_automatically_misses_even_when_total_meets_ac() -> None:
     assert resolve_weapon_attack(
         attack_bonus=99,
         target_armor_class=10,
-        damage_dice="1d8",
-        damage_modifier=4,
+        damage_dice="1d8+4",
         rng=rng,
     ) == AttackResult(
         attack_roll_mode=AttackRollMode.NORMAL,
@@ -46,8 +43,7 @@ def test_natural_20_automatically_hits_and_is_critical() -> None:
     assert resolve_weapon_attack(
         attack_bonus=-99,
         target_armor_class=30,
-        damage_dice="1d8",
-        damage_modifier=2,
+        damage_dice="1d8+2",
         rng=rng,
     ) == AttackResult(
         attack_roll_mode=AttackRollMode.NORMAL,
@@ -67,8 +63,7 @@ def test_normal_hit_rolls_damage_once_and_adds_modifier() -> None:
     assert resolve_weapon_attack(
         attack_bonus=4,
         target_armor_class=16,
-        damage_dice="1d8",
-        damage_modifier=3,
+        damage_dice="1d8+3",
         rng=rng,
     ) == AttackResult(
         attack_roll_mode=AttackRollMode.NORMAL,
@@ -88,8 +83,7 @@ def test_attack_total_tie_hits_target_armor_class() -> None:
     result = resolve_weapon_attack(
         attack_bonus=3,
         target_armor_class=15,
-        damage_dice="1d6",
-        damage_modifier=1,
+        damage_dice="1d6+1",
         rng=rng,
     )
 
@@ -104,8 +98,7 @@ def test_miss_deals_zero_damage_and_does_not_roll_damage() -> None:
     result = resolve_weapon_attack(
         attack_bonus=2,
         target_armor_class=20,
-        damage_dice="2d6",
-        damage_modifier=10,
+        damage_dice="2d6+10",
         rng=rng,
     )
 
@@ -127,8 +120,7 @@ def test_critical_damage_doubles_only_damage_dice_and_adds_modifier_once() -> No
     result = resolve_weapon_attack(
         attack_bonus=5,
         target_armor_class=18,
-        damage_dice="2d6",
-        damage_modifier=4,
+        damage_dice="2d6+4",
         rng=rng,
     )
 
@@ -143,8 +135,7 @@ def test_hit_damage_cannot_be_below_zero() -> None:
     result = resolve_weapon_attack(
         attack_bonus=5,
         target_armor_class=12,
-        damage_dice="1d4",
-        damage_modifier=-10,
+        damage_dice="1d4-10",
         rng=rng,
     )
 
@@ -152,15 +143,14 @@ def test_hit_damage_cannot_be_below_zero() -> None:
     assert result.damage_dealt == 0
 
 
-def test_damage_dice_modifiers_must_be_passed_separately() -> None:
-    with pytest.raises(ValueError, match="Damage dice must not include a modifier"):
-        resolve_weapon_attack(
-            attack_bonus=5,
-            target_armor_class=12,
-            damage_dice="1d8+2",
-            damage_modifier=0,
-            rng=PredictableRng([15]),
-        )
+def test_damage_dice_modifiers_are_inline() -> None:
+    result = resolve_weapon_attack(
+        attack_bonus=5,
+        target_armor_class=12,
+        damage_dice="1d8+2",
+        rng=PredictableRng([15, 8]),
+    )
+    assert result.damage_dealt == 10
 
 
 def test_advantage_uses_higher_selected_die_for_hit() -> None:
@@ -169,8 +159,7 @@ def test_advantage_uses_higher_selected_die_for_hit() -> None:
     result = resolve_weapon_attack(
         attack_bonus=2,
         target_armor_class=18,
-        damage_dice="1d8",
-        damage_modifier=1,
+        damage_dice="1d8+1",
         attack_roll_mode=AttackRollMode.ADVANTAGE,
         rng=rng,
     )
@@ -193,8 +182,7 @@ def test_disadvantage_uses_lower_selected_die_for_miss() -> None:
     result = resolve_weapon_attack(
         attack_bonus=8,
         target_armor_class=15,
-        damage_dice="1d8",
-        damage_modifier=1,
+        damage_dice="1d8+1",
         attack_roll_mode=AttackRollMode.DISADVANTAGE,
         rng=rng,
     )
@@ -217,8 +205,7 @@ def test_advantage_selected_natural_20_is_critical() -> None:
     result = resolve_weapon_attack(
         attack_bonus=-99,
         target_armor_class=30,
-        damage_dice="1d6",
-        damage_modifier=1,
+        damage_dice="1d6+1",
         attack_roll_mode=AttackRollMode.ADVANTAGE,
         rng=rng,
     )
@@ -236,8 +223,7 @@ def test_disadvantage_selected_natural_1_automatically_misses() -> None:
     result = resolve_weapon_attack(
         attack_bonus=99,
         target_armor_class=10,
-        damage_dice="1d8",
-        damage_modifier=4,
+        damage_dice="1d8+4",
         attack_roll_mode=AttackRollMode.DISADVANTAGE,
         rng=rng,
     )
@@ -253,8 +239,7 @@ def test_saving_throw_succeeds_when_total_equals_save_dc() -> None:
     result = resolve_saving_throw_damage(
         save_dc=15,
         enemy_save_bonus=3,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=PredictableRng([12]),
     )
 
@@ -267,8 +252,7 @@ def test_saving_throw_fails_when_total_below_save_dc_and_deals_full_damage() -> 
     result = resolve_saving_throw_damage(
         save_dc=15,
         enemy_save_bonus=3,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=PredictableRng([11, 4]),
     )
 
@@ -280,8 +264,7 @@ def test_saving_throw_natural_1_can_succeed_with_sufficient_bonus() -> None:
     result = resolve_saving_throw_damage(
         save_dc=15,
         enemy_save_bonus=14,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=PredictableRng([1]),
     )
 
@@ -292,8 +275,7 @@ def test_saving_throw_natural_20_can_fail_against_high_dc() -> None:
     result = resolve_saving_throw_damage(
         save_dc=25,
         enemy_save_bonus=3,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=PredictableRng([20, 5]),
     )
 
@@ -305,8 +287,7 @@ def test_successful_save_can_deal_half_damage_rounded_down_after_modifier() -> N
     result = resolve_saving_throw_damage(
         save_dc=15,
         enemy_save_bonus=3,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
         rng=PredictableRng([12, 3]),
     )
@@ -319,8 +300,7 @@ def test_saving_throws_never_critically_hit() -> None:
     result = resolve_saving_throw_damage(
         save_dc=15,
         enemy_save_bonus=0,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=PredictableRng([20, 3]),
     )
 
@@ -333,8 +313,7 @@ def test_automatic_damage_rolls_damage_without_d20_and_cannot_crit() -> None:
     rng = PredictableRng([4])
 
     result = resolve_automatic_damage(
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rng=rng,
     )
 
@@ -347,8 +326,7 @@ def test_automatic_damage_cannot_be_below_zero() -> None:
     from dnd_combat_simulator.combat import resolve_automatic_damage
 
     result = resolve_automatic_damage(
-        damage_dice="1d4",
-        damage_modifier=-10,
+        damage_dice="1d4-10",
         rng=PredictableRng([1]),
     )
 

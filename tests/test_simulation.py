@@ -46,8 +46,7 @@ def test_run_damage_simulations_returns_summary_statistics() -> None:
     result = run_damage_simulations(
         attack_bonus=5,
         target_armor_class=15,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rounds=3,
         simulations=2,
         rng=rng,
@@ -87,7 +86,6 @@ def test_simulation_does_not_roll_damage_for_misses() -> None:
         attack_bonus=0,
         target_armor_class=20,
         damage_dice="2d8",
-        damage_modifier=4,
         rounds=2,
         simulations=1,
         rng=rng,
@@ -108,7 +106,6 @@ def test_rounds_must_be_at_least_one(rounds: int) -> None:
             attack_bonus=5,
             target_armor_class=15,
             damage_dice="1d8",
-            damage_modifier=3,
             rounds=rounds,
             simulations=1,
             rng=PredictableRng([]),
@@ -122,7 +119,6 @@ def test_simulations_must_be_at_least_one(simulations: int) -> None:
             attack_bonus=5,
             target_armor_class=15,
             damage_dice="1d8",
-            damage_modifier=3,
             rounds=1,
             simulations=simulations,
             rng=PredictableRng([]),
@@ -136,7 +132,6 @@ def test_attacks_per_round_must_be_at_least_one(attacks_per_round: int) -> None:
             attack_bonus=5,
             target_armor_class=15,
             damage_dice="1d8",
-            damage_modifier=3,
             rounds=1,
             simulations=1,
             attacks_per_round=attacks_per_round,
@@ -153,8 +148,7 @@ def test_multiple_attacks_per_round_are_deterministic(
     result = run_damage_simulations(
         attack_bonus=5,
         target_armor_class=15,
-        damage_dice="1d6",
-        damage_modifier=2,
+        damage_dice="1d6+2",
         rounds=1,
         simulations=1,
         attacks_per_round=attacks_per_round,
@@ -178,16 +172,15 @@ def test_multiple_attacks_per_round_are_deterministic(
 
 
 def test_invalid_damage_dice_errors_are_reused_from_attack_resolution() -> None:
-    with pytest.raises(ValueError, match="Damage dice must not include a modifier"):
-        run_damage_simulations(
-            attack_bonus=5,
-            target_armor_class=15,
-            damage_dice="1d8+3",
-            damage_modifier=0,
-            rounds=1,
-            simulations=1,
-            rng=PredictableRng([]),
-        )
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=15,
+        damage_dice="1d8+3",
+        rounds=1,
+        simulations=1,
+        rng=PredictableRng([10, 4]),
+    )
+    assert result.average_total_damage_per_simulation == 7
 
 
 def test_attack_roll_mode_applies_to_every_attack_in_simulation() -> None:
@@ -196,8 +189,7 @@ def test_attack_roll_mode_applies_to_every_attack_in_simulation() -> None:
     result = run_damage_simulations(
         attack_bonus=3,
         target_armor_class=15,
-        damage_dice="1d6",
-        damage_modifier=1,
+        damage_dice="1d6+2",
         rounds=1,
         simulations=1,
         attacks_per_round=2,
@@ -208,7 +200,7 @@ def test_attack_roll_mode_applies_to_every_attack_in_simulation() -> None:
     assert result.attack_roll_mode is AttackRollMode.ADVANTAGE
     assert result.total_attacks_made == 2
     assert result.hit_rate == 1
-    assert result.average_total_damage_per_simulation == 11
+    assert result.average_total_damage_per_simulation == 13
     assert rng.calls == [
         (1, 20),
         (1, 20),
@@ -225,14 +217,12 @@ def test_compare_builds_uses_same_seed_with_separate_rng_instances() -> None:
             name="Accurate",
             attack_bonus=20,
             damage_dice="1d4",
-            damage_modifier=0,
             attacks_per_round=1,
         ),
         second_build=BuildConfig(
             name="Heavy",
             attack_bonus=20,
             damage_dice="1d4",
-            damage_modifier=0,
             attacks_per_round=1,
         ),
         scenario=ScenarioConfig(target_armor_class=1, rounds=3, simulations=2),
@@ -250,14 +240,12 @@ def test_compare_builds_reports_differences_and_higher_damage_build() -> None:
             name="Rapier",
             attack_bonus=5,
             damage_dice="1d8",
-            damage_modifier=4,
             attacks_per_round=1,
         ),
         second_build=BuildConfig(
             name="Greatsword",
             attack_bonus=5,
-            damage_dice="1d8",
-            damage_modifier=6,
+            damage_dice="1d8+1",
             attacks_per_round=1,
         ),
         scenario=ScenarioConfig(target_armor_class=14, rounds=2, simulations=5),
@@ -265,8 +253,8 @@ def test_compare_builds_reports_differences_and_higher_damage_build() -> None:
     )
 
     assert comparison.higher_average_damage_build_name == "Greatsword"
-    assert comparison.difference.average_damage_per_round == pytest.approx(-1.2)
-    assert comparison.difference.average_total_damage == pytest.approx(-2.4)
+    assert comparison.difference.average_damage_per_round == pytest.approx(-0.6)
+    assert comparison.difference.average_total_damage == pytest.approx(-1.2)
     assert comparison.difference.hit_rate == 0
     assert comparison.difference.critical_hit_rate == 0
 
@@ -286,12 +274,11 @@ def test_build_with_two_attack_profiles_combines_damage_and_preserves_rates() ->
         attack_bonus=0,
         target_armor_class=10,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=(
-            AttackProfile("Slash", 0, "1d6", 3, 1),
-            AttackProfile("Smite", 0, "1d4", 3, 1),
+            AttackProfile("Slash", 0, "1d6+3", 1),
+            AttackProfile("Smite", 0, "1d4+3", 1),
         ),
         rng=rng,
     )
@@ -322,14 +309,13 @@ def test_compare_builds_accepts_explicit_two_profile_build_config() -> None:
             name="Sword and Bow",
             attack_bonus=0,
             damage_dice="1d4",
-            damage_modifier=0,
             attacks_per_round=1,
             attack_profiles=(
-                AttackProfile("Sword", 20, "1d4", 1, 1),
-                AttackProfile("Bow", 20, "1d6", 2, 1),
+                AttackProfile("Sword", 20, "1d4+1", 1),
+                AttackProfile("Bow", 20, "1d6+2", 1),
             ),
         ),
-        second_build=BuildConfig("Single", 20, "1d4", 1, 1),
+        second_build=BuildConfig("Single", 20, "1d4+1", 1),
         scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
         seed=1,
     )
@@ -342,14 +328,13 @@ def test_compare_builds_accepts_explicit_two_profile_build_config() -> None:
 
 def test_simulation_accepts_more_than_two_attack_profiles() -> None:
     profiles = tuple(
-        AttackProfile(f"Attack {index}", 20, "1d4", 0, 1) for index in range(1, 5)
+        AttackProfile(f"Attack {index}", 20, "1d4", 1) for index in range(1, 5)
     )
 
     result = run_damage_simulations(
         attack_bonus=0,
         target_armor_class=1,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=profiles,
@@ -399,12 +384,11 @@ def test_active_rounds_use_different_attack_profile_each_round() -> None:
         attack_bonus=0,
         target_armor_class=1,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=2,
         simulations=1,
         attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1, active_rounds="1"),
-            AttackProfile("B", 20, "1d6", 0, 1, active_rounds="2"),
+            AttackProfile("A", 20, "1d4", 1, active_rounds="1"),
+            AttackProfile("B", 20, "1d6", 1, active_rounds="2"),
         ),
         rng=PredictableRng([10, 2, 10, 6]),
     )
@@ -417,12 +401,11 @@ def test_active_rounds_allow_round_with_no_attacks_and_preserve_metrics() -> Non
         attack_bonus=0,
         target_armor_class=1,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=2,
         simulations=1,
         attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1, active_rounds="1"),
-            AttackProfile("B", 20, "1d6", 0, 1, active_rounds="1"),
+            AttackProfile("A", 20, "1d4", 1, active_rounds="1"),
+            AttackProfile("B", 20, "1d6", 1, active_rounds="1"),
         ),
         rng=PredictableRng([10, 2, 10, 6]),
     )
@@ -441,10 +424,9 @@ def test_active_rounds_beyond_scenario_length_are_ignored() -> None:
         attack_bonus=0,
         target_armor_class=1,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
-        attack_profiles=(AttackProfile("A", 20, "1d4", 0, 1, active_rounds="2"),),
+        attack_profiles=(AttackProfile("A", 20, "1d4", 1, active_rounds="2"),),
         rng=PredictableRng([]),
     )
     assert result.total_attacks_made == 0
@@ -456,7 +438,6 @@ def test_existing_profile_without_active_rounds_repeats_attacks_per_round() -> N
         attack_bonus=20,
         target_armor_class=1,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=2,
         simulations=1,
         attacks_per_round=2,
@@ -472,16 +453,14 @@ def test_mixed_attack_roll_and_saving_throw_profiles_in_one_build() -> None:
         target_armor_class=10,
         enemy_save_bonus=3,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=(
-            AttackProfile("Slash", 5, "1d6", 3, 1),
+            AttackProfile("Slash", 5, "1d6+3", 1),
             AttackProfile(
                 "Burn",
                 None,
-                "1d8",
-                2,
+                "1d8+2",
                 1,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=15,
@@ -503,16 +482,14 @@ def test_active_rounds_with_saving_throw_profiles() -> None:
         target_armor_class=10,
         enemy_save_bonus=3,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=2,
         simulations=1,
         attack_profiles=(
             AttackProfile(
                 "Burn",
                 None,
-                "1d8",
-                2,
-                1,
+                "1d8+2",
+                attacks_per_round=1,
                 active_rounds="2",
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=15,
@@ -533,19 +510,17 @@ def test_active_rounds_with_saving_throw_profiles() -> None:
 
 def test_build_comparison_can_use_different_resolution_types() -> None:
     comparison = compare_builds(
-        first_build=BuildConfig("Attack", 20, "1d4", 0, 1),
+        first_build=BuildConfig("Attack", 20, "1d4", 1),
         second_build=BuildConfig(
             name="Save",
             attack_bonus=0,
             damage_dice="1d4",
-            damage_modifier=0,
             attacks_per_round=1,
             attack_profiles=(
                 AttackProfile(
                     "Save damage",
                     None,
                     "1d4",
-                    0,
                     1,
                     resolution_type=ResolutionType.SAVING_THROW,
                     save_dc=30,
@@ -564,14 +539,13 @@ def test_build_comparison_can_use_different_resolution_types() -> None:
 
 
 def test_existing_attack_roll_profiles_default_correctly() -> None:
-    profile = AttackProfile("Slash", 5, "1d6", 3, 1)
+    profile = AttackProfile("Slash", 5, "1d6+3", 1)
 
     assert profile.resolution_type is ResolutionType.ATTACK_ROLL
     result = run_damage_simulations(
         attack_bonus=0,
         target_armor_class=10,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=(profile,),
@@ -581,7 +555,7 @@ def test_existing_attack_roll_profiles_default_correctly() -> None:
 
 
 def test_attack_profile_defaults_to_one_affected_target() -> None:
-    assert AttackProfile("Strike", 5, "1d6", 2, 1).affected_targets == 1
+    assert AttackProfile("Strike", 5, "1d6+2", 1).affected_targets == 1
 
 
 def test_attack_roll_profile_resolves_each_target_independently() -> None:
@@ -591,10 +565,9 @@ def test_attack_roll_profile_resolves_each_target_independently() -> None:
         attack_bonus=5,
         target_armor_class=15,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
-        attack_profiles=(AttackProfile("Cleave", 5, "1d4", 0, 1, affected_targets=3),),
+        attack_profiles=(AttackProfile("Cleave", 5, "1d4", 1, affected_targets=3),),
         rng=rng,
     )
 
@@ -636,12 +609,11 @@ def test_advantage_and_disadvantage_are_independent_per_target(
         attack_bonus=3,
         target_armor_class=15,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=(
             AttackProfile(
-                "Swing", 3, "1d4", 0, 1, affected_targets=2, attack_roll_mode=mode
+                "Swing", 3, "1d4", 1, affected_targets=2, attack_roll_mode=mode
             ),
         ),
         rng=rng,
@@ -662,16 +634,14 @@ def test_saving_throw_profile_uses_one_shared_damage_roll_and_independent_saves(
         target_armor_class=10,
         enemy_save_bonus=0,
         damage_dice="1d8",
-        damage_modifier=2,
         rounds=1,
         simulations=1,
         attack_profiles=(
             AttackProfile(
                 "Blast",
                 None,
-                "1d8",
-                2,
-                1,
+                "1d8+2",
+                attacks_per_round=1,
                 affected_targets=4,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=12,
@@ -693,16 +663,14 @@ def test_saving_throw_half_damage_rounds_down_for_every_successful_target() -> N
         target_armor_class=10,
         enemy_save_bonus=0,
         damage_dice="1d8",
-        damage_modifier=2,
         rounds=1,
         simulations=1,
         attack_profiles=(
             AttackProfile(
                 "Half Blast",
                 None,
-                "1d8",
-                2,
-                1,
+                "1d8+2",
+                attacks_per_round=1,
                 affected_targets=3,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=12,
@@ -721,13 +689,10 @@ def test_multiple_uses_active_rounds_and_multi_target_totals() -> None:
         attack_bonus=5,
         target_armor_class=15,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=2,
         simulations=1,
         attack_profiles=(
-            AttackProfile(
-                "Volley", 5, "1d4", 0, 2, affected_targets=2, active_rounds="2"
-            ),
+            AttackProfile("Volley", 5, "1d4", 2, affected_targets=2, active_rounds="2"),
         ),
         rng=PredictableRng([10, 1, 10, 2, 10, 3, 10, 4]),
     )
@@ -747,10 +712,9 @@ def test_affected_targets_must_be_positive_integer() -> None:
             attack_bonus=5,
             target_armor_class=15,
             damage_dice="1d4",
-            damage_modifier=0,
             rounds=1,
             simulations=1,
-            attack_profiles=(AttackProfile("Bad", 5, "1d4", 0, 1, affected_targets=0),),
+            attack_profiles=(AttackProfile("Bad", 5, "1d4", 1, affected_targets=0),),
             rng=PredictableRng([]),
         )
 
@@ -759,16 +723,14 @@ def test_comparison_reports_total_and_per_target_damage_for_multi_target_builds(
     None
 ):
     comparison = compare_builds(
-        first_build=BuildConfig("Single", 20, "1d4", 0, 1),
+        first_build=BuildConfig("Single", 20, "1d4", 1),
         second_build=BuildConfig(
             "Multi",
             20,
             "1d4",
             0,
             1,
-            attack_profiles=(
-                AttackProfile("Multi", 20, "1d4", 0, 1, affected_targets=2),
-            ),
+            attack_profiles=(AttackProfile("Multi", 20, "1d4", 1, affected_targets=2),),
         ),
         scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
         seed=1,
@@ -788,15 +750,13 @@ def test_automatic_damage_always_applies_without_d20_or_critical_hits() -> None:
         attack_bonus=0,
         target_armor_class=99,
         damage_dice="1d4",
-        damage_modifier=2,
         rounds=1,
         simulations=1,
         attack_profiles=(
             AttackProfile(
                 "Magic Missile",
                 None,
-                "1d4",
-                2,
+                "1d4+2",
                 1,
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
             ),
@@ -820,15 +780,13 @@ def test_automatic_damage_multiple_uses_targets_and_separate_rolls() -> None:
         attack_bonus=0,
         target_armor_class=10,
         damage_dice="1d6",
-        damage_modifier=1,
         rounds=1,
         simulations=1,
         attack_profiles=(
             AttackProfile(
                 "Darts",
                 None,
-                "1d6",
-                1,
+                "1d6+1",
                 3,
                 affected_targets=2,
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
@@ -850,7 +808,6 @@ def test_automatic_damage_respects_active_rounds() -> None:
         attack_bonus=0,
         target_armor_class=10,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=3,
         simulations=1,
         attack_profiles=(
@@ -858,7 +815,6 @@ def test_automatic_damage_respects_active_rounds() -> None:
                 "Acid",
                 None,
                 "1d4",
-                0,
                 1,
                 active_rounds="2-3",
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
@@ -881,16 +837,14 @@ def test_mixed_profiles_exclude_automatic_damage_from_rate_denominators() -> Non
         target_armor_class=10,
         enemy_save_bonus=0,
         damage_dice="1d4",
-        damage_modifier=0,
         rounds=1,
         simulations=1,
         attack_profiles=(
-            AttackProfile("Slash", 5, "1d4", 0, 1),
+            AttackProfile("Slash", 5, "1d4", 1),
             AttackProfile(
                 "Burn",
                 None,
                 "1d4",
-                0,
                 1,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=10,
@@ -899,7 +853,6 @@ def test_mixed_profiles_exclude_automatic_damage_from_rate_denominators() -> Non
                 "Missile",
                 None,
                 "1d4",
-                0,
                 1,
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
             ),
@@ -917,8 +870,8 @@ def test_mixed_profiles_exclude_automatic_damage_from_rate_denominators() -> Non
 def test_simulate_build_matches_same_build_inside_compare_builds() -> None:
     from dnd_combat_simulator.simulation import simulate_build
 
-    build = BuildConfig("Solo", 7, "1d8", 4, 2)
-    other = BuildConfig("Other", 5, "1d6", 2, 1)
+    build = BuildConfig("Solo", 7, "1d8+4", 2)
+    other = BuildConfig("Other", 5, "1d6+2", 1)
     scenario = ScenarioConfig(target_armor_class=15, rounds=3, simulations=20)
 
     result = simulate_build(build, scenario, seed=42)
@@ -936,7 +889,7 @@ def test_simulate_build_does_not_validate_unrelated_second_build() -> None:
     from dnd_combat_simulator.simulation import simulate_build
 
     result = simulate_build(
-        BuildConfig("Solo", 20, "1d4", 0, 1),
+        BuildConfig("Solo", 20, "1d4", 1),
         ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
         seed=1,
     )
