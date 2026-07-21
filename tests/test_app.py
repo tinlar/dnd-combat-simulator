@@ -985,7 +985,10 @@ def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
     assert "Open Shared Configuration" not in source
     assert "setTriggerValue" in app.SHARE_TOOLBAR_JS
     assert "setStateValue" not in app.SHARE_TOOLBAR_JS
-    assert "on_create_share_change=lambda: None" in source
+    assert "on_create_share_change=on_create_share_change" in source
+    assert "_share_component_requested_creation" not in source
+    assert "PROCESSED_SHARE_TRIGGER_KEY" not in source
+    assert "st.rerun" not in share_source
 
 
 def test_render_share_configuration_button_invalid_damage_does_not_raise_or_serialize(
@@ -1163,6 +1166,8 @@ def test_share_component_copies_inside_button_click_with_fallback() -> None:
     assert "lastCopyNonce" not in js
     assert "copyUrl(data.url" not in js
     assert "copyUrl();" in js[onclick_index:]
+    copy_branch = js[js.index("} else if (mode === 'copy')") :]
+    assert "setTriggerValue('create_share'" not in copy_branch
     assert show_copied_index < render_index
     assert "showCopied();" in js[write_index:fallback_index]
     assert "showCopied();" in js[fallback_index:]
@@ -1184,10 +1189,15 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
     assert "<svg" in html
     assert 'stroke="currentColor"' in html
     assert 'class="share-status"' in html
+    assert (
+        'class="share-link" href="" target="_blank" rel="noopener noreferrer" hidden'
+        in html
+    )
     assert 'class="share-fallback" type="text" readonly hidden' in html
-    assert "width: 42px" in css
+    assert "min-width: 42px" in css
     assert "height: 42px" in css
-    assert "border-radius: 50%" in css
+    assert "border-radius: 999px" in css
+    assert "text-overflow: ellipsis" in css
     assert "height: 48px" in css
     assert "--st-text-color" in css
     assert "--st-background-color" in css
@@ -1197,7 +1207,7 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
     assert "--st-font" in css
     assert "focus-visible" in css
     assert "black" not in combined.lower()
-    assert "white" not in combined.lower()
+    assert "white" not in combined.lower().replace("white-space", "")
 
 
 def test_build_from_state_filters_attack_roll_feature_after_automatic_damage_change(
@@ -1599,7 +1609,9 @@ def test_unified_share_trigger_saves_once_and_rerun_does_not_repeat(monkeypatch)
 
     def mount(**kwargs):
         mounts.append(kwargs)
-        return {"create_share": "nonce-1"}
+        if len(mounts) == 1:
+            kwargs["on_create_share_change"]()
+        return None
 
     fake_streamlit = SimpleNamespace(
         session_state=state,
@@ -1641,7 +1653,7 @@ def test_unified_share_existing_url_copy_causes_no_insert(monkeypatch):
     }
 
     def mount(**kwargs):
-        return {"create_share": "copy-click"}
+        return None
 
     fake_streamlit = SimpleNamespace(
         session_state=state,
@@ -1667,7 +1679,6 @@ def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypat
 
     from dnd_combat_simulator import app
 
-    triggers = iter([None, {"create_share": "nonce-2"}])
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
         app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
@@ -1679,7 +1690,12 @@ def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypat
     }
 
     def mount(**kwargs):
-        return next(triggers)
+        mounts.append(kwargs)
+        if len(mounts) == 2:
+            kwargs["on_create_share_change"]()
+        return None
+
+    mounts = []
 
     fake_streamlit = SimpleNamespace(
         session_state=state,
@@ -1720,13 +1736,13 @@ def test_unified_share_save_error_is_safe(monkeypatch):
     }
 
     def mount(**kwargs):
-        return {"create_share": "nonce-error"}
+        kwargs["on_create_share_change"]()
+        return None
 
     fake_streamlit = SimpleNamespace(
         session_state=state,
         context=SimpleNamespace(url="https://example.test/sim"),
         components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
-        error=messages.append,
     )
     store = _FakeShareStore(save_error=ShareStoreError("database secret detail"))
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
@@ -1735,8 +1751,12 @@ def test_unified_share_save_error_is_safe(monkeypatch):
 
     app._render_share_configuration_button()
 
-    assert messages == ["Unable to create a share link right now. Try again later."]
+    assert messages == []
     assert app.GENERATED_SHARE_URL_KEY not in state
+    assert (
+        state[app.SHARE_ERROR_MESSAGE_KEY]
+        == "Unable to create a share link right now. Try again later."
+    )
 
 
 def test_missing_secrets_disable_unified_component(monkeypatch):
