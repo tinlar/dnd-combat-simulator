@@ -325,3 +325,31 @@ def test_saving_throws_never_critically_hit() -> None:
     )
 
     assert result.critical_hit is False
+
+
+def test_automatic_damage_rolls_damage_without_d20_and_cannot_crit() -> None:
+    from dnd_combat_simulator.combat import resolve_automatic_damage
+
+    rng = PredictableRng([4])
+
+    result = resolve_automatic_damage(
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=rng,
+    )
+
+    assert result.damage_dealt == 6
+    assert result.critical_hit is False
+    assert rng.calls == [(1, 6)]
+
+
+def test_automatic_damage_cannot_be_below_zero() -> None:
+    from dnd_combat_simulator.combat import resolve_automatic_damage
+
+    result = resolve_automatic_damage(
+        damage_dice="1d4",
+        damage_modifier=-10,
+        rng=PredictableRng([1]),
+    )
+
+    assert result.damage_dealt == 0

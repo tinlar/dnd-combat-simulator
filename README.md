@@ -4,7 +4,7 @@ Initial project setup for a browser-based DnD combat simulator built with Python
 
 ## Combat rules
 
-The simulator includes Streamlit-independent logic for resolving damage profiles as either attack rolls or saving throws. Attack-roll profiles use an attack bonus, target Armor Class, damage dice such as `1d8`, and a separate damage modifier. Saving-throw profiles use a Save DC, the shared Enemy Save Bonus, damage dice, a damage modifier, and a successful-save damage behavior.
+The simulator includes Streamlit-independent logic for resolving damage profiles as attack rolls, saving throws, or automatic damage. Attack-roll profiles use an attack bonus, target Armor Class, damage dice such as `1d8`, and a separate damage modifier. Saving-throw profiles use a Save DC, the shared Enemy Save Bonus, damage dice, a damage modifier, and a successful-save damage behavior. Automatic-damage profiles use damage dice, a damage modifier, attacks per active round, affected targets, and Active Rounds without requiring Attack Bonus or Save DC.
 
 Attack-roll resolution follows these rules:
 
@@ -27,6 +27,21 @@ Saving-throw resolution follows these rules:
 - Saving throws cannot critically hit. Natural 1 and natural 20 do not automatically fail or succeed.
 - Final damage cannot be below zero.
 
+Automatic-damage resolution follows these rules:
+
+- No d20 is rolled: the simulator does not make an attack roll or a saving throw.
+- Damage is always applied and automatic damage cannot critically hit.
+- Damage is rolled separately for each attack use and each affected target.
+- The damage modifier is added to each automatic damage roll.
+- Final damage cannot be below zero.
+- Automatic damage applications are tracked separately and are excluded from attack-roll hit-rate and saving-throw rate denominators.
+
+Automatic-damage examples:
+
+- Acid Arrow follow-up: **Automatic Damage**, `1` attack use, `1` affected target, **Active Rounds** `2`.
+- Three Magic Missile darts: **Automatic Damage**, `3` attacks per active round, `1` affected target per attack, **Active Rounds** `1`.
+- Automatic effect damaging three targets: **Automatic Damage**, `1` attack per active round, `3` affected targets.
+
 Single-profile resolution returns the resolution outcome, success state, critical-hit state where meaningful, and damage dealt. Random number generation can be injected for deterministic tests.
 
 ## Multi-target attack profiles
@@ -39,6 +54,7 @@ Multi-target attack rolls and multi-target saving throws intentionally consume r
 
 - Attack-roll profiles resolve each target independently. For each simulation, round, attack profile, profile use, and target, the simulator rolls that target's attack roll, applies advantage or disadvantage for that target if configured, determines hit and critical status for that target, and rolls that target's damage separately if it hits. For example, a profile with `2` attacks per round and `3` affected targets resolves `6` separate target attack rolls per active round.
 - Saving-throw profiles roll one shared damage result for each use of the attack profile, then roll an independent saving throw for every affected target. Each target applies the same shared base damage according to its own save result: full damage on a failed save, zero damage on a successful save configured for **No damage**, or half damage rounded down on a successful save configured for **Half damage**. For example, a saving-throw profile with `1` attack per round and `4` affected targets rolls damage once, rolls `4` separate saving throws, and applies that one damage result separately to all `4` targets.
+- Automatic-damage profiles resolve each target independently without rolling a d20. For each simulation, round, attack profile, profile use, and target, the simulator rolls that target's damage separately and applies the full result automatically. For example, a profile with `3` attacks per active round and `1` affected target resolves `3` automatic damage applications per active round.
 
 Total damage metrics include damage dealt across all affected targets. Per-target metrics such as **Average damage per target per round** are included so single-target effectiveness can be compared separately from total multi-target damage.
 
@@ -51,10 +67,11 @@ Simulation inputs are:
 
 - One or more reusable attack profiles, each with:
   - Attack name
-  - Resolution Type, defaulting to attack roll for backward compatibility
+  - Resolution Type (`Attack Roll`, `Saving Throw`, or `Automatic Damage`), defaulting to attack roll for backward compatibility
   - Attack bonus for attack-roll profiles
   - Save DC for saving-throw profiles
   - Successful Save Damage for saving-throw profiles, defaulting to no damage
+  - No Attack Bonus, Attack Roll Mode, Save DC, or Successful Save Damage requirement for automatic-damage profiles
   - Damage dice, without an embedded modifier
   - Damage modifier
   - Attacks per round, defaulting to 1
@@ -68,9 +85,9 @@ Simulation inputs are:
 
 Active Rounds controls which rounds use an attack profile. Blank means the profile is active every scenario round. A single value such as `1` means round 1 only; a range such as `1-5` means rounds 1 through 5; and a comma-separated expression such as `1, 3-5, 8` means rounds 1, 3, 4, 5, and 8. Optional whitespace is allowed around commas and ranges. Duplicate or overlapping values such as `1-3, 2-4` are deduplicated and processed in ascending order as rounds 1, 2, 3, and 4. Round numbers must be positive integers, reversed ranges such as `5-3` are invalid, and rounds greater than the scenario's round count are valid but ignored during that simulation. During each simulated round, only profiles with blank Active Rounds or an Active Rounds set containing the current round are resolved, using that profile's attacks-per-round value. A build may intentionally have zero attacks in a round. Existing attack profiles without Active Rounds remain valid and behave as active every round.
 
-Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, average attacks per round, total attacks made, total target resolutions, average total damage per simulation across all affected targets, average total damage per round across all affected targets, average damage per target per round, full damage success rate, critical hit rate for attack rolls, failed save rate, successful save rate, and the minimum and maximum total damage observed in a simulation. Results also include a per-attack-profile breakdown with each profile's affected targets, total attacks, total target resolutions, average damage, average damage per target per round, attack-roll hit and critical-hit rates where meaningful, and saving-throw failed/successful save rates where meaningful. A per-round breakdown reports each round number, average damage, average attacks, full damage success percentage, critical-hit percentage, failed-save percentage, and successful-save percentage. Summary metrics include first-round burst damage, average damage after round 1, highest-damage round, highest-round average damage, average damage per round, and average total damage. Attack hit rates and failed-save rates are not labeled as one combined hit percentage in the Streamlit comparison UI; the aggregate success metric is labeled **Full Damage Success Rate**.
+Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, average attacks per round, total attacks made, total target resolutions, automatic damage applications, average automatic damage per application, average total damage per simulation across all affected targets, average total damage per round across all affected targets, average damage per target per round, attack-roll hit rate, critical hit rate for attack rolls, failed save rate, successful save rate, and the minimum and maximum total damage observed in a simulation. Results also include a per-attack-profile breakdown with each profile's affected targets, total attacks, total target resolutions, average damage, average damage per target per round, attack-roll hit and critical-hit rates where meaningful, and saving-throw failed/successful save rates where meaningful. A per-round breakdown reports each round number, average damage, average attacks, full damage success percentage, critical-hit percentage, failed-save percentage, and successful-save percentage. Summary metrics include first-round burst damage, average damage after round 1, highest-damage round, highest-round average damage, average damage per round, and average total damage. The Streamlit comparison summary does not calculate a misleading combined success rate across attack rolls, saving throws, and automatic damage. Resolution-specific rates remain in the per-profile breakdown.
 
-Random number generation can be injected so simulations are deterministic in tests. For attack-roll profiles, random rolls are consumed by simulation, round, attack profile, attack use, target, attack roll, then damage roll if that target hits. For saving-throw profiles with multiple affected targets, random rolls are consumed by simulation, round, attack profile, attack use, one shared damage roll, then one saving throw for each target. Rounds, attacks per round, affected targets, and simulation counts must all be at least 1; lower values are rejected with clear errors.
+Random number generation can be injected so simulations are deterministic in tests. For attack-roll profiles, random rolls are consumed by simulation, round, attack profile, attack use, target, attack roll, then damage roll if that target hits. For saving-throw profiles with multiple affected targets, random rolls are consumed by simulation, round, attack profile, attack use, one shared damage roll, then one saving throw for each target. For automatic-damage profiles, random rolls are consumed by simulation, round, attack profile, attack use, target, then that target's damage roll. Rounds, attacks per round, affected targets, and simulation counts must all be at least 1; lower values are rejected with clear errors.
 
 ## Build comparisons
 
@@ -126,7 +143,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, Enemy Save Bonus, number of rounds, number of simulations, and random seed once, then enter each build's name plus one required primary attack profile. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, **Resolution Type**, damage dice, damage modifier, attacks per round, **Affected Targets**, and **Active Rounds** field. Attack-roll profiles show Attack Bonus and Attack Roll Mode while hiding Save DC. Saving-throw profiles show Save DC and Successful Save Damage while hiding Attack Bonus and Attack Roll Mode. Every displayed profile is passed into the comparison simulation. Select **Compare Builds** to view side-by-side aggregate damage, per-target damage, per-round damage, burst/sustained/total winners, hit-rate, and critical-hit-rate results with differences and per-profile breakdowns.
+The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, Enemy Save Bonus, number of rounds, number of simulations, and random seed once, then enter each build's name plus one required primary attack profile. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, **Resolution Type**, damage dice, damage modifier, attacks per round, **Affected Targets**, and **Active Rounds** field. Attack-roll profiles show Attack Bonus and Attack Roll Mode while hiding Save DC and Successful Save Damage. Saving-throw profiles show Save DC and Successful Save Damage while hiding Attack Bonus and Attack Roll Mode. Automatic-damage profiles hide Attack Bonus, Attack Roll Mode, Save DC, and Successful Save Damage while continuing to show damage dice, damage modifier, attacks per active round, Affected Targets, and Active Rounds. Every displayed profile is passed into the comparison simulation. Select **Compare Builds** to view side-by-side aggregate damage, per-target damage, per-round damage, burst/sustained/total winners, hit-rate, and critical-hit-rate results with differences and per-profile breakdowns.
 
 ## Run tests
 

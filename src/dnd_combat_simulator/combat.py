@@ -26,6 +26,7 @@ class ResolutionType(StrEnum):
 
     ATTACK_ROLL = "attack_roll"
     SAVING_THROW = "saving_throw"
+    AUTOMATIC_DAMAGE = "automatic_damage"
 
 
 class SuccessfulSaveDamage(StrEnum):
@@ -58,6 +59,14 @@ class AttackResult:
 
 
 @dataclass(frozen=True)
+class AutomaticDamageResult:
+    """Outcome of resolving damage that requires no d20 roll."""
+
+    critical_hit: bool
+    damage_dealt: int
+
+
+@dataclass(frozen=True)
 class SavingThrowResult:
     """Outcome of resolving a damage profile that requires a saving throw."""
 
@@ -80,6 +89,7 @@ class DamageResolutionResult:
     critical_hit: bool
     failed_save: bool = False
     successful_save: bool = False
+    automatic_damage_application: bool = False
 
 
 def roll_attack_d20(
@@ -210,6 +220,22 @@ def resolve_saving_throw_damage(
     )
 
 
+def resolve_automatic_damage(
+    *,
+    damage_dice: str,
+    damage_modifier: int,
+    rng: RandomNumberGenerator | None = None,
+) -> AutomaticDamageResult:
+    """Resolve one automatic damage application without rolling a d20."""
+    random_number_generator = rng if rng is not None else Random()
+    damage_dealt = _roll_noncritical_damage(
+        damage_dice=damage_dice,
+        damage_modifier=damage_modifier,
+        rng=random_number_generator,
+    )
+    return AutomaticDamageResult(critical_hit=False, damage_dealt=damage_dealt)
+
+
 def resolve_damage_profile(
     *,
     resolution_type: ResolutionType,
@@ -241,6 +267,17 @@ def resolve_damage_profile(
             damage_dealt=attack.damage_dealt,
             full_damage_success=attack.hit,
             critical_hit=attack.critical_hit,
+        )
+    if ResolutionType(resolution_type) is ResolutionType.AUTOMATIC_DAMAGE:
+        automatic = resolve_automatic_damage(
+            damage_dice=damage_dice, damage_modifier=damage_modifier, rng=rng
+        )
+        return DamageResolutionResult(
+            resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            damage_dealt=automatic.damage_dealt,
+            full_damage_success=True,
+            critical_hit=False,
+            automatic_damage_application=True,
         )
     if save_dc is None:
         msg = "Save DC is required for saving-throw profiles."
