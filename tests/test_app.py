@@ -982,13 +982,160 @@ def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
             "\ndef main"
         )
     ]
-    assert "st.button(" not in share_source
+    assert 'st.button("Share Configuration", disabled=True)' in share_source
     assert "st.code" not in source
     assert "Share link ready" not in source
     assert "GENERATED_SHARE_URL_SESSION_KEY" not in source
     assert "Open Shared Configuration" not in source
     assert "setTriggerValue" not in app.SHARE_TOOLBAR_JS
     assert "setStateValue" not in app.SHARE_TOOLBAR_JS
+
+
+def test_render_share_configuration_button_invalid_damage_does_not_raise_or_serialize(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
+    }
+
+    def button(label, **kwargs):
+        calls.append(("button", {"label": label, **kwargs}))
+        return False
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/app"),
+        button=button,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    def serialize_should_not_run(configuration):
+        raise AssertionError("serialization should not run while invalid")
+
+    monkeypatch.setattr(app, "serialize_shared_configuration", serialize_should_not_run)
+
+    app._render_share_configuration_button()
+
+    assert calls == [("button", {"label": "Share Configuration", "disabled": True})]
+
+
+def test_validate_configuration_for_ui_scopes_damage_error_to_exact_build_profile() -> (
+    None
+):
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.sharing import shared_configuration_from_configs
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    configuration = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 3, 4, 10),
+        seed=1,
+        build_a=BuildConfig(
+            "Build A",
+            5,
+            "1d6+",
+            1,
+            attack_profiles=(AttackProfile("A", 5, "1d6+", 1),),
+        ),
+        build_b=BuildConfig(
+            "Build B",
+            5,
+            "1d6+3",
+            1,
+            attack_profiles=(AttackProfile("B", 5, "1d6+3", 1),),
+        ),
+    )
+
+    errors = app.validate_configuration_for_ui(configuration)
+
+    assert errors == {
+        (
+            "build_a",
+            "profile_1",
+            "damage_dice",
+        ): "Damage expression cannot end with an operator."
+    }
+
+
+def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    state = {
+        "first-build-name": "Build A",
+        "first-additional-attack-count": 0,
+        app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
+    }
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return state.get(kwargs.get("key"), kwargs.get("value", 1))
+
+        def text_input(self, label, **kwargs):
+            return state.get(kwargs.get("key"), kwargs.get("value", ""))
+
+        def selectbox(self, label, **kwargs):
+            return state.get(
+                kwargs.get("key"), kwargs["options"][kwargs.get("index", 0)]
+            )
+
+    col = Column()
+
+    def button(label, **kwargs):
+        calls.append((label, kwargs))
+        return False if kwargs.get("disabled") else True
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        set_page_config=lambda **kwargs: None,
+        markdown=lambda *a, **k: None,
+        title=lambda *a, **k: None,
+        write=lambda *a, **k: None,
+        subheader=lambda *a, **k: None,
+        success=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+        button=button,
+        columns=lambda spec, **kwargs: [
+            col for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+        number_input=col.number_input,
+        text_input=col.text_input,
+        selectbox=col.selectbox,
+        toggle=lambda *a, **k: False,
+        container=lambda **kwargs: __import__("contextlib").nullcontext(),
+        expander=lambda *a, **k: __import__("contextlib").nullcontext(),
+        checkbox=lambda *a, **k: False,
+        divider=lambda: None,
+        query_params={},
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(
+        app,
+        "run_single_build_from_inputs",
+        lambda inputs: (_ for _ in ()).throw(
+            AssertionError("simulation should not run")
+        ),
+    )
+
+    app.main()
+
+    assert ("Run Simulation", {"disabled": True}) in calls
 
 
 def test_share_component_copies_inside_button_click_with_fallback() -> None:

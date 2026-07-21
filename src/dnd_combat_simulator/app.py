@@ -81,8 +81,7 @@ FEATURE_ORDER = (
     AttackFeature.POTENT_CANTRIP,
 )
 
-DAMAGE_FORMULA_HELP = dedent(
-    """
+DAMAGE_FORMULA_HELP = dedent("""
     **Basic**
 
     - `1d8`
@@ -120,8 +119,7 @@ DAMAGE_FORMULA_HELP = dedent(
     explosion checks, Great Weapon Fighting damage contribution, and keep/drop
     apply only to the dice group where they are written. Numeric modifiers apply
     once to the complete damage roll.
-    """
-).strip()
+    """).strip()
 
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
 
@@ -285,6 +283,64 @@ def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationEr
 
 def validation_errors_by_key(errors: list[FieldValidationError]) -> dict[str, str]:
     return {error.key: error.message for error in errors}
+
+
+def validate_configuration_for_ui(
+    configuration: SharedConfiguration,
+) -> dict[tuple[str, str | None, str], str]:
+    """Return structured editable-field errors for a shared configuration.
+
+    Keys are scoped by build (``build_a``/``build_b``), profile identifier, and
+    field name so similarly named fields in different builds or profiles cannot
+    be conflated.
+    """
+
+    structured: dict[tuple[str, str | None, str], str] = {}
+    for error in validate_scenario_fields(configuration.scenario.to_scenario_config()):
+        structured[("scenario", None, error.key)] = error.message
+    for build_key, prefix, build in (
+        ("build_a", "first", configuration.build_a),
+        ("build_b", "second", configuration.build_b),
+    ):
+        for error in validate_build_fields(build.to_build_config(), prefix=prefix):
+            profile_id: str | None = None
+            field = error.key
+            if error.key.startswith(f"{prefix}-primary-"):
+                profile_id = "profile_1"
+                field = error.key.removeprefix(f"{prefix}-primary-").replace("-", "_")
+            elif error.key.startswith(f"{prefix}-additional-"):
+                parts = error.key.split("-")
+                if len(parts) >= 4 and parts[2].isdigit():
+                    profile_id = f"profile_{int(parts[2]) + 1}"
+                    field = "_".join(parts[3:])
+            elif error.key == f"{prefix}-build-name":
+                field = "name"
+            structured[(build_key, profile_id, field)] = error.message
+    return structured
+
+
+def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str], str]:
+    import streamlit as st
+
+    session_state = getattr(st, "session_state", {})
+    scenario = ScenarioConfig(
+        target_armor_class=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
+        ),
+        enemy_save_bonus=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
+        ),
+        rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
+        simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
+    )
+    configuration = shared_configuration_from_configs(
+        compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
+        scenario=scenario,
+        seed=int(session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
+        build_a=_build_from_state("first", "Build A"),
+        build_b=_build_from_state("second", "Build B"),
+    )
+    return validate_configuration_for_ui(configuration)
 
 
 def _render_error(message: str) -> None:
@@ -1721,13 +1777,15 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                 session_state.get(
                     profile_widget_key(widget_prefix, "name"), default_name
                 ),
-                int(
-                    session_state.get(
-                        profile_widget_key(widget_prefix, "attack_bonus"), 5
+                (
+                    int(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "attack_bonus"), 5
+                        )
                     )
-                )
-                if resolution is ResolutionType.ATTACK_ROLL
-                else None,
+                    if resolution is ResolutionType.ATTACK_ROLL
+                    else None
+                ),
                 session_state.get(
                     profile_widget_key(widget_prefix, "damage_formula"), "1d8+3"
                 ),
@@ -1749,16 +1807,24 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                     profile_widget_key(widget_prefix, "active_rounds"), ""
                 ),
                 resolution,
-                int(session_state.get(profile_widget_key(widget_prefix, "save_dc"), 13))
-                if resolution is ResolutionType.SAVING_THROW
-                else None,
-                SuccessfulSaveDamage.HALF_DAMAGE
-                if session_state.get(
-                    profile_widget_key(widget_prefix, "successful_save_damage"),
-                    "No damage",
-                )
-                == "Half damage"
-                else SuccessfulSaveDamage.NO_DAMAGE,
+                (
+                    int(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "save_dc"), 13
+                        )
+                    )
+                    if resolution is ResolutionType.SAVING_THROW
+                    else None
+                ),
+                (
+                    SuccessfulSaveDamage.HALF_DAMAGE
+                    if session_state.get(
+                        profile_widget_key(widget_prefix, "successful_save_damage"),
+                        "No damage",
+                    )
+                    == "Half damage"
+                    else SuccessfulSaveDamage.NO_DAMAGE
+                ),
                 features,
             )
         )
@@ -1799,7 +1865,18 @@ def _current_shared_configuration_url() -> str:
 
 
 def _render_share_configuration_button() -> None:
-    share_url = _current_shared_configuration_url()
+    import streamlit as st
+
+    if _configuration_errors_for_current_state():
+        st.button("Share Configuration", disabled=True)
+        return
+
+    try:
+        share_url = _current_shared_configuration_url()
+    except SharedConfigurationError:
+        st.button("Share Configuration", disabled=True)
+        return
+
     share_toolbar = _get_share_toolbar_component()
     share_toolbar(data={"url": share_url})
 
@@ -1856,6 +1933,22 @@ def main() -> None:
         seed = scenario_row[4].number_input(
             "Random seed", value=20240721, step=1, key=SCENARIO_WIDGET_KEYS["seed"]
         )
+        scenario_pre_errors = validation_errors_by_key(
+            validate_scenario_fields(
+                ScenarioConfig(
+                    target_armor_class=int(target_armor_class),
+                    enemy_save_bonus=int(enemy_save_bonus),
+                    rounds=int(rounds),
+                    simulations=int(simulations),
+                )
+            )
+        )
+        for key in (
+            SCENARIO_WIDGET_KEYS["target_armor_class"],
+            SCENARIO_WIDGET_KEYS["rounds"],
+            SCENARIO_WIDGET_KEYS["simulations"],
+        ):
+            _field_error(scenario_pre_errors, key)
 
         compare_enabled = st.toggle(
             "Compare with another build",
@@ -1903,8 +1996,8 @@ def main() -> None:
             )
             try:
                 comparison = run_comparison_from_inputs(inputs)
-            except ValueError as error:
-                st.error(str(error))
+            except (ValueError, SharedConfigurationError) as error:
+                st.error(_friendly_validation_message(error))
             else:
                 _render_comparison_results(comparison)
     else:
@@ -1927,8 +2020,8 @@ def main() -> None:
             )
             try:
                 result = run_single_build_from_inputs(inputs)
-            except ValueError as error:
-                st.error(str(error))
+            except (ValueError, SharedConfigurationError) as error:
+                st.error(_friendly_validation_message(error))
             else:
                 _render_single_build_results(first_build, result)
 
