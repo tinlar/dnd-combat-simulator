@@ -6,7 +6,12 @@ import re
 from dataclasses import dataclass, field
 from random import Random
 
-from dnd_combat_simulator.combat import AttackRollMode, resolve_weapon_attack
+from dnd_combat_simulator.combat import (
+    AttackRollMode,
+    ResolutionType,
+    SuccessfulSaveDamage,
+    resolve_damage_profile,
+)
 from dnd_combat_simulator.dice import RandomNumberGenerator
 
 
@@ -15,12 +20,15 @@ class AttackProfile:
     """One distinct attack routine within a build."""
 
     name: str
-    attack_bonus: int
+    attack_bonus: int | None
     damage_dice: str
     damage_modifier: int
     attacks_per_round: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
     active_rounds: str = ""
+    resolution_type: ResolutionType = ResolutionType.ATTACK_ROLL
+    save_dc: int | None = None
+    successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,8 @@ class RoundResult:
     average_attacks: float
     hit_rate: float
     critical_hit_rate: float
+    failed_save_rate: float = 0
+    successful_save_rate: float = 0
 
 
 @dataclass(frozen=True)
@@ -44,6 +54,8 @@ class AttackProfileResult:
     average_damage_per_round: float
     hit_rate: float
     critical_hit_rate: float
+    failed_save_rate: float = 0
+    successful_save_rate: float = 0
 
 
 @dataclass(frozen=True)
@@ -61,6 +73,8 @@ class SimulationResult:
     critical_hit_rate: float
     minimum_total_damage_in_simulation: int
     maximum_total_damage_in_simulation: int
+    failed_save_rate: float = 0
+    successful_save_rate: float = 0
     first_round_burst_damage: float = field(default=0, compare=False)
     average_damage_after_round_1: float = field(default=0, compare=False)
     highest_damage_round: int = field(default=1, compare=False)
@@ -107,6 +121,7 @@ class ScenarioConfig:
     target_armor_class: int
     rounds: int
     simulations: int
+    enemy_save_bonus: int = 3
 
 
 @dataclass(frozen=True)
@@ -193,6 +208,17 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
         if label == "Attack profile 1":
             msg = "Attacks per round must be at least 1."
         raise ValueError(msg)
+    resolution_type = ResolutionType(profile.resolution_type)
+    if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
+        msg = f"{label} Attack Bonus is required for attack-roll profiles."
+        raise ValueError(msg)
+    if resolution_type is ResolutionType.SAVING_THROW:
+        if profile.save_dc is None:
+            msg = f"{label} Save DC is required for saving-throw profiles."
+            raise ValueError(msg)
+        if profile.save_dc < 1:
+            msg = f"{label} Save DC must be a positive integer."
+            raise ValueError(msg)
 
 
 def _validate_build(build: BuildConfig, *, label: str) -> None:
@@ -228,6 +254,7 @@ def run_damage_simulations(
     target_armor_class: int,
     damage_dice: str,
     damage_modifier: int,
+    enemy_save_bonus: int = 3,
     rounds: int,
     simulations: int,
     attacks_per_round: int = 1,
@@ -275,14 +302,20 @@ def run_damage_simulations(
     total_damage_all_simulations = 0
     total_hits = 0
     total_critical_hits = 0
+    total_failed_saves = 0
+    total_successful_saves = 0
     profile_damage_totals = dict.fromkeys(range(len(profiles)), 0)
     profile_attacks = dict.fromkeys(range(len(profiles)), 0)
     profile_hits = dict.fromkeys(range(len(profiles)), 0)
     profile_critical_hits = dict.fromkeys(range(len(profiles)), 0)
+    profile_failed_saves = dict.fromkeys(range(len(profiles)), 0)
+    profile_successful_saves = dict.fromkeys(range(len(profiles)), 0)
     round_damage_totals = dict.fromkeys(range(1, rounds + 1), 0)
     round_attacks = dict.fromkeys(range(1, rounds + 1), 0)
     round_hits = dict.fromkeys(range(1, rounds + 1), 0)
     round_critical_hits = dict.fromkeys(range(1, rounds + 1), 0)
+    round_failed_saves = dict.fromkeys(range(1, rounds + 1), 0)
+    round_successful_saves = dict.fromkeys(range(1, rounds + 1), 0)
     minimum_total_damage: int | None = None
     maximum_total_damage: int | None = None
 
@@ -297,26 +330,40 @@ def run_damage_simulations(
                 ):
                     continue
                 for _ in range(profile.attacks_per_round):
-                    attack = resolve_weapon_attack(
+                    resolution = resolve_damage_profile(
+                        resolution_type=profile.resolution_type,
                         attack_bonus=profile.attack_bonus,
                         target_armor_class=target_armor_class,
+                        save_dc=profile.save_dc,
+                        enemy_save_bonus=enemy_save_bonus,
                         damage_dice=profile.damage_dice.strip(),
                         damage_modifier=profile.damage_modifier,
                         attack_roll_mode=profile.attack_roll_mode,
+                        successful_save_damage=profile.successful_save_damage,
                         rng=random_number_generator,
                     )
-                    simulation_damage += attack.damage_dealt
-                    round_damage_totals[round_number] += attack.damage_dealt
-                    profile_damage_totals[profile_index] += attack.damage_dealt
+                    simulation_damage += resolution.damage_dealt
+                    round_damage_totals[round_number] += resolution.damage_dealt
+                    profile_damage_totals[profile_index] += resolution.damage_dealt
                     total_attacks += 1
                     round_attacks[round_number] += 1
                     profile_attacks[profile_index] += 1
-                    total_hits += int(attack.hit)
-                    round_hits[round_number] += int(attack.hit)
-                    profile_hits[profile_index] += int(attack.hit)
-                    total_critical_hits += int(attack.critical_hit)
-                    round_critical_hits[round_number] += int(attack.critical_hit)
-                    profile_critical_hits[profile_index] += int(attack.critical_hit)
+                    total_hits += int(resolution.full_damage_success)
+                    round_hits[round_number] += int(resolution.full_damage_success)
+                    profile_hits[profile_index] += int(resolution.full_damage_success)
+                    total_critical_hits += int(resolution.critical_hit)
+                    round_critical_hits[round_number] += int(resolution.critical_hit)
+                    profile_critical_hits[profile_index] += int(resolution.critical_hit)
+                    total_failed_saves += int(resolution.failed_save)
+                    round_failed_saves[round_number] += int(resolution.failed_save)
+                    profile_failed_saves[profile_index] += int(resolution.failed_save)
+                    total_successful_saves += int(resolution.successful_save)
+                    round_successful_saves[round_number] += int(
+                        resolution.successful_save
+                    )
+                    profile_successful_saves[profile_index] += int(
+                        resolution.successful_save
+                    )
 
         total_damage_all_simulations += simulation_damage
         minimum_total_damage = (
@@ -346,6 +393,16 @@ def run_damage_simulations(
                 if profile_attacks[index]
                 else 0
             ),
+            failed_save_rate=(
+                profile_failed_saves[index] / profile_attacks[index]
+                if profile_attacks[index]
+                else 0
+            ),
+            successful_save_rate=(
+                profile_successful_saves[index] / profile_attacks[index]
+                if profile_attacks[index]
+                else 0
+            ),
         )
         for index, profile in enumerate(profiles)
     )
@@ -359,6 +416,16 @@ def run_damage_simulations(
             else 0,
             critical_hit_rate=(
                 round_critical_hits[round_number] / round_attacks[round_number]
+                if round_attacks[round_number]
+                else 0
+            ),
+            failed_save_rate=(
+                round_failed_saves[round_number] / round_attacks[round_number]
+                if round_attacks[round_number]
+                else 0
+            ),
+            successful_save_rate=(
+                round_successful_saves[round_number] / round_attacks[round_number]
                 if round_attacks[round_number]
                 else 0
             ),
@@ -387,6 +454,10 @@ def run_damage_simulations(
         critical_hit_rate=total_critical_hits / total_attacks if total_attacks else 0,
         minimum_total_damage_in_simulation=minimum_total_damage or 0,
         maximum_total_damage_in_simulation=maximum_total_damage or 0,
+        failed_save_rate=total_failed_saves / total_attacks if total_attacks else 0,
+        successful_save_rate=total_successful_saves / total_attacks
+        if total_attacks
+        else 0,
         first_round_burst_damage=first_round_burst,
         average_damage_after_round_1=average_after_round_1,
         highest_damage_round=highest.round_number,

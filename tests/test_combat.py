@@ -3,6 +3,8 @@ import pytest
 from dnd_combat_simulator.combat import (
     AttackResult,
     AttackRollMode,
+    SuccessfulSaveDamage,
+    resolve_saving_throw_damage,
     resolve_weapon_attack,
 )
 
@@ -245,3 +247,81 @@ def test_disadvantage_selected_natural_1_automatically_misses() -> None:
     assert result.critical_hit is False
     assert result.damage_dealt == 0
     assert rng.calls == [(1, 20), (1, 20)]
+
+
+def test_saving_throw_succeeds_when_total_equals_save_dc() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=15,
+        enemy_save_bonus=3,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=PredictableRng([12]),
+    )
+
+    assert result.successful_save is True
+    assert result.failed_save is False
+    assert result.damage_dealt == 0
+
+
+def test_saving_throw_fails_when_total_below_save_dc_and_deals_full_damage() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=15,
+        enemy_save_bonus=3,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=PredictableRng([11, 4]),
+    )
+
+    assert result.failed_save is True
+    assert result.damage_dealt == 6
+
+
+def test_saving_throw_natural_1_can_succeed_with_sufficient_bonus() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=15,
+        enemy_save_bonus=14,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=PredictableRng([1]),
+    )
+
+    assert result.successful_save is True
+
+
+def test_saving_throw_natural_20_can_fail_against_high_dc() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=25,
+        enemy_save_bonus=3,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=PredictableRng([20, 5]),
+    )
+
+    assert result.failed_save is True
+    assert result.damage_dealt == 7
+
+
+def test_successful_save_can_deal_half_damage_rounded_down_after_modifier() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=15,
+        enemy_save_bonus=3,
+        damage_dice="1d6",
+        damage_modifier=2,
+        successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+        rng=PredictableRng([12, 3]),
+    )
+
+    assert result.successful_save is True
+    assert result.damage_dealt == 2
+
+
+def test_saving_throws_never_critically_hit() -> None:
+    result = resolve_saving_throw_damage(
+        save_dc=15,
+        enemy_save_bonus=0,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rng=PredictableRng([20, 3]),
+    )
+
+    assert result.critical_hit is False

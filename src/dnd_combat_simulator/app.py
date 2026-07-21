@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dnd_combat_simulator import APP_TITLE
-from dnd_combat_simulator.combat import AttackRollMode
+from dnd_combat_simulator.combat import (
+    AttackRollMode,
+    ResolutionType,
+    SuccessfulSaveDamage,
+)
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildComparisonResult,
@@ -59,6 +63,7 @@ class SimulationInputs:
     rounds: int
     attacks_per_round: int
     simulations: int
+    enemy_save_bonus: int = 3
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
 
 
@@ -121,6 +126,7 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
     return run_damage_simulations(
         attack_bonus=inputs.attack_bonus,
         target_armor_class=inputs.target_armor_class,
+        enemy_save_bonus=inputs.enemy_save_bonus,
         damage_dice=inputs.damage_dice.strip(),
         damage_modifier=inputs.damage_modifier,
         rounds=inputs.rounds,
@@ -165,7 +171,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Difference": format_signed_damage(difference.average_total_damage),
         },
         {
-            "Metric": "Hit percentage",
+            "Metric": "Full Damage Success Rate",
             comparison.first_build.name: format_rate(first.hit_rate),
             comparison.second_build.name: format_rate(second.hit_rate),
             "Difference": format_signed_rate(difference.hit_rate),
@@ -240,10 +246,10 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
                 f"{comparison.second_build.name} avg attacks": format_damage(
                     second_round.average_attacks
                 ),
-                f"{comparison.first_build.name} hit %": format_rate(
+                f"{comparison.first_build.name} full dmg success %": format_rate(
                     first_round.hit_rate
                 ),
-                f"{comparison.second_build.name} hit %": format_rate(
+                f"{comparison.second_build.name} full dmg success %": format_rate(
                     second_round.hit_rate
                 ),
                 f"{comparison.first_build.name} crit %": format_rate(
@@ -271,7 +277,7 @@ def _render_results(result: SimulationResult) -> None:
         "Average total damage",
         format_damage(result.average_total_damage_per_simulation),
     )
-    first_row[2].metric("Hit percentage", format_rate(result.hit_rate))
+    first_row[2].metric("Full Damage Success Rate", format_rate(result.hit_rate))
     first_row[3].metric(
         "Critical hit percentage", format_rate(result.critical_hit_rate)
     )
@@ -301,8 +307,25 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Average total damage": format_damage(
                 profile_result.average_total_damage_per_simulation
             ),
-            "Hit percentage": format_rate(profile_result.hit_rate),
-            "Critical hit percentage": format_rate(profile_result.critical_hit_rate),
+            "Full Damage Success Rate": format_rate(profile_result.hit_rate),
+            "Critical hit percentage": (
+                "—"
+                if profile_result.attack_profile.resolution_type
+                is ResolutionType.SAVING_THROW
+                else format_rate(profile_result.critical_hit_rate)
+            ),
+            "Failed save percentage": (
+                format_rate(profile_result.failed_save_rate)
+                if profile_result.attack_profile.resolution_type
+                is ResolutionType.SAVING_THROW
+                else "—"
+            ),
+            "Successful save percentage": (
+                format_rate(profile_result.successful_save_rate)
+                if profile_result.attack_profile.resolution_type
+                is ResolutionType.SAVING_THROW
+                else "—"
+            ),
         }
         for profile_result in result.attack_profile_results
     ]
@@ -365,10 +388,28 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     import streamlit as st
 
     attack_name = st.text_input("Attack name", value=default_name, key=f"{prefix}-name")
-    row_one = st.columns(2)
-    attack_bonus = row_one[0].number_input(
-        "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
+    resolution_type_label = st.selectbox(
+        "Resolution Type",
+        options=["Attack Roll", "Saving Throw"],
+        index=0,
+        key=f"{prefix}-resolution-type",
     )
+    resolution_type = (
+        ResolutionType.ATTACK_ROLL
+        if resolution_type_label == "Attack Roll"
+        else ResolutionType.SAVING_THROW
+    )
+    row_one = st.columns(2)
+    if resolution_type is ResolutionType.ATTACK_ROLL:
+        attack_bonus = row_one[0].number_input(
+            "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
+        )
+        save_dc = None
+    else:
+        attack_bonus = None
+        save_dc = row_one[0].number_input(
+            "Save DC", min_value=1, value=13, step=1, key=f"{prefix}-save-dc"
+        )
     damage_dice = row_one[1].text_input(
         "Damage dice", value="1d8", key=f"{prefix}-damage-dice"
     )
@@ -379,12 +420,28 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     attacks_per_round = row_two[1].number_input(
         "Attacks per round", min_value=1, value=1, step=1, key=f"{prefix}-attacks"
     )
-    attack_roll_mode_label = row_two[2].selectbox(
-        "Attack roll mode",
-        options=[mode.value.title() for mode in AttackRollMode],
-        index=0,
-        key=f"{prefix}-mode",
-    )
+    if resolution_type is ResolutionType.ATTACK_ROLL:
+        attack_roll_mode_label = row_two[2].selectbox(
+            "Attack roll mode",
+            options=[mode.value.title() for mode in AttackRollMode],
+            index=0,
+            key=f"{prefix}-mode",
+        )
+        attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
+        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
+    else:
+        successful_save_damage_label = row_two[2].selectbox(
+            "Successful Save Damage",
+            options=["No damage", "Half damage"],
+            index=0,
+            key=f"{prefix}-successful-save-damage",
+        )
+        attack_roll_mode = AttackRollMode.NORMAL
+        successful_save_damage = (
+            SuccessfulSaveDamage.HALF_DAMAGE
+            if successful_save_damage_label == "Half damage"
+            else SuccessfulSaveDamage.NO_DAMAGE
+        )
     active_rounds = st.text_input(
         "Active Rounds",
         value="",
@@ -393,12 +450,15 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     )
     return AttackProfile(
         name=attack_name,
-        attack_bonus=int(attack_bonus),
+        attack_bonus=None if attack_bonus is None else int(attack_bonus),
         damage_dice=damage_dice,
         damage_modifier=int(damage_modifier),
         attacks_per_round=int(attacks_per_round),
-        attack_roll_mode=AttackRollMode(attack_roll_mode_label.lower()),
+        attack_roll_mode=attack_roll_mode,
         active_rounds=active_rounds,
+        resolution_type=resolution_type,
+        save_dc=None if save_dc is None else int(save_dc),
+        successful_save_damage=successful_save_damage,
     )
 
 
@@ -434,7 +494,7 @@ def _build_config_from_profiles(
     primary = profiles[0]
     return BuildConfig(
         name=name,
-        attack_bonus=primary.attack_bonus,
+        attack_bonus=primary.attack_bonus or 0,
         damage_dice=primary.damage_dice,
         damage_modifier=primary.damage_modifier,
         attacks_per_round=primary.attacks_per_round,
@@ -480,21 +540,24 @@ def main() -> None:
     )
 
     st.subheader("Shared scenario")
-    scenario_row = st.columns(4)
+    scenario_row = st.columns(5)
     target_armor_class = scenario_row[0].number_input(
         "Target Armor Class", min_value=1, value=15, step=1, key="scenario-target-ac"
     )
-    rounds = scenario_row[1].number_input(
+    enemy_save_bonus = scenario_row[1].number_input(
+        "Enemy Save Bonus", value=3, step=1, key="scenario-enemy-save-bonus"
+    )
+    rounds = scenario_row[2].number_input(
         "Number of rounds", min_value=1, value=5, step=1, key="scenario-rounds"
     )
-    simulations = scenario_row[2].number_input(
+    simulations = scenario_row[3].number_input(
         "Number of simulations",
         min_value=1,
         value=10_000,
         step=1,
         key="scenario-simulations",
     )
-    seed = scenario_row[3].number_input(
+    seed = scenario_row[4].number_input(
         "Random seed", value=20240721, step=1, key="scenario-seed"
     )
 
@@ -510,6 +573,7 @@ def main() -> None:
             second_build=second_build,
             scenario=ScenarioConfig(
                 target_armor_class=int(target_armor_class),
+                enemy_save_bonus=int(enemy_save_bonus),
                 rounds=int(rounds),
                 simulations=int(simulations),
             ),

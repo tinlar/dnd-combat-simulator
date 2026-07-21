@@ -1,6 +1,6 @@
 import pytest
 
-from dnd_combat_simulator.combat import AttackRollMode
+from dnd_combat_simulator.combat import AttackRollMode, ResolutionType
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
@@ -460,3 +460,117 @@ def test_existing_profile_without_active_rounds_repeats_attacks_per_round() -> N
     )
     assert result.total_attacks_made == 4
     assert [r.average_attacks for r in result.round_results] == [2, 2]
+
+
+def test_mixed_attack_roll_and_saving_throw_profiles_in_one_build() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=3,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Slash", 5, "1d6", 3, 1),
+            AttackProfile(
+                "Burn",
+                None,
+                "1d8",
+                2,
+                1,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=15,
+            ),
+        ),
+        rng=PredictableRng([10, 4, 11, 5]),
+    )
+
+    assert result.average_total_damage_per_simulation == 14
+    assert result.hit_rate == 1
+    assert result.critical_hit_rate == 0
+    assert result.failed_save_rate == 0.5
+    assert result.successful_save_rate == 0
+
+
+def test_active_rounds_with_saving_throw_profiles() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=3,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=2,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Burn",
+                None,
+                "1d8",
+                2,
+                1,
+                active_rounds="2",
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=15,
+            ),
+        ),
+        rng=PredictableRng([11, 5]),
+    )
+
+    assert [round_result.average_damage for round_result in result.round_results] == [
+        0,
+        7,
+    ]
+    assert [round_result.average_attacks for round_result in result.round_results] == [
+        0,
+        1,
+    ]
+
+
+def test_build_comparison_can_use_different_resolution_types() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig("Attack", 20, "1d4", 0, 1),
+        second_build=BuildConfig(
+            name="Save",
+            attack_bonus=0,
+            damage_dice="1d4",
+            damage_modifier=0,
+            attacks_per_round=1,
+            attack_profiles=(
+                AttackProfile(
+                    "Save damage",
+                    None,
+                    "1d4",
+                    0,
+                    1,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=30,
+                ),
+            ),
+        ),
+        scenario=ScenarioConfig(
+            target_armor_class=1, enemy_save_bonus=3, rounds=1, simulations=1
+        ),
+        seed=1,
+    )
+
+    assert comparison.first_result.critical_hit_rate >= 0
+    assert comparison.second_result.critical_hit_rate == 0
+    assert comparison.second_result.failed_save_rate == 1
+
+
+def test_existing_attack_roll_profiles_default_correctly() -> None:
+    profile = AttackProfile("Slash", 5, "1d6", 3, 1)
+
+    assert profile.resolution_type is ResolutionType.ATTACK_ROLL
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(profile,),
+        rng=PredictableRng([10, 4]),
+    )
+    assert result.hit_rate == 1
