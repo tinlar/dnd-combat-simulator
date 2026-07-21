@@ -19,6 +19,7 @@ class SimulationInputs:
     damage_dice: str
     damage_modifier: int
     rounds: int
+    attacks_per_round: int
     simulations: int
 
 
@@ -36,6 +37,9 @@ def validate_simulation_inputs(inputs: SimulationInputs) -> None:
         raise ValueError(msg)
     if inputs.rounds < 1:
         msg = "Number of rounds must be at least 1."
+        raise ValueError(msg)
+    if inputs.attacks_per_round < 1:
+        msg = "Attacks per round must be at least 1."
         raise ValueError(msg)
     if inputs.simulations < 1:
         msg = "Number of simulations must be at least 1."
@@ -62,6 +66,7 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
         damage_modifier=inputs.damage_modifier,
         rounds=inputs.rounds,
         simulations=inputs.simulations,
+        attacks_per_round=inputs.attacks_per_round,
     )
 
 
@@ -98,7 +103,10 @@ def main() -> None:
     """Render the Streamlit simulation page."""
     st.set_page_config(page_title=APP_TITLE, page_icon="🎲")
     st.title(APP_TITLE)
-    st.write("Estimate weapon damage over repeated one-attack-per-round combats.")
+    st.write(
+        "Estimate weapon damage over repeated combats with one or more "
+        "attacks per round."
+    )
 
     with st.form("simulation-inputs"):
         first_row = st.columns(2)
@@ -111,11 +119,14 @@ def main() -> None:
         damage_dice = second_row[0].text_input("Damage dice", value="1d8")
         damage_modifier = second_row[1].number_input("Damage modifier", value=3, step=1)
 
-        third_row = st.columns(2)
+        third_row = st.columns(3)
         rounds = third_row[0].number_input(
             "Number of rounds", min_value=1, value=5, step=1
         )
-        simulations = third_row[1].number_input(
+        attacks_per_round = third_row[1].number_input(
+            "Attacks per round", min_value=1, value=1, step=1
+        )
+        simulations = third_row[2].number_input(
             "Number of simulations", min_value=1, value=10_000, step=1
         )
 
@@ -128,6 +139,7 @@ def main() -> None:
             damage_dice=damage_dice,
             damage_modifier=int(damage_modifier),
             rounds=int(rounds),
+            attacks_per_round=int(attacks_per_round),
             simulations=int(simulations),
         )
         try:

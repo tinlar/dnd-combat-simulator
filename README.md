@@ -22,7 +22,7 @@ Single-attack resolution returns the natural d20 roll, modified attack total, wh
 
 ## Damage simulations
 
-The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs one weapon attack per round for a requested number of rounds. That full combat is repeated for the requested number of simulations.
+The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs a requested number of weapon attacks per round for a requested number of rounds. That full combat is repeated for the requested number of simulations.
 
 Simulation inputs are:
 
@@ -31,11 +31,12 @@ Simulation inputs are:
 - Damage dice, without an embedded modifier
 - Damage modifier
 - Number of rounds
+- Attacks per round, defaulting to 1
 - Number of simulations
 
-Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation.
+Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, attacks per round, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation.
 
-Random number generation can be injected so simulations are deterministic in tests. Rounds and simulation counts must both be at least 1; lower values are rejected with clear errors.
+Random number generation can be injected so simulations are deterministic in tests. Rounds, attacks per round, and simulation counts must all be at least 1; lower values are rejected with clear errors.
 
 ## Dice notation
 
@@ -78,7 +79,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a simple browser interface for configuring and running damage simulations. Use the input controls for attack bonus, target Armor Class, damage dice, damage modifier, number of rounds, and number of simulations, then select **Run Simulation** to view aggregate damage, hit-rate, critical-hit-rate, and total-attack results.
+The app opens a simple browser interface for configuring and running damage simulations. Use the input controls for attack bonus, target Armor Class, damage dice, damage modifier, number of rounds, attacks per round, and number of simulations, then select **Run Simulation** to view aggregate damage, hit-rate, critical-hit-rate, and total-attack results. Total attacks equal number of simulations × number of rounds × attacks per round, and average damage per round includes every attack made during each round.
 
 ## Run tests
 

@@ -45,6 +45,7 @@ def test_run_damage_simulations_returns_summary_statistics() -> None:
     assert result == SimulationResult(
         simulations_run=2,
         rounds_per_simulation=3,
+        attacks_per_round=1,
         total_attacks_made=6,
         average_total_damage_per_simulation=9.5,
         average_damage_per_round=19 / 6,
@@ -114,6 +115,53 @@ def test_simulations_must_be_at_least_one(simulations: int) -> None:
             simulations=simulations,
             rng=PredictableRng([]),
         )
+
+
+@pytest.mark.parametrize("attacks_per_round", [0, -1])
+def test_attacks_per_round_must_be_at_least_one(attacks_per_round: int) -> None:
+    with pytest.raises(ValueError, match="Attacks per round must be at least 1"):
+        run_damage_simulations(
+            attack_bonus=5,
+            target_armor_class=15,
+            damage_dice="1d8",
+            damage_modifier=3,
+            rounds=1,
+            simulations=1,
+            attacks_per_round=attacks_per_round,
+            rng=PredictableRng([]),
+        )
+
+
+@pytest.mark.parametrize("attacks_per_round", [1, 2, 3])
+def test_multiple_attacks_per_round_are_deterministic(
+    attacks_per_round: int,
+) -> None:
+    rng = PredictableRng([10, 4] * attacks_per_round)
+
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=15,
+        damage_dice="1d6",
+        damage_modifier=2,
+        rounds=1,
+        simulations=1,
+        attacks_per_round=attacks_per_round,
+        rng=rng,
+    )
+
+    assert result == SimulationResult(
+        simulations_run=1,
+        rounds_per_simulation=1,
+        attacks_per_round=attacks_per_round,
+        total_attacks_made=attacks_per_round,
+        average_total_damage_per_simulation=6 * attacks_per_round,
+        average_damage_per_round=6 * attacks_per_round,
+        hit_rate=1,
+        critical_hit_rate=0,
+        minimum_total_damage_in_simulation=6 * attacks_per_round,
+        maximum_total_damage_in_simulation=6 * attacks_per_round,
+    )
+    assert rng.calls == [(1, 20), (1, 6)] * attacks_per_round
 
 
 def test_invalid_damage_dice_errors_are_reused_from_attack_resolution() -> None:
