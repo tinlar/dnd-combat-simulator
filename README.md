@@ -227,13 +227,9 @@ ruff format .
 ## Sharing Configurations
 
 1. Configure the shared Scenario inputs and Build A/Build B inputs you want to send.
-2. Click the **⤴** curved-arrow share button near the top-left of the app.
-3. The app builds the complete simulator configuration URL and sends it to the CleanURI shortening API only after the Share button is clicked.
-4. Click the copy icon beside the displayed CleanURI link to copy it.
-5. No CleanURI account or API key is required.
-6. For an unchanged configuration, the app reuses the short link it already generated during the current session instead of submitting the same URL again.
-7. If CleanURI is unavailable or rate limited, the complete configuration link is shown instead with the same copy control.
-8. Anyone who opens the copied URL receives the same simulator inputs, including hidden Build B values when comparison mode is disabled.
-9. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
+2. Click the circular swept-arrow **⤴** share button near the top-left of the app.
+3. The app generates a first-party simulator configuration URL with the compressed configuration token inside the URL. No third-party URL-shortening service is used.
+4. Click the native copy icon beside the displayed URL.
+5. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
-The link contains simulator configuration data only. It does not contain saved simulation results. CleanURI availability or rate limits can cause sharing to temporarily fall back to full configuration URLs.
+The link contains configuration data only, not saved simulation results. The configuration remains inside the URL and is never sent through an external shortening or redirect service.

@@ -846,241 +846,17 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     assert disabled_by_label["Stop on Miss"] is True
 
 
-def test_shorten_share_url_with_cleanuri_constructs_form_request(
-    monkeypatch,
-) -> None:
-    from urllib.parse import parse_qs, urlparse
-
-    from dnd_combat_simulator import app
-
-    calls = []
-    long_url = "https://example.test/sim?config=a&b+c#frag=x=y%25;semi"
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self, size):
-            assert size == 8192
-            return b'{"result_url":"https:\\/\\/cleanuri.com\\/ok1De0"}'
-
-    def fake_urlopen(request, *, timeout):
-        calls.append((request, timeout))
-        return Response()
-
-    monkeypatch.setattr(app, "urlopen", fake_urlopen)
-
-    result = app.shorten_share_url_with_cleanuri(long_url)
-
-    assert result.url == "https://cleanuri.com/ok1De0"
-    assert result.shortened is True
-    assert result.rate_limited is False
-    request, timeout = calls[0]
-    assert timeout == 4.0
-    assert request.full_url == app.CLEANURI_CREATE_API_URL
-    assert urlparse(request.full_url).query == ""
-    assert request.get_method() == "POST"
-    assert request.headers["Accept"] == "application/json"
-    assert request.headers["Content-type"] == "application/x-www-form-urlencoded"
-    assert request.headers["User-agent"] == "DnDCombatSimulator/1.0"
-    assert "Authorization" not in request.headers
-    assert parse_qs(request.data.decode("utf-8"), keep_blank_values=True) == {
-        "url": [long_url]
-    }
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        b"",
-        b"{}",
-        b"{",
-        b"[]",
-        b'{"result_url": 3}',
-        b'{"result_url": "http://cleanuri.com/ok1De0"}',
-        b'{"result_url": "https://example.com/ok1De0"}',
-        b'{"result_url": "https://cleanuri.com/ok1 De0"}',
-        b"\xff",
-    ],
-)
-def test_shorten_share_url_with_cleanuri_falls_back_on_invalid_responses(
-    monkeypatch, payload
-) -> None:
-    from dnd_combat_simulator import app
-
-    class Response:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self, size):
-            return payload
-
-    monkeypatch.setattr(app, "urlopen", lambda request, *, timeout: Response())
-    url = "https://example.test/sim?config=abc"
-
-    result = app.shorten_share_url_with_cleanuri(url)
-
-    assert result.url == url
-    assert result.shortened is False
-    assert result.error_message == "CleanURI returned an invalid response."
-
-
-@pytest.mark.parametrize(
-    ("status", "expected_message", "rate_limited"),
-    [
-        (400, "CleanURI rejected the configuration URL.", False),
-        (429, "The CleanURI rate limit was reached.", True),
-        (503, "CleanURI is temporarily unavailable.", False),
-    ],
-)
-def test_shorten_share_url_with_cleanuri_falls_back_on_http_errors(
-    monkeypatch, status, expected_message, rate_limited
-) -> None:
-    from urllib.error import HTTPError
-
-    from dnd_combat_simulator import app
-
-    def fake_urlopen(request, *, timeout):
-        raise HTTPError(request.full_url, status, "bad", {}, None)
-
-    monkeypatch.setattr(app, "urlopen", fake_urlopen)
-    url = "https://example.test/sim?config=abc"
-
-    result = app.shorten_share_url_with_cleanuri(url)
-
-    assert result.url == url
-    assert result.shortened is False
-    assert result.error_message == expected_message
-    assert result.rate_limited is rate_limited
-
-
-def test_shorten_share_url_with_cleanuri_includes_sanitized_http_error_body(
-    monkeypatch,
-) -> None:
-    from io import BytesIO
-    from urllib.error import HTTPError
-
-    from dnd_combat_simulator import app
-
-    def fake_urlopen(request, *, timeout):
-        raise HTTPError(
-            request.full_url,
-            400,
-            "bad",
-            {},
-            BytesIO(b'{"error":"invalid url"}\nsecond line'),
-        )
-
-    monkeypatch.setattr(app, "urlopen", fake_urlopen)
-
-    result = app.shorten_share_url_with_cleanuri("https://example.test/sim?config=abc")
-
-    assert result.shortened is False
-    assert result.error_message == (
-        'CleanURI returned HTTP 400: {"error":"invalid url"} second line'
-    )
-
-
-@pytest.mark.parametrize(
-    ("exception", "message"),
-    [
-        (TimeoutError(), "The CleanURI request timed out."),
-        (OSError("network"), "CleanURI returned an invalid response."),
-    ],
-)
-def test_shorten_share_url_with_cleanuri_falls_back_on_request_errors(
-    monkeypatch, exception, message
-) -> None:
-    from dnd_combat_simulator import app
-
-    def fake_urlopen(request, *, timeout):
-        raise exception
-
-    monkeypatch.setattr(app, "urlopen", fake_urlopen)
-    url = "https://example.test/sim?config=abc"
-
-    result = app.shorten_share_url_with_cleanuri(url)
-
-    assert result.url == url
-    assert result.shortened is False
-    assert result.error_message == message
-
-
-def test_shorten_share_url_with_cleanuri_empty_url() -> None:
-    from dnd_combat_simulator import app
-
-    result = app.shorten_share_url_with_cleanuri("")
-
-    assert result.url == ""
-    assert result.shortened is False
-    assert result.error_message == "A share URL is required."
-
-
-def test_resolve_share_url_to_copy_reuses_existing_cleanuri_link(monkeypatch) -> None:
-    from dnd_combat_simulator import app
-
-    calls = []
-
-    def fake_shorten(url):
-        calls.append(url)
-        return app.ShortenedUrlResult("https://cleanuri.com/new", True)
-
-    monkeypatch.setattr(app, "shorten_share_url_with_cleanuri", fake_shorten)
-    state = {
-        app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://cleanuri.com/old",
-    }
-
-    result = app.resolve_share_url_to_copy("https://example.test/?config=1", state)
-
-    assert result.url == "https://cleanuri.com/old"
-    assert calls == []
-    assert state[app.GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] == result.url
-
-
-def test_resolve_share_url_to_copy_changed_config_requests_new_and_clears_old(
-    monkeypatch,
-) -> None:
-    from dnd_combat_simulator import app
-
-    calls = []
-
-    def fake_shorten(url):
-        calls.append(url)
-        return app.ShortenedUrlResult(
-            url, False, "CleanURI rejected the configuration URL."
-        )
-
-    monkeypatch.setattr(app, "shorten_share_url_with_cleanuri", fake_shorten)
-    state = {
-        app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://cleanuri.com/old",
-    }
-
-    result = app.resolve_share_url_to_copy("https://example.test/?config=2", state)
-
-    assert calls == ["https://example.test/?config=2"]
-    assert result.url == "https://example.test/?config=2"
-    assert result.shortened is False
-    assert app.GENERATED_SHORT_SHARE_URL_SESSION_KEY not in state
-    assert state[app.GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] == result.url
-
-
 def test_repository_does_not_reference_removed_url_shorteners() -> None:
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     forbidden = [
-        "api." + "tiny" + "url.com",
-        "api" + "-create.php",
-        "TINY" + "URL_API_TOKEN",
-        "api." + "dub.co",
+        "clean" + "uri",
+        "clean" + "uri.com",
+        "is" + ".gd",
+        "tiny" + "url",
+        "v" + ".gd",
+        "tiny" + "src",
     ]
     for path in root.rglob("*"):
         if (
@@ -1089,18 +865,19 @@ def test_repository_does_not_reference_removed_url_shorteners() -> None:
             and ".pytest_cache" not in path.parts
             and "__pycache__" not in path.parts
         ):
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = path.read_text(encoding="utf-8", errors="ignore").lower()
             for value in forbidden:
                 assert value not in text
 
 
-def test_share_toolbar_button_left_column_icon_help_and_cleanuri_output(
+def test_share_toolbar_displays_exact_first_party_url_without_external_call(
     monkeypatch,
 ) -> None:
     import sys
     from types import SimpleNamespace
 
     from dnd_combat_simulator import app
+    from dnd_combat_simulator.sharing import deserialize_shared_configuration
 
     calls: list[tuple[str, object]] = []
 
@@ -1126,27 +903,55 @@ def test_share_toolbar_button_left_column_icon_help_and_cleanuri_output(
     def code(body, **kwargs):
         calls.append(("code", {"body": body, **kwargs}))
 
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 18,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 5,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 7,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 1234,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 99,
+        app.COMPARE_WIDGET_KEY: True,
+        "first-build-name": "Build A Exact",
+        "first-primary-name": "A Blade",
+        "first-primary-resolution-type": "Attack Roll",
+        "first-primary-attack-bonus": 8,
+        "first-primary-mode": "Advantage",
+        "first-primary-damage-dice": "2d6+4",
+        "first-primary-attacks": 2,
+        "first-primary-affected-targets": 1,
+        "first-primary-active-rounds": "1-7",
+        "second-build-name": "Build B Exact",
+        "second-primary-name": "B Blast",
+        "second-primary-resolution-type": "Saving Throw",
+        "second-primary-save-dc": 16,
+        "second-primary-successful-save-damage": "Half damage",
+        "second-primary-damage-dice": "3d8",
+        "second-primary-attacks": 1,
+        "second-primary-affected-targets": 3,
+        "second-primary-active-rounds": "1-4",
+    }
     fake_streamlit = SimpleNamespace(
-        session_state={},
-        context=SimpleNamespace(url="https://example.test/sim"),
+        session_state=state,
+        context=SimpleNamespace(url="https://first-party.example/sim?old=1"),
         columns=columns,
         button=button,
         code=code,
         markdown=lambda *args, **kwargs: calls.append(("markdown", args[0])),
         toast=lambda *args, **kwargs: calls.append(("toast", args[0])),
         warning=lambda *args, **kwargs: calls.append(("warning", args[0])),
+        success=lambda *args, **kwargs: calls.append(("success", args[0])),
+        link_button=lambda *args, **kwargs: calls.append(("link_button", args[0])),
+        caption=lambda *args, **kwargs: calls.append(("caption", args[0])),
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
-    monkeypatch.setattr(
-        app,
-        "resolve_share_url_to_copy",
-        lambda long_url, state: app.ShortenedUrlResult(
-            "https://cleanuri.com/ready", True
-        ),
-    )
 
     app._render_share_configuration_button()
 
+    code_calls = [call[1] for call in calls if call[0] == "code"]
+    assert len(code_calls) == 1
+    share_url = code_calls[0]["body"]
+    assert share_url.startswith("https://first-party.example/sim?config=")
+    assert code_calls[0] == {"body": share_url, "language": None, "wrap_lines": False}
+    assert state[app.GENERATED_SHARE_URL_SESSION_KEY] == share_url
     assert ("columns", {"spec": [0.06, 0.94], "vertical_alignment": "center"}) in calls
     button_index = next(i for i, call in enumerate(calls) if call[0] == "button")
     assert calls[button_index - 1] == ("enter_column", "left")
@@ -1157,63 +962,21 @@ def test_share_toolbar_button_left_column_icon_help_and_cleanuri_output(
     }
     assert all(call[1].get("label") != "📤" for call in calls if call[0] == "button")
     assert ("toast", "Share link ready") in calls
-    assert (
-        "code",
-        {"body": "https://cleanuri.com/ready", "language": None, "wrap_lines": False},
-    ) in calls
-    assert not any(call == ("success", "Copied CleanURI share link.") for call in calls)
-
-
-def test_share_toolbar_failure_shows_full_url_once_without_link_button(
-    monkeypatch,
-) -> None:
-    import sys
-    from types import SimpleNamespace
-
-    from dnd_combat_simulator import app
-
-    calls: list[tuple[str, object]] = []
-
-    class Column:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-    full_url = "https://example.test/sim?config=full"
-
-    fake_streamlit = SimpleNamespace(
-        session_state={},
-        context=SimpleNamespace(url="https://example.test/sim"),
-        columns=lambda *args, **kwargs: [Column(), Column()],
-        button=lambda *args, **kwargs: True,
-        code=lambda body, **kwargs: calls.append(("code", {"body": body, **kwargs})),
-        markdown=lambda *args, **kwargs: None,
-        toast=lambda *args, **kwargs: calls.append(("toast", args[0])),
-        warning=lambda *args, **kwargs: calls.append(("warning", args[0])),
-        link_button=lambda *args, **kwargs: calls.append(("link_button", args[0])),
-        success=lambda *args, **kwargs: calls.append(("success", args[0])),
-        caption=lambda *args, **kwargs: calls.append(("caption", args[0])),
-    )
-    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
-    monkeypatch.setattr(
-        app,
-        "resolve_share_url_to_copy",
-        lambda long_url, state: app.ShortenedUrlResult(
-            full_url, False, "<html>diagnostic</html>"
-        ),
+    assert not any(
+        call[0] in {"warning", "success", "caption", "link_button"} for call in calls
     )
 
-    app._render_share_configuration_button()
+    token = share_url.split("config=", 1)[1]
+    config = deserialize_shared_configuration(token)
+    assert config.compare_enabled is True
+    assert config.scenario.target_armor_class == 18
+    assert config.scenario.seed == 99
+    assert config.build_a.name == "Build A Exact"
+    assert config.build_b.name == "Build B Exact"
+    assert config.build_b.attack_profiles[0].affected_targets == 3
 
-    assert calls == [
-        ("warning", "CleanURI unavailable; full link shown."),
-        ("code", {"body": full_url, "language": None, "wrap_lines": False}),
-    ]
 
-
-def test_share_clipboard_autocopy_and_link_button_removed_from_source() -> None:
+def test_share_source_has_no_auto_copy_or_obsolete_controls() -> None:
     from pathlib import Path
 
     source = Path("src/dnd_combat_simulator/app.py").read_text()
@@ -1222,8 +985,10 @@ def test_share_clipboard_autocopy_and_link_button_removed_from_source() -> None:
     assert "components.html" not in source
     assert "navigator.clipboard.writeText" not in source
     assert "document.execCommand" not in source
-    assert "Copied CleanURI share link" not in source
+    assert "copied" not in source.lower()
     assert "Open Shared Configuration" not in source
+    assert "urlopen" not in source
+    assert "Request(" not in source
 
 
 def test_share_button_css_is_scoped_and_theme_compatible() -> None:
