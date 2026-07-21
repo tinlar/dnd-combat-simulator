@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+from textwrap import dedent
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import (
@@ -22,35 +23,42 @@ from dnd_combat_simulator.simulation import (
     simulate_build,
 )
 
-DAMAGE_FORMULA_HELP = """Enter a dice formula with optional rerolls, exploding dice,
-keep/drop rules, and a flat modifier.
+DAMAGE_FORMULA_HELP = dedent(
+    """
+    **Basic**
 
-Basic:
-• 1d8
-• 2d6+4
-• 1d10-1
+    - `1d8`
+    - `2d6+4`
+    - `1d10-1`
 
-Reroll:
-• 2d8r<2 — reroll 1s and 2s
-• 2d8r8 — reroll 8s
-• 2d8r1r3r5r7 — reroll odd results
+    **Reroll**
 
-Exploding:
-• 3d6! — explode on 6
-• 3d6!>4 — explode on 4, 5, or 6
-• 3d6!3 — explode only on 3
+    - `2d8r<2` — reroll 1s and 2s
+    - `2d8r8` — reroll 8s
+    - `2d8r1r3r5r7` — reroll odd results
 
-Keep or drop:
-• 4d6kh3 — keep highest 3
-• 4d6kl3 — keep lowest 3
-• 8d100dl3 — drop lowest 3
-• 8d100dh3 — drop highest 3
+    **Exploding**
 
-Combined:
-• 4d6r1!kh3+2
+    - `3d6!` — explode on 6
+    - `3d6!>4` — explode on 4, 5, or 6
+    - `3d6!3` — explode only on 3
 
-Processing order:
-Reroll, explode, keep/drop, then apply the modifier."""
+    **Keep or drop**
+
+    - `4d6kh3` — keep highest 3
+    - `4d6kl3` — keep lowest 3
+    - `8d100dl3` — drop lowest 3
+    - `8d100dh3` — drop highest 3
+
+    **Combined**
+
+    - `4d6r1!kh3+2`
+
+    **Processing order**
+
+    Reroll, explode, keep/drop, then apply the modifier.
+    """
+).strip()
 
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
 
