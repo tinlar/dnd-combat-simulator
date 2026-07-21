@@ -17,6 +17,14 @@ class AttackRollMode(StrEnum):
     DISADVANTAGE = "disadvantage"
 
 
+class AttackFeature(StrEnum):
+    """Optional profile-level feats and features."""
+
+    ELVEN_ACCURACY = "elven_accuracy"
+    GREAT_WEAPON_FIGHTING = "great_weapon_fighting"
+    TAVERN_BRAWLER = "tavern_brawler"
+
+
 class ResolutionType(StrEnum):
     """Ways an attack profile can resolve its damage."""
 
@@ -92,6 +100,7 @@ def roll_attack_d20(
     mode: AttackRollMode = AttackRollMode.NORMAL,
     *,
     rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
 ) -> AttackRoll:
     """Roll one or two d20s and select the die required by the roll mode."""
     random_number_generator = rng if rng is not None else Random()
@@ -105,7 +114,15 @@ def roll_attack_d20(
             random_number_generator.randint(1, 20),
             random_number_generator.randint(1, 20),
         )
-        selected_roll = max(rolls)
+        if AttackFeature.ELVEN_ACCURACY in features:
+            replacement = random_number_generator.randint(1, 20)
+            first, second = rolls
+            selected_roll = (
+                max(first, replacement) if first >= second else max(second, replacement)
+            )
+            rolls = (*rolls, replacement)
+        else:
+            selected_roll = max(rolls)
     elif attack_roll_mode is AttackRollMode.DISADVANTAGE:
         rolls = (
             random_number_generator.randint(1, 20),
@@ -121,8 +138,12 @@ def roll_attack_d20(
     )
 
 
-def _roll_noncritical_damage(*, damage_dice: str, rng) -> int:
-    return roll_damage_formula(damage_dice, rng=rng)
+def _roll_noncritical_damage(
+    *, damage_dice: str, rng, features: frozenset[AttackFeature] = frozenset()
+) -> int:
+    return roll_damage_formula(
+        damage_dice, rng=rng, features=frozenset(feature.value for feature in features)
+    )
 
 
 def resolve_weapon_attack(
@@ -132,10 +153,14 @@ def resolve_weapon_attack(
     damage_dice: str,
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
 ) -> AttackResult:
     """Resolve one DnD weapon attack."""
     random_number_generator = rng if rng is not None else Random()
-    attack_roll = roll_attack_d20(attack_roll_mode, rng=random_number_generator)
+    attack_features = frozenset(AttackFeature(feature) for feature in features)
+    attack_roll = roll_attack_d20(
+        attack_roll_mode, rng=random_number_generator, features=attack_features
+    )
     natural_d20_roll = attack_roll.selected_d20_roll
     modified_attack_total = natural_d20_roll + attack_bonus
 
@@ -147,7 +172,10 @@ def resolve_weapon_attack(
     damage_dealt = 0
     if hit:
         damage_dealt = roll_damage_formula(
-            damage_dice, critical=critical_hit, rng=random_number_generator
+            damage_dice,
+            critical=critical_hit,
+            rng=random_number_generator,
+            features=frozenset(feature.value for feature in attack_features),
         )
 
     return AttackResult(
@@ -168,6 +196,7 @@ def resolve_saving_throw_damage(
     damage_dice: str,
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
     rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
 ) -> SavingThrowResult:
     """Resolve one saving throw based damage event."""
     if save_dc < 1:
@@ -184,6 +213,7 @@ def resolve_saving_throw_damage(
         full_damage = _roll_noncritical_damage(
             damage_dice=damage_dice,
             rng=random_number_generator,
+            features=frozenset(AttackFeature(feature) for feature in features),
         )
         damage_dealt = full_damage if failed_save else full_damage // 2
 
@@ -202,12 +232,14 @@ def resolve_automatic_damage(
     *,
     damage_dice: str,
     rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
 ) -> AutomaticDamageResult:
     """Resolve one automatic damage application without rolling a d20."""
     random_number_generator = rng if rng is not None else Random()
     damage_dealt = _roll_noncritical_damage(
         damage_dice=damage_dice,
         rng=random_number_generator,
+        features=frozenset(AttackFeature(feature) for feature in features),
     )
     return AutomaticDamageResult(critical_hit=False, damage_dealt=damage_dealt)
 
@@ -223,9 +255,18 @@ def resolve_damage_profile(
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
     rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
 ) -> DamageResolutionResult:
     """Resolve profile damage without duplicating simulation loops."""
-    if ResolutionType(resolution_type) is ResolutionType.ATTACK_ROLL:
+    damage_features = frozenset(AttackFeature(feature) for feature in features)
+    selected_resolution_type = ResolutionType(resolution_type)
+    if (
+        AttackFeature.ELVEN_ACCURACY in damage_features
+        and selected_resolution_type is not ResolutionType.ATTACK_ROLL
+    ):
+        msg = "Elven Accuracy requires an Attack Roll resolution type."
+        raise ValueError(msg)
+    if selected_resolution_type is ResolutionType.ATTACK_ROLL:
         if attack_bonus is None:
             msg = "Attack Bonus is required for attack-roll profiles."
             raise ValueError(msg)
@@ -235,6 +276,7 @@ def resolve_damage_profile(
             damage_dice=damage_dice,
             attack_roll_mode=attack_roll_mode,
             rng=rng,
+            features=features,
         )
         return DamageResolutionResult(
             resolution_type=ResolutionType.ATTACK_ROLL,
@@ -242,8 +284,10 @@ def resolve_damage_profile(
             full_damage_success=attack.hit,
             critical_hit=attack.critical_hit,
         )
-    if ResolutionType(resolution_type) is ResolutionType.AUTOMATIC_DAMAGE:
-        automatic = resolve_automatic_damage(damage_dice=damage_dice, rng=rng)
+    if selected_resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
+        automatic = resolve_automatic_damage(
+            damage_dice=damage_dice, rng=rng, features=features
+        )
         return DamageResolutionResult(
             resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
             damage_dealt=automatic.damage_dealt,
@@ -260,6 +304,7 @@ def resolve_damage_profile(
         damage_dice=damage_dice,
         successful_save_damage=successful_save_damage,
         rng=rng,
+        features=features,
     )
     return DamageResolutionResult(
         resolution_type=ResolutionType.SAVING_THROW,

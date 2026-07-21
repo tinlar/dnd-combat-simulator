@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from random import Random
 
 from dnd_combat_simulator.combat import (
+    AttackFeature,
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
@@ -31,6 +32,7 @@ class AttackProfile:
     resolution_type: ResolutionType = ResolutionType.ATTACK_ROLL
     save_dc: int | None = None
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE
+    features: frozenset[AttackFeature] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -221,6 +223,13 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
         msg = f"{label} affected targets must be an integer of at least 1."
         raise ValueError(msg)
     resolution_type = ResolutionType(profile.resolution_type)
+    features = frozenset(AttackFeature(feature) for feature in profile.features)
+    if (
+        AttackFeature.ELVEN_ACCURACY in features
+        and resolution_type is not ResolutionType.ATTACK_ROLL
+    ):
+        msg = f"{label} Elven Accuracy requires an Attack Roll resolution type."
+        raise ValueError(msg)
     if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
         msg = f"{label} Attack Bonus is required for attack-roll profiles."
         raise ValueError(msg)
@@ -371,6 +380,7 @@ def run_damage_simulations(
                                 damage_dice=profile.damage_dice.strip(),
                                 attack_roll_mode=profile.attack_roll_mode,
                                 rng=random_number_generator,
+                                features=profile.features,
                             )
                             damage = attack.damage_dealt
                             simulation_damage += damage
@@ -403,6 +413,7 @@ def run_damage_simulations(
                                 damage_dice=profile.damage_dice.strip(),
                                 successful_save_damage=(profile.successful_save_damage),
                                 rng=random_number_generator,
+                                features=profile.features,
                             )
                             damage = save.damage_dealt
                             simulation_damage += damage
@@ -426,7 +437,11 @@ def run_damage_simulations(
                             )
                             continue
                         shared_damage = roll_damage_formula(
-                            profile.damage_dice.strip(), rng=random_number_generator
+                            profile.damage_dice.strip(),
+                            rng=random_number_generator,
+                            features=frozenset(
+                                feature.value for feature in profile.features
+                            ),
                         )
                         for _ in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
@@ -466,6 +481,7 @@ def run_damage_simulations(
                             automatic = resolve_automatic_damage(
                                 damage_dice=profile.damage_dice.strip(),
                                 rng=random_number_generator,
+                                features=profile.features,
                             )
                             damage = automatic.damage_dealt
                             simulation_damage += damage
