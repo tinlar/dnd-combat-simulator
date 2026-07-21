@@ -43,6 +43,8 @@ def test_damage_formula_help_uses_markdown_lists() -> None:
         "8d100dl3",
         "8d100dh3",
         "4d6r1!kh3+2",
+        "1d6+1d4+4d4+3",
+        "4d6kh3+2d8!+1d4-2",
     ]
     lines = DAMAGE_FORMULA_HELP.splitlines()
 

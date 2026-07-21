@@ -56,7 +56,7 @@ class RerollCondition:
 
 @dataclass(frozen=True)
 class DiceNotation:
-    """Parsed representation of a damage dice formula."""
+    """Parsed representation of one dice group."""
 
     count: int
     sides: int
@@ -66,6 +66,66 @@ class DiceNotation:
     selection_mode: PoolSelectionMode | None = None
     selection_count: int | None = None
     reroll_conditions: tuple[RerollCondition, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class DiceTerm:
+    """One signed dice group in a damage expression."""
+
+    dice: DiceNotation
+    sign: int = 1
+
+
+@dataclass(frozen=True)
+class ConstantTerm:
+    """One signed numeric modifier in a damage expression."""
+
+    value: int
+
+
+DamageTerm = DiceTerm | ConstantTerm
+
+
+@dataclass(frozen=True)
+class DamageExpression:
+    """A complete damage expression composed of independent signed terms."""
+
+    terms: tuple[DamageTerm, ...]
+
+
+@dataclass(frozen=True)
+class DieChainRoll:
+    """Resolved rolls for one initial die and any explosion-generated dice."""
+
+    rolls: tuple[int, ...]
+    total: int
+    retained: bool
+
+
+@dataclass(frozen=True)
+class DiceTermRoll:
+    """Breakdown for one resolved dice term."""
+
+    term: DiceTerm
+    chains: tuple[DieChainRoll, ...]
+    subtotal: int
+
+
+@dataclass(frozen=True)
+class ConstantTermRoll:
+    """Breakdown for one resolved constant term."""
+
+    term: ConstantTerm
+    subtotal: int
+
+
+@dataclass(frozen=True)
+class DamageRollBreakdown:
+    """Detailed resolution of a complete damage roll."""
+
+    expression: DamageExpression
+    terms: tuple[DiceTermRoll | ConstantTermRoll, ...]
+    total: int
 
 
 _BASE_PATTERN = re.compile(r"(?P<count>[1-9]\d*)d(?P<sides>[1-9]\d*)")
@@ -179,6 +239,70 @@ def parse_dice_notation(notation: str) -> DiceNotation:
     return dice
 
 
+def _parse_dice_group(group: str, *, original: str) -> DiceNotation:
+    dice = parse_dice_notation(group)
+    if dice.modifier:
+        msg = (
+            f"Invalid damage expression {original!r}: numeric modifiers must be "
+            "separate terms in compound expressions."
+        )
+        raise ValueError(msg)
+    return dice
+
+
+def parse_damage_expression(notation: str) -> DamageExpression:
+    """Parse a complete damage expression into independent dice and constant terms."""
+    text = notation.strip()
+    if not text:
+        raise ValueError("Invalid damage expression: expression is required.")
+    if any(character.isspace() for character in text):
+        raise ValueError("Invalid dice notation: spaces are not supported.")
+
+    terms: list[DamageTerm] = []
+    position = 0
+    sign = 1
+    expecting_term = True
+    while position < len(text):
+        character = text[position]
+        if character in "+-":
+            if expecting_term:
+                if position == 0:
+                    raise ValueError(
+                        "Invalid damage expression: cannot start with a sign."
+                    )
+                raise ValueError(
+                    "Invalid damage expression: missing term between operators."
+                )
+            sign = 1 if character == "+" else -1
+            position += 1
+            expecting_term = True
+            if position == len(text):
+                raise ValueError(
+                    "Invalid damage expression: expression cannot end with an operator."
+                )
+            continue
+
+        start = position
+        while position < len(text) and text[position] not in "+-":
+            position += 1
+        token = text[start:position]
+        if not token:
+            raise ValueError("Invalid damage expression: empty term.")
+        if "d" in token:
+            terms.append(DiceTerm(_parse_dice_group(token, original=notation), sign))
+        elif _INT_PATTERN.fullmatch(token):
+            terms.append(ConstantTerm(sign * int(token)))
+        else:
+            raise ValueError(
+                f"Invalid damage expression {notation!r}: unsupported term {token!r}."
+            )
+        expecting_term = False
+
+    if not terms:
+        raise ValueError("Invalid damage expression: expression is required.")
+    return DamageExpression(tuple(terms))
+
+
 def _validate_dice(dice: DiceNotation) -> None:
     if dice.selection_count is not None:
         if dice.selection_count < 1:
@@ -270,16 +394,17 @@ def _roll_feature_adjusted_face(
     return face, _damage_contribution(face, features)
 
 
-def roll_dice_pool(
-    dice: DiceNotation,
+def _roll_dice_pool_breakdown(
+    term: DiceTerm,
     rng: RandomNumberGenerator,
     *,
     features: frozenset[str] = frozenset(),
-) -> int:
-    """Evaluate one dice-pool portion before applying the flat modifier."""
-    chains: list[int] = []
+) -> DiceTermRoll:
+    dice = term.dice
+    chain_data: list[tuple[tuple[int, ...], int]] = []
     for _ in range(dice.count):
         face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+        rolls = [face]
         chain_total = contribution
         additional = 0
         while _matches_explosion(face, dice):
@@ -290,19 +415,75 @@ def roll_dice_pool(
                     f"({MAX_EXPLOSION_CHAIN_ROLLS}) exceeded."
                 )
             face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+            rolls.append(face)
             chain_total += contribution
-        chains.append(chain_total)
+        chain_data.append((tuple(rolls), chain_total))
 
-    values = sorted(chains)
+    retained_indexes = set(range(len(chain_data)))
+    indexed_totals = sorted(enumerate(chain_data), key=lambda item: item[1][1])
+    selection_count = dice.selection_count or 0
     if dice.selection_mode is PoolSelectionMode.KEEP_HIGHEST:
-        values = values[-(dice.selection_count or 0) :]
+        retained_indexes = {index for index, _ in indexed_totals[-selection_count:]}
     elif dice.selection_mode is PoolSelectionMode.KEEP_LOWEST:
-        values = values[: dice.selection_count or 0]
+        retained_indexes = {index for index, _ in indexed_totals[:selection_count]}
     elif dice.selection_mode is PoolSelectionMode.DROP_HIGHEST:
-        values = values[: len(values) - (dice.selection_count or 0)]
+        retained_indexes = {
+            index
+            for index, _ in indexed_totals[: len(indexed_totals) - selection_count]
+        }
     elif dice.selection_mode is PoolSelectionMode.DROP_LOWEST:
-        values = values[dice.selection_count or 0 :]
-    return sum(values)
+        retained_indexes = {index for index, _ in indexed_totals[selection_count:]}
+
+    chains = tuple(
+        DieChainRoll(rolls=rolls, total=total, retained=index in retained_indexes)
+        for index, (rolls, total) in enumerate(chain_data)
+    )
+    subtotal = term.sign * sum(chain.total for chain in chains if chain.retained)
+    return DiceTermRoll(term=term, chains=chains, subtotal=subtotal)
+
+
+def roll_dice_pool(
+    dice: DiceNotation,
+    rng: RandomNumberGenerator,
+    *,
+    features: frozenset[str] = frozenset(),
+) -> int:
+    """Evaluate one dice-pool portion before applying any flat modifier."""
+    return _roll_dice_pool_breakdown(DiceTerm(dice), rng, features=features).subtotal
+
+
+def roll_damage_formula_breakdown(
+    notation: str,
+    *,
+    critical: bool = False,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[str] = frozenset(),
+) -> DamageRollBreakdown:
+    """Roll a complete damage expression and return a detailed breakdown."""
+    expression = parse_damage_expression(notation)
+    random_number_generator = rng if rng is not None else Random()
+    term_rolls: list[DiceTermRoll | ConstantTermRoll] = []
+    total = 0
+    for term in expression.terms:
+        if isinstance(term, ConstantTerm):
+            roll = ConstantTermRoll(term=term, subtotal=term.value)
+            term_rolls.append(roll)
+            total += roll.subtotal
+            continue
+        roll = _roll_dice_pool_breakdown(
+            term, random_number_generator, features=features
+        )
+        term_rolls.append(roll)
+        total += roll.subtotal
+        if critical:
+            critical_roll = _roll_dice_pool_breakdown(
+                term, random_number_generator, features=features
+            )
+            term_rolls.append(critical_roll)
+            total += critical_roll.subtotal
+    return DamageRollBreakdown(
+        expression=expression, terms=tuple(term_rolls), total=max(0, total)
+    )
 
 
 def roll_damage_formula(
@@ -312,13 +493,31 @@ def roll_damage_formula(
     rng: RandomNumberGenerator | None = None,
     features: frozenset[str] = frozenset(),
 ) -> int:
-    """Roll a full damage formula, applying the modifier once after pool rolls."""
-    dice = parse_dice_notation(notation)
-    random_number_generator = rng if rng is not None else Random()
-    total = roll_dice_pool(dice, random_number_generator, features=features)
-    if critical:
-        total += roll_dice_pool(dice, random_number_generator, features=features)
-    return max(0, total + dice.modifier)
+    """Roll a full damage formula, applying constants once after pool rolls."""
+    return roll_damage_formula_breakdown(
+        notation, critical=critical, rng=rng, features=features
+    ).total
+
+
+def format_damage_roll_breakdown(breakdown: DamageRollBreakdown) -> str:
+    """Format a damage roll breakdown for display in UI or logs."""
+    parts: list[str] = []
+    for roll in breakdown.terms:
+        if isinstance(roll, ConstantTermRoll):
+            parts.append(f"constant {roll.term.value:+d}")
+            continue
+        dice = roll.term.dice
+        sign = "-" if roll.term.sign < 0 else "+"
+        chain_parts = []
+        for chain in roll.chains:
+            rolls = "+".join(str(face) for face in chain.rolls)
+            status = "kept" if chain.retained else "discarded"
+            chain_parts.append(f"{rolls}={chain.total} {status}")
+        parts.append(
+            f"{sign}{dice.count}d{dice.sides}: "
+            f"[{'; '.join(chain_parts)}] => {roll.subtotal:+d}"
+        )
+    return f"{' | '.join(parts)} | total={breakdown.total}"
 
 
 def roll_dice(notation: str, rng: RandomNumberGenerator | None = None) -> int:

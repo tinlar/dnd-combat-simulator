@@ -142,18 +142,19 @@ Build comparisons are implemented in Streamlit-independent simulation code. For 
 
 ## Damage Formula Syntax
 
-Damage is entered as one inline **Damage Formula**; there is no separate flat damage modifier field. Use the general order:
+Damage is entered as one inline **Damage Formula**; there is no separate flat damage modifier field. A formula can contain any number of independent dice groups and numeric modifiers:
 
 ```text
-XdY[reroll clauses][explosion][keep-or-drop][modifier]
+XdY[reroll clauses][explosion][keep-or-drop][+/- next group or modifier]
 ```
 
-The flat modifier (`+N` or `-N`) is applied once after all dice processing, and final damage is never below zero. Critical hits evaluate the dice-pool portion twice as independent pools, then apply the flat modifier once.
+Each dice group retains its own die size, quantity, rerolls, explosion rule, and keep/drop rule. Groups are resolved independently even when they use the same die size, so `1d4+4d4` stays two separate groups. Numeric modifiers (`+N` or `-N`) are applied once to the complete damage roll, and final damage is never below zero. Critical hits evaluate each dice-group portion twice as independent pools, then apply numeric modifiers once.
 
 | Feature | Syntax | Meaning | Examples |
 | --- | --- | --- | --- |
 | Basic dice | `XdY` | Roll X dice with Y sides. | `1d8`, `2d6` |
-| Modifier | `+N`, `-N` | Add or subtract after dice processing. | `1d8+4`, `2d6-1` |
+| Modifier | `+N`, `-N` | Add or subtract once after dice processing. | `1d8+4`, `2d6-1` |
+| Compound groups | `group+group`, `group-group` | Resolve multiple dice groups independently. | `1d6+1d4+4d4+3`, `4d6kh3+2d8!+1d4-2` |
 | Reroll exact | `rN` | Reroll accepted dice showing N until another value appears. | `2d8r8` |
 | Reroll low/high | `r<N`, `r>N` | Inclusive reroll threshold (`<= N` or `>= N`). | `2d8r<2`, `2d8r>6` |
 | Multiple rerolls | repeated `r...` | Reroll if any condition matches. | `2d8r1r3r5r7` |
@@ -165,9 +166,9 @@ The flat modifier (`+N` or `-N`) is applied once after all dice processing, and 
 | Drop lowest | `dN`, `dlN` | Drop the lowest N completed die chains. | `8d100d3`, `8d100dl3` |
 | Drop highest | `dhN` | Drop the highest N completed die chains. | `8d100dh3` |
 
-Processing order for each dice-pool evaluation is deterministic: roll each initial die, apply formula rerolls, apply Tavern Brawler if enabled, check explosion using the final natural face, apply Great Weapon Fighting to the damage contribution if enabled, resolve that die's explosion chain using the same process, continue to the next initial die, apply keep/drop to completed adjusted chain totals, sum retained values, then apply the modifier once. Rerolls and explosions include safety limits to prevent infinite rolling, and formulas that would reroll or explode on every possible face are rejected.
+Processing order for each dice-pool evaluation is deterministic: roll each initial die, apply formula rerolls, apply Tavern Brawler if enabled, check explosion using the final natural face, apply Great Weapon Fighting to the damage contribution if enabled, resolve that die's explosion chain using the same process, continue to the next initial die, apply keep/drop to completed adjusted chain totals, and sum retained values. After every dice group is resolved, numeric modifiers are added or subtracted once. Rerolls, explosions, and keep/drop never spill over to neighboring dice groups. Rerolls and explosions include safety limits to prevent infinite rolling, and formulas that would reroll or explode on every possible face are rejected.
 
-Examples: `1d8+4`, `2d6-1`, `3d6!`, `3d6!>4`, `3d6!3`, `4d6r1!kh3+2`, `8d100r100dh3`.
+Examples: `1d8+4`, `2d6-1`, `3d6!`, `3d6!>4`, `3d6!3`, `4d6r1!kh3+2`, `8d100r100dh3`, `1d6+1d4+4d4+3`, `2d6kh1+1d8+4`, `1d10!+2d4`, `4d6kh3+2d8!+1d4-2`.
 
 ## Requirements
 

@@ -110,11 +110,15 @@ DAMAGE_FORMULA_HELP = dedent(
     **Combined**
 
     - `4d6r1!kh3+2`
+    - `1d6+1d4+4d4+3`
+    - `4d6kh3+2d8!+1d4-2`
 
     **Processing order**
 
-    Formula rerolls, Tavern Brawler, explosion checks, Great Weapon Fighting
-    damage contribution, keep/drop, then apply the modifier.
+    Each dice group is rolled independently. Formula rerolls, Tavern Brawler,
+    explosion checks, Great Weapon Fighting damage contribution, and keep/drop
+    apply only to the dice group where they are written. Numeric modifiers apply
+    once to the complete damage roll.
     """
 ).strip()
 
@@ -1184,9 +1188,7 @@ def _feature_inputs(
                     feature_widget_key(prefix, feature), None
                 )
             target = (
-                feature_columns[index % len(feature_columns)]
-                if feature_columns
-                else st
+                feature_columns[index % len(feature_columns)] if feature_columns else st
             )
             target_checkbox = getattr(target, "checkbox", checkbox)
             checked = target_checkbox(

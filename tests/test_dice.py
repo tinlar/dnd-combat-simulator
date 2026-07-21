@@ -232,3 +232,92 @@ def test_keep_drop_operates_on_adjusted_chain_totals() -> None:
         )
         == 3
     )
+
+
+def test_parse_damage_expression_preserves_independent_groups_and_constants() -> None:
+    from dnd_combat_simulator.dice import (
+        ConstantTerm,
+        DiceTerm,
+        parse_damage_expression,
+    )
+
+    expression = parse_damage_expression("1d6+1d4+4d4+3")
+
+    assert expression.terms == (
+        DiceTerm(DiceNotation(count=1, sides=6)),
+        DiceTerm(DiceNotation(count=1, sides=4)),
+        DiceTerm(DiceNotation(count=4, sides=4)),
+        ConstantTerm(3),
+    )
+
+
+def test_compound_damage_rolls_multiple_die_sizes_and_constants() -> None:
+    assert roll_dice("2d8+1d6-2", SequenceRng([7, 3, 5])) == 13
+
+
+def test_compound_damage_keeps_repeated_same_size_groups_separate() -> None:
+    assert roll_dice("1d4+4d4", SequenceRng([1, 1, 2, 3, 4])) == 11
+
+
+def test_compound_damage_applies_exploding_to_only_that_group() -> None:
+    assert roll_dice("1d10!+2d6+5", SequenceRng([10, 4, 1, 2])) == 22
+
+
+def test_compound_damage_supports_exploding_in_multiple_groups() -> None:
+    assert roll_dice("1d4!+1d6!", SequenceRng([4, 2, 6, 3])) == 15
+
+
+def test_compound_damage_applies_keep_highest_to_individual_group() -> None:
+    assert roll_dice("2d6kh1+1d8+4", SequenceRng([1, 6, 7])) == 17
+
+
+def test_compound_damage_applies_keep_lowest_to_individual_group() -> None:
+    assert roll_dice("4d6kl2+1d4", SequenceRng([1, 6, 2, 5, 3])) == 6
+
+
+def test_compound_damage_combines_existing_modifiers_per_group() -> None:
+    assert (
+        roll_dice("4d6r1!kh3+2d8r<2kl1-2", SequenceRng([1, 6, 6, 2, 3, 4, 5, 1, 5, 7]))
+        == 26
+    )
+
+
+def test_legacy_single_group_expression_still_rolls() -> None:
+    assert roll_dice("4d6r1kh3+2", SequenceRng([1, 6, 2, 3, 4])) == 15
+
+
+@pytest.mark.parametrize("formula", ["1d6+", "1d6++2", "1d6+bad", "+1d6", "1d6+2d"])
+def test_compound_damage_rejects_invalid_or_incomplete_expressions(
+    formula: str,
+) -> None:
+    with pytest.raises(ValueError, match="Invalid"):
+        roll_dice(formula, SequenceRng([]))
+
+
+def test_damage_roll_breakdown_displays_groups_rolls_and_total() -> None:
+    from dnd_combat_simulator.dice import (
+        format_damage_roll_breakdown,
+        roll_damage_formula_breakdown,
+    )
+
+    breakdown = roll_damage_formula_breakdown(
+        "2d6kh1+1d4-2", rng=SequenceRng([1, 6, 3])
+    )
+
+    assert format_damage_roll_breakdown(breakdown) == (
+        "+2d6: [1=1 discarded; 6=6 kept] => +6 | "
+        "+1d4: [3=3 kept] => +3 | constant -2 | total=7"
+    )
+
+
+def test_damage_features_apply_across_complete_compound_roll_once_per_die() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "1d6+1d4+1",
+            rng=SequenceRng([1, 1, 2, 2]),
+            features=frozenset({"tavern_brawler", "great_weapon_fighting"}),
+        )
+        == 7
+    )
