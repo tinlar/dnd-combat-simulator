@@ -102,3 +102,73 @@ def test_result_rows_show_side_by_side_comparison() -> None:
     assert rows[0]["Difference"] == "-1.00"
     assert rows[2]["Metric"] == "Hit percentage"
     assert rows[2]["Difference"] == "+0.00%"
+
+
+@pytest.mark.parametrize(
+    ("additional_count", "expected_headings", "expected_prefixes"),
+    [
+        (0, ["Primary Attack"], ["build-primary"]),
+        (
+            1,
+            ["Primary Attack", "Additional Attack 1"],
+            ["build-primary", "build-additional-1"],
+        ),
+        (
+            2,
+            ["Primary Attack", "Additional Attack 1", "Additional Attack 2"],
+            ["build-primary", "build-additional-1", "build-additional-2"],
+        ),
+        (
+            3,
+            [
+                "Primary Attack",
+                "Additional Attack 1",
+                "Additional Attack 2",
+                "Additional Attack 3",
+            ],
+            [
+                "build-primary",
+                "build-additional-1",
+                "build-additional-2",
+                "build-additional-3",
+            ],
+        ),
+    ],
+)
+def test_profile_definitions_support_dynamic_additional_attacks(
+    additional_count: int, expected_headings: list[str], expected_prefixes: list[str]
+) -> None:
+    from dnd_combat_simulator.app import _profile_definitions
+
+    definitions = _profile_definitions("build", additional_count)
+
+    assert [definition[0] for definition in definitions] == expected_prefixes
+    assert [definition[1] for definition in definitions] == expected_headings
+
+
+def test_builds_can_use_different_numbers_of_attack_profiles() -> None:
+    from dnd_combat_simulator.app import _build_config_from_profiles
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        ScenarioConfig,
+        compare_builds,
+    )
+
+    first_profiles = (
+        AttackProfile("Primary A", 20, "1d4", 0, 1),
+        AttackProfile("Extra A 1", 20, "1d4", 0, 1),
+        AttackProfile("Extra A 2", 20, "1d4", 0, 1),
+    )
+    second_profiles = (AttackProfile("Primary B", 20, "1d4", 0, 1),)
+
+    comparison = compare_builds(
+        first_build=_build_config_from_profiles("Build A", first_profiles),
+        second_build=_build_config_from_profiles("Build B", second_profiles),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=4,
+    )
+
+    assert len(comparison.first_build.attack_profiles) == 3
+    assert len(comparison.second_build.attack_profiles) == 1
+    assert comparison.first_result.total_attacks_made == 3
+    assert comparison.second_result.total_attacks_made == 1

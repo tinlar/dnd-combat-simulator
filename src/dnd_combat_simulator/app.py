@@ -256,22 +256,35 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     )
 
 
-def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
-    """Render and collect one build's input controls."""
-    import streamlit as st
+def _profile_definitions(
+    build_prefix: str, additional_attack_count: int
+) -> tuple[tuple[str, str, str], ...]:
+    """Return stable key prefixes, headings, and default names for visible profiles."""
+    if additional_attack_count < 0:
+        msg = "Additional attack count must be at least 0."
+        raise ValueError(msg)
+    if additional_attack_count > 10:
+        msg = "Additional attack count must be no more than 10."
+        raise ValueError(msg)
 
-    st.markdown(f"#### {default_name}")
-    name = st.text_input("Build name", value=default_name, key=f"{prefix}-build-name")
-    st.markdown("##### Required attack profile")
-    primary = _attack_profile_inputs(f"{prefix}-primary", "Primary attack")
-    profiles = [primary]
-    if st.checkbox(
-        "Enable optional second attack profile", key=f"{prefix}-second-enabled"
-    ):
-        st.markdown("##### Optional attack profile")
-        profiles.append(
-            _attack_profile_inputs(f"{prefix}-secondary", "Secondary attack")
-        )
+    return (
+        (f"{build_prefix}-primary", "Primary Attack", "Primary attack"),
+        *(
+            (
+                f"{build_prefix}-additional-{index}",
+                f"Additional Attack {index}",
+                f"Additional attack {index}",
+            )
+            for index in range(1, additional_attack_count + 1)
+        ),
+    )
+
+
+def _build_config_from_profiles(
+    name: str, profiles: tuple[AttackProfile, ...]
+) -> BuildConfig:
+    """Create a build config with every displayed profile attached."""
+    primary = profiles[0]
     return BuildConfig(
         name=name,
         attack_bonus=primary.attack_bonus,
@@ -279,8 +292,33 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
         damage_modifier=primary.damage_modifier,
         attacks_per_round=primary.attacks_per_round,
         attack_roll_mode=primary.attack_roll_mode,
-        attack_profiles=tuple(profiles),
+        attack_profiles=profiles,
     )
+
+
+def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
+    """Render and collect one build's input controls."""
+    import streamlit as st
+
+    st.markdown(f"#### {default_name}")
+    name = st.text_input("Build name", value=default_name, key=f"{prefix}-build-name")
+    additional_attack_count = st.number_input(
+        "Additional Distinct Attacks",
+        min_value=0,
+        max_value=10,
+        value=0,
+        step=1,
+        key=f"{prefix}-additional-attack-count",
+    )
+
+    profiles = []
+    for profile_prefix, heading, default_attack_name in _profile_definitions(
+        prefix, int(additional_attack_count)
+    ):
+        st.markdown(f"##### {heading}")
+        profiles.append(_attack_profile_inputs(profile_prefix, default_attack_name))
+
+    return _build_config_from_profiles(name, tuple(profiles))
 
 
 def main() -> None:
@@ -294,29 +332,32 @@ def main() -> None:
         "Class, round count, and simulation count."
     )
 
-    with st.form("comparison-inputs"):
-        st.subheader("Shared scenario")
-        scenario_row = st.columns(4)
-        target_armor_class = scenario_row[0].number_input(
-            "Target Armor Class", min_value=1, value=15, step=1
-        )
-        rounds = scenario_row[1].number_input(
-            "Number of rounds", min_value=1, value=5, step=1
-        )
-        simulations = scenario_row[2].number_input(
-            "Number of simulations", min_value=1, value=10_000, step=1
-        )
-        seed = scenario_row[3].number_input("Random seed", value=20240721, step=1)
+    st.subheader("Shared scenario")
+    scenario_row = st.columns(4)
+    target_armor_class = scenario_row[0].number_input(
+        "Target Armor Class", min_value=1, value=15, step=1, key="scenario-target-ac"
+    )
+    rounds = scenario_row[1].number_input(
+        "Number of rounds", min_value=1, value=5, step=1, key="scenario-rounds"
+    )
+    simulations = scenario_row[2].number_input(
+        "Number of simulations",
+        min_value=1,
+        value=10_000,
+        step=1,
+        key="scenario-simulations",
+    )
+    seed = scenario_row[3].number_input(
+        "Random seed", value=20240721, step=1, key="scenario-seed"
+    )
 
-        build_columns = st.columns(2)
-        with build_columns[0]:
-            first_build = _build_inputs("first", "Build A")
-        with build_columns[1]:
-            second_build = _build_inputs("second", "Build B")
+    build_columns = st.columns(2)
+    with build_columns[0]:
+        first_build = _build_inputs("first", "Build A")
+    with build_columns[1]:
+        second_build = _build_inputs("second", "Build B")
 
-        submitted = st.form_submit_button("Compare Builds")
-
-    if submitted:
+    if st.button("Compare Builds"):
         inputs = ComparisonInputs(
             first_build=first_build,
             second_build=second_build,

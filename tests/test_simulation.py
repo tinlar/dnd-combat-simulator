@@ -333,3 +333,24 @@ def test_compare_builds_accepts_explicit_two_profile_build_config() -> None:
     assert comparison.first_result.total_attacks_made == 2
     assert comparison.second_result.total_attacks_made == 1
     assert comparison.higher_average_damage_build_name == "Sword and Bow"
+
+
+def test_simulation_accepts_more_than_two_attack_profiles() -> None:
+    profiles = tuple(
+        AttackProfile(f"Attack {index}", 20, "1d4", 0, 1) for index in range(1, 5)
+    )
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=1,
+        damage_dice="1d4",
+        damage_modifier=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=profiles,
+        rng=PredictableRng([10, 1, 10, 1, 10, 1, 10, 1]),
+    )
+
+    assert len(result.attack_profile_results) == 4
+    assert result.total_attacks_made == 4
+    assert result.attacks_per_round == 4
