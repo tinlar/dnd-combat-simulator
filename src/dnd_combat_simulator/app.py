@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+from secrets import randbelow
 from textwrap import dedent
 
 from dnd_combat_simulator import APP_TITLE
@@ -148,6 +149,19 @@ GENERATED_SHARE_FINGERPRINT_KEY = "_generated_share_fingerprint"
 SHARE_ERROR_MESSAGE_KEY = "_share_error_message"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 INVALID_SHARED_CONFIG_MESSAGE_KEY = "_invalid_shared_config_message"
+
+
+def _generate_default_seed() -> int:
+    """Return a random editable seed for a new Streamlit session."""
+    return randbelow(2**31 - 1) + 1
+
+
+def ensure_session_random_seed(session_state) -> int:
+    """Generate the scenario seed once and preserve it for normal reruns."""
+    seed_key = SCENARIO_WIDGET_KEYS["seed"]
+    if seed_key not in session_state:
+        session_state[seed_key] = _generate_default_seed()
+    return int(session_state[seed_key])
 
 
 @dataclass(frozen=True)
@@ -2106,6 +2120,35 @@ def _mount_unified_share_component(
     )
 
 
+def _render_simulation_settings() -> tuple[int, int]:
+    import streamlit as st
+
+    def render_controls(container) -> tuple[int, int]:
+        simulations_value = container.number_input(
+            "Number of simulations",
+            min_value=1,
+            value=10_000,
+            step=1,
+            key=SCENARIO_WIDGET_KEYS["simulations"],
+        )
+        seed_value = container.number_input(
+            "Random seed",
+            step=1,
+            key=SCENARIO_WIDGET_KEYS["seed"],
+        )
+        return int(simulations_value), int(seed_value)
+
+    popover = getattr(st, "popover", None)
+    if popover is not None:
+        with popover("⚙️", help="Simulation settings") as settings_area:
+            return render_controls(settings_area)
+    expander = getattr(st, "expander", None)
+    if expander is not None:
+        with expander("⚙️ Simulation settings", expanded=False) as settings_area:
+            return render_controls(settings_area or st)
+    return render_controls(st)
+
+
 def _render_share_configuration_button() -> None:
     import streamlit as st
 
@@ -2198,11 +2241,18 @@ def main() -> None:
         "Compare two named DnD combat builds against the same target Armor "
         "Class, round count, and simulation count."
     )
-    _render_share_configuration_button()
+    ensure_session_random_seed(getattr(st, "session_state", {}))
+    toolbar_columns = st.columns([1, 8])
+    settings_column = toolbar_columns[0]
+    share_column = toolbar_columns[1]
+    with settings_column if hasattr(settings_column, "__enter__") else nullcontext():
+        simulations, seed = _render_simulation_settings()
+    with share_column if hasattr(share_column, "__enter__") else nullcontext():
+        _render_share_configuration_button()
 
     with _render_section_container():
         st.subheader("Shared scenario")
-        scenario_row = st.columns(5)
+        scenario_row = st.columns(4)
         target_armor_class = scenario_row[0].number_input(
             "Target Armor Class",
             min_value=1,
@@ -2223,16 +2273,6 @@ def main() -> None:
             step=1,
             key=SCENARIO_WIDGET_KEYS["rounds"],
         )
-        simulations = scenario_row[3].number_input(
-            "Number of simulations",
-            min_value=1,
-            value=10_000,
-            step=1,
-            key=SCENARIO_WIDGET_KEYS["simulations"],
-        )
-        seed = scenario_row[4].number_input(
-            "Random seed", value=20240721, step=1, key=SCENARIO_WIDGET_KEYS["seed"]
-        )
         scenario_pre_errors = validation_errors_by_key(
             validate_scenario_fields(
                 ScenarioConfig(
@@ -2250,7 +2290,9 @@ def main() -> None:
         ):
             _field_error(scenario_pre_errors, key)
 
-        compare_enabled = st.toggle(
+        compare_container = scenario_row[3]
+        compare_toggle = getattr(compare_container, "toggle", st.toggle)
+        compare_enabled = compare_toggle(
             "Compare with another build",
             value=False,
             key=COMPARE_WIDGET_KEY,
