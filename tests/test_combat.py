@@ -411,3 +411,72 @@ def test_elven_accuracy_has_no_effect_for_normal_or_disadvantage() -> None:
     assert normal.d20_rolls == (12,)
     assert disadvantage.d20_rolls == (18, 4)
     assert disadvantage.natural_d20_roll == 4
+
+
+def test_potent_cantrip_attack_roll_miss_deals_half_noncritical_damage() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([2, 5])
+
+    result = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=20,
+        damage_dice="1d8+1",
+        rng=rng,
+        features=frozenset({AttackFeature.POTENT_CANTRIP}),
+    )
+
+    assert result.hit is False
+    assert result.critical_hit is False
+    assert result.damage_dealt == 3
+    assert rng.calls == [(1, 20), (1, 8)]
+
+
+def test_potent_cantrip_successful_saving_throw_deals_half_damage() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([15, 5])
+
+    result = resolve_saving_throw_damage(
+        save_dc=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8+1",
+        rng=rng,
+        features=frozenset({AttackFeature.POTENT_CANTRIP}),
+    )
+
+    assert result.successful_save is True
+    assert result.damage_dealt == 3
+
+
+def test_potent_cantrip_failed_saving_throw_still_deals_full_damage() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([2, 5])
+
+    result = resolve_saving_throw_damage(
+        save_dc=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8+1",
+        rng=rng,
+        features=frozenset({AttackFeature.POTENT_CANTRIP}),
+    )
+
+    assert result.failed_save is True
+    assert result.damage_dealt == 6
+
+
+def test_potent_cantrip_half_damage_rounds_down() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([15, 4])
+
+    result = resolve_saving_throw_damage(
+        save_dc=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8+1",
+        rng=rng,
+        features=frozenset({AttackFeature.POTENT_CANTRIP}),
+    )
+
+    assert result.damage_dealt == 2

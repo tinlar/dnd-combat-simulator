@@ -15,6 +15,7 @@ from dnd_combat_simulator.combat import (
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
+    validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.dice import roll_damage_formula
 from dnd_combat_simulator.simulation import (
@@ -33,6 +34,7 @@ FEATURE_SERIALIZATION_ORDER = (
     AttackFeature.GREAT_WEAPON_FIGHTING,
     AttackFeature.TAVERN_BRAWLER,
     AttackFeature.STOP_ON_MISS,
+    AttackFeature.POTENT_CANTRIP,
 )
 
 
@@ -396,11 +398,12 @@ def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> 
         profile.save_dc is None or profile.save_dc < 1
     ):
         raise SharedConfigurationError(f"{label} requires a positive Save DC.")
-    if (
-        AttackFeature.ELVEN_ACCURACY in profile.features
-        and profile.resolution_type is not ResolutionType.ATTACK_ROLL
-    ):
-        raise SharedConfigurationError(f"{label} has invalid Elven Accuracy.")
+    try:
+        validate_feature_resolution_combination(
+            profile.features, profile.resolution_type, label=label
+        )
+    except ValueError as error:
+        raise SharedConfigurationError(str(error)) from error
     if AttackFeature.STOP_ON_MISS in profile.features and (
         profile.resolution_type is not ResolutionType.ATTACK_ROLL
         or profile.affected_targets != 1

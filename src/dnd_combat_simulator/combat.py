@@ -24,6 +24,7 @@ class AttackFeature(StrEnum):
     GREAT_WEAPON_FIGHTING = "great_weapon_fighting"
     TAVERN_BRAWLER = "tavern_brawler"
     STOP_ON_MISS = "stop_on_miss"
+    POTENT_CANTRIP = "potent_cantrip"
 
 
 class ResolutionType(StrEnum):
@@ -32,6 +33,40 @@ class ResolutionType(StrEnum):
     ATTACK_ROLL = "attack_roll"
     SAVING_THROW = "saving_throw"
     AUTOMATIC_DAMAGE = "automatic_damage"
+
+
+ATTACK_ROLL_ONLY_FEATURES = frozenset(
+    {
+        AttackFeature.ELVEN_ACCURACY,
+        AttackFeature.GREAT_WEAPON_FIGHTING,
+        AttackFeature.TAVERN_BRAWLER,
+    }
+)
+
+
+def validate_feature_resolution_combination(
+    features: frozenset[AttackFeature],
+    resolution_type: ResolutionType | str,
+    *,
+    label: str = "Profile",
+) -> None:
+    """Raise a readable error for features that cannot use a resolution type."""
+    selected_features = frozenset(AttackFeature(feature) for feature in features)
+    selected_resolution_type = ResolutionType(resolution_type)
+    for feature in ATTACK_ROLL_ONLY_FEATURES:
+        if (
+            feature in selected_features
+            and selected_resolution_type is not ResolutionType.ATTACK_ROLL
+        ):
+            feature_label = feature.value.replace("_", " ").title()
+            msg = f"{label} {feature_label} requires an Attack Roll resolution type."
+            raise ValueError(msg)
+    if (
+        AttackFeature.POTENT_CANTRIP in selected_features
+        and selected_resolution_type is ResolutionType.AUTOMATIC_DAMAGE
+    ):
+        msg = f"{label} Potent Cantrip cannot be used with Automatic Damage."
+        raise ValueError(msg)
 
 
 class SuccessfulSaveDamage(StrEnum):
@@ -178,6 +213,12 @@ def resolve_weapon_attack(
             rng=random_number_generator,
             features=frozenset(feature.value for feature in attack_features),
         )
+    elif AttackFeature.POTENT_CANTRIP in attack_features:
+        damage_dealt = _roll_noncritical_damage(
+            damage_dice=damage_dice,
+            rng=random_number_generator,
+            features=attack_features,
+        ) // 2
 
     return AttackResult(
         attack_roll_mode=attack_roll.mode,
@@ -210,7 +251,12 @@ def resolve_saving_throw_damage(
     failed_save = not successful_save
 
     damage_dealt = 0
-    if failed_save or successful_save_damage is SuccessfulSaveDamage.HALF_DAMAGE:
+    saving_throw_features = frozenset(AttackFeature(feature) for feature in features)
+    if (
+        failed_save
+        or successful_save_damage is SuccessfulSaveDamage.HALF_DAMAGE
+        or AttackFeature.POTENT_CANTRIP in saving_throw_features
+    ):
         full_damage = _roll_noncritical_damage(
             damage_dice=damage_dice,
             rng=random_number_generator,
@@ -261,12 +307,9 @@ def resolve_damage_profile(
     """Resolve profile damage without duplicating simulation loops."""
     damage_features = frozenset(AttackFeature(feature) for feature in features)
     selected_resolution_type = ResolutionType(resolution_type)
-    if (
-        AttackFeature.ELVEN_ACCURACY in damage_features
-        and selected_resolution_type is not ResolutionType.ATTACK_ROLL
-    ):
-        msg = "Elven Accuracy requires an Attack Roll resolution type."
-        raise ValueError(msg)
+    validate_feature_resolution_combination(
+        damage_features, selected_resolution_type, label="Profile"
+    )
     if selected_resolution_type is ResolutionType.ATTACK_ROLL:
         if attack_bonus is None:
             msg = "Attack Bonus is required for attack-roll profiles."

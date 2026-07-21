@@ -39,6 +39,7 @@ FEATURE_LABELS = {
     AttackFeature.GREAT_WEAPON_FIGHTING: "Great Weapon Fighting",
     AttackFeature.TAVERN_BRAWLER: "Tavern Brawler",
     AttackFeature.STOP_ON_MISS: "Stop on Miss",
+    AttackFeature.POTENT_CANTRIP: "Potent Cantrip",
 }
 
 FEATURE_HELP = {
@@ -62,6 +63,11 @@ FEATURE_HELP = {
         "remaining attacks from this profile during that round. The sequence resets "
         "at the beginning of the next active round."
     ),
+    AttackFeature.POTENT_CANTRIP: (
+        "When an Attack Roll misses or a Saving Throw succeeds, roll normal "
+        "noncritical damage and deal half, rounded down. Automatic Damage profiles "
+        "cannot use this feature."
+    ),
 }
 
 FEATURE_ORDER = (
@@ -69,6 +75,7 @@ FEATURE_ORDER = (
     AttackFeature.GREAT_WEAPON_FIGHTING,
     AttackFeature.TAVERN_BRAWLER,
     AttackFeature.STOP_ON_MISS,
+    AttackFeature.POTENT_CANTRIP,
 )
 
 DAMAGE_FORMULA_HELP = dedent(
@@ -1164,10 +1171,20 @@ def _feature_inputs(
     if expander is None or checkbox is None:
         return frozenset()
     with expander("Feats and Features", expanded=False):
-        for feature in FEATURE_ORDER:
+        columns = getattr(st, "columns", None)
+        feature_columns = columns(min(3, len(FEATURE_ORDER))) if columns else None
+        for index, feature in enumerate(FEATURE_ORDER):
             disabled = (
-                feature is AttackFeature.ELVEN_ACCURACY
+                feature
+                in {
+                    AttackFeature.ELVEN_ACCURACY,
+                    AttackFeature.GREAT_WEAPON_FIGHTING,
+                    AttackFeature.TAVERN_BRAWLER,
+                }
                 and resolution_type is not ResolutionType.ATTACK_ROLL
+            ) or (
+                feature is AttackFeature.POTENT_CANTRIP
+                and resolution_type is ResolutionType.AUTOMATIC_DAMAGE
             ) or (
                 feature is AttackFeature.STOP_ON_MISS
                 and (
@@ -1175,7 +1192,13 @@ def _feature_inputs(
                     or affected_targets != 1
                 )
             )
-            checked = checkbox(
+            target = (
+                feature_columns[index % len(feature_columns)]
+                if feature_columns
+                else st
+            )
+            target_checkbox = getattr(target, "checkbox", checkbox)
+            checked = target_checkbox(
                 FEATURE_LABELS[feature],
                 value=False,
                 key=feature_widget_key(prefix, feature),
