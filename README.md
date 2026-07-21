@@ -78,7 +78,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app displays the initial page title: **DnD Combat Simulator**.
+The app opens a simple browser interface for configuring and running damage simulations. Use the input controls for attack bonus, target Armor Class, damage dice, damage modifier, number of rounds, and number of simulations, then select **Run Simulation** to view aggregate damage, hit-rate, critical-hit-rate, and total-attack results.
 
 ## Run tests
 
