@@ -100,7 +100,7 @@ def test_result_rows_show_side_by_side_comparison() -> None:
     assert rows[0]["Build A"] == "1.50"
     assert rows[0]["Build B"] == "2.50"
     assert rows[0]["Difference"] == "-1.00"
-    assert rows[2]["Metric"] == "Hit percentage"
+    assert rows[2]["Metric"] == "Full Damage Success Rate"
     assert rows[2]["Difference"] == "+0.00%"
 
 
