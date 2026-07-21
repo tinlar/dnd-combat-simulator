@@ -8,10 +8,14 @@ from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
     AttackProfile,
+    AttackUse,
     BuildComparisonResult,
     BuildConfig,
+    RoundPlan,
+    RoundSchedule,
     ScenarioConfig,
     SimulationResult,
+    UndefinedRoundBehavior,
     compare_builds,
     run_damage_simulations,
 )
@@ -176,7 +180,85 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_rate(second.critical_hit_rate),
             "Difference": format_signed_rate(difference.critical_hit_rate),
         },
+        {
+            "Metric": "Round 1 burst damage",
+            comparison.first_build.name: format_damage(first.first_round_burst_damage),
+            comparison.second_build.name: format_damage(
+                second.first_round_burst_damage
+            ),
+            "Difference": format_signed_damage(
+                first.first_round_burst_damage - second.first_round_burst_damage
+            ),
+        },
+        {
+            "Metric": "Average damage after round 1",
+            comparison.first_build.name: format_damage(
+                first.average_damage_after_round_1
+            ),
+            comparison.second_build.name: format_damage(
+                second.average_damage_after_round_1
+            ),
+            "Difference": format_signed_damage(
+                first.average_damage_after_round_1 - second.average_damage_after_round_1
+            ),
+        },
+        {
+            "Metric": "Highest-damage round",
+            comparison.first_build.name: str(first.highest_damage_round),
+            comparison.second_build.name: str(second.highest_damage_round),
+            "Difference": "—",
+        },
     ]
+
+
+def _winner_label(
+    first_name: str, first_value: float, second_name: str, second_value: float
+) -> str:
+    if first_value > second_value:
+        return first_name
+    if second_value > first_value:
+        return second_name
+    return "Tie"
+
+
+def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
+    """Build side-by-side per-round result rows."""
+    rows = []
+    for first_round, second_round in zip(
+        comparison.first_result.round_results,
+        comparison.second_result.round_results,
+        strict=True,
+    ):
+        rows.append(
+            {
+                "Round": str(first_round.round_number),
+                f"{comparison.first_build.name} avg damage": format_damage(
+                    first_round.average_damage
+                ),
+                f"{comparison.second_build.name} avg damage": format_damage(
+                    second_round.average_damage
+                ),
+                f"{comparison.first_build.name} avg attacks": format_damage(
+                    first_round.average_attacks
+                ),
+                f"{comparison.second_build.name} avg attacks": format_damage(
+                    second_round.average_attacks
+                ),
+                f"{comparison.first_build.name} hit %": format_rate(
+                    first_round.hit_rate
+                ),
+                f"{comparison.second_build.name} hit %": format_rate(
+                    second_round.hit_rate
+                ),
+                f"{comparison.first_build.name} crit %": format_rate(
+                    first_round.critical_hit_rate
+                ),
+                f"{comparison.second_build.name} crit %": format_rate(
+                    second_round.critical_hit_rate
+                ),
+            }
+        )
+    return rows
 
 
 def _render_results(result: SimulationResult) -> None:
@@ -242,6 +324,36 @@ def _render_comparison_results(comparison: BuildComparisonResult) -> None:
             f"{comparison.higher_average_damage_build_name} has higher average damage."
         )
     st.table(_result_rows(comparison))
+    st.markdown("##### Winners")
+    st.write(
+        "Round 1 burst: "
+        + _winner_label(
+            comparison.first_build.name,
+            comparison.first_result.first_round_burst_damage,
+            comparison.second_build.name,
+            comparison.second_result.first_round_burst_damage,
+        )
+    )
+    st.write(
+        "Sustained damage after round 1: "
+        + _winner_label(
+            comparison.first_build.name,
+            comparison.first_result.average_damage_after_round_1,
+            comparison.second_build.name,
+            comparison.second_result.average_damage_after_round_1,
+        )
+    )
+    st.write(
+        "Total average damage: "
+        + _winner_label(
+            comparison.first_build.name,
+            comparison.first_result.average_total_damage_per_simulation,
+            comparison.second_build.name,
+            comparison.second_result.average_total_damage_per_simulation,
+        )
+    )
+    st.markdown("##### Per-round damage")
+    st.table(_round_breakdown_rows(comparison))
     st.markdown(f"##### {comparison.first_build.name} attack breakdown")
     st.table(_profile_breakdown_rows(comparison.first_result))
     st.markdown(f"##### {comparison.second_build.name} attack breakdown")
@@ -312,7 +424,9 @@ def _profile_definitions(
 
 
 def _build_config_from_profiles(
-    name: str, profiles: tuple[AttackProfile, ...]
+    name: str,
+    profiles: tuple[AttackProfile, ...],
+    round_schedule: RoundSchedule | None = None,
 ) -> BuildConfig:
     """Create a build config with every displayed profile attached."""
     primary = profiles[0]
@@ -324,10 +438,101 @@ def _build_config_from_profiles(
         attacks_per_round=primary.attacks_per_round,
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
+        round_schedule=round_schedule,
     )
 
 
-def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
+def _round_schedule_inputs(
+    prefix: str, profiles: tuple[AttackProfile, ...], default_rounds: int
+) -> RoundSchedule:
+    """Render controls that schedule reusable attack profiles by round."""
+    import streamlit as st
+
+    count_key = f"{prefix}-scheduled-round-count"
+    if count_key not in st.session_state:
+        st.session_state[count_key] = default_rounds
+
+    st.markdown("##### Round Schedule")
+    behavior_label = st.selectbox(
+        "Undefined-round behavior",
+        options=[
+            "Repeat final round",
+            "Repeat entire schedule",
+            "No attacks",
+        ],
+        key=f"{prefix}-undefined-round-behavior",
+    )
+    behavior = {
+        "Repeat final round": UndefinedRoundBehavior.REPEAT_FINAL_ROUND,
+        "Repeat entire schedule": UndefinedRoundBehavior.REPEAT_ENTIRE_SCHEDULE,
+        "No attacks": UndefinedRoundBehavior.NO_ATTACKS,
+    }[behavior_label]
+
+    actions = st.columns(2)
+    if actions[0].button("Add a scheduled round", key=f"{prefix}-add-round"):
+        st.session_state[count_key] += 1
+    if actions[1].button("Remove final scheduled round", key=f"{prefix}-remove-round"):
+        st.session_state[count_key] = max(1, st.session_state[count_key] - 1)
+
+    profile_names = [profile.name for profile in profiles]
+    plans = []
+    for round_number in range(1, int(st.session_state[count_key]) + 1):
+        st.markdown(f"Round {round_number}")
+        round_prefix = f"{prefix}-round-{round_number}"
+        attack_count_key = f"{round_prefix}-attack-count"
+        if attack_count_key not in st.session_state:
+            st.session_state[attack_count_key] = len(profiles)
+
+        buttons = st.columns(3)
+        if (
+            buttons[0].button("Copy previous round", key=f"{round_prefix}-copy")
+            and round_number > 1
+        ):
+            previous_prefix = f"{prefix}-round-{round_number - 1}"
+            previous_count = int(
+                st.session_state.get(f"{previous_prefix}-attack-count", 0)
+            )
+            st.session_state[attack_count_key] = previous_count
+            for index in range(1, previous_count + 1):
+                st.session_state[f"{round_prefix}-use-{index}-profile"] = (
+                    st.session_state.get(
+                        f"{previous_prefix}-use-{index}-profile", profile_names[0]
+                    )
+                )
+                st.session_state[f"{round_prefix}-use-{index}-count"] = (
+                    st.session_state.get(f"{previous_prefix}-use-{index}-count", 1)
+                )
+        if buttons[1].button("Clear round", key=f"{round_prefix}-clear"):
+            st.session_state[attack_count_key] = 0
+        if buttons[2].button("Add attack to round", key=f"{round_prefix}-add-attack"):
+            st.session_state[attack_count_key] += 1
+
+        uses = []
+        for index in range(1, int(st.session_state[attack_count_key]) + 1):
+            row = st.columns([3, 1, 1])
+            profile_id = row[0].selectbox(
+                "Attack profile",
+                options=profile_names,
+                key=f"{round_prefix}-use-{index}-profile",
+            )
+            count = row[1].number_input(
+                "Uses",
+                min_value=0,
+                value=1,
+                step=1,
+                key=f"{round_prefix}-use-{index}-count",
+            )
+            if row[2].button("Remove", key=f"{round_prefix}-use-{index}-remove"):
+                st.session_state[f"{round_prefix}-use-{index}-count"] = 0
+                count = 0
+            if int(count) > 0:
+                uses.append(AttackUse(profile_id, int(count)))
+        plans.append(RoundPlan(round_number, tuple(uses)))
+
+    return RoundSchedule(tuple(plans), behavior)
+
+
+def _build_inputs(prefix: str, default_name: str, default_rounds: int) -> BuildConfig:
     """Render and collect one build's input controls."""
     import streamlit as st
 
@@ -349,7 +554,8 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
         st.markdown(f"##### {heading}")
         profiles.append(_attack_profile_inputs(profile_prefix, default_attack_name))
 
-    return _build_config_from_profiles(name, tuple(profiles))
+    round_schedule = _round_schedule_inputs(prefix, tuple(profiles), default_rounds)
+    return _build_config_from_profiles(name, tuple(profiles), round_schedule)
 
 
 def main() -> None:
@@ -384,9 +590,9 @@ def main() -> None:
 
     build_columns = st.columns(2)
     with build_columns[0]:
-        first_build = _build_inputs("first", "Build A")
+        first_build = _build_inputs("first", "Build A", int(rounds))
     with build_columns[1]:
-        second_build = _build_inputs("second", "Build B")
+        second_build = _build_inputs("second", "Build B", int(rounds))
 
     if st.button("Compare Builds"):
         inputs = ComparisonInputs(
