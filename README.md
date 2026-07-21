@@ -228,8 +228,25 @@ ruff format .
 
 1. Configure the shared Scenario inputs and Build A/Build B inputs you want to send.
 2. Click the **📤** share icon near the top of the app.
-3. The app generates the share URL, asks TinyURL for a shorter version, and copies the shortened URL to your clipboard. If TinyURL is unavailable, the full share URL is copied instead.
-4. Anyone who opens that URL receives the same simulator inputs, including hidden Build B values when comparison mode is disabled.
-5. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
+3. The app generates the full share URL, sends it to TinyURL's modern authenticated API, waits for the response, and copies the TinyURL to your clipboard when shortening succeeds.
+4. If TinyURL is unavailable or unconfigured, the full configuration URL is copied instead.
+5. Anyone who opens the copied URL receives the same simulator inputs, including hidden Build B values when comparison mode is disabled.
+6. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
 The link contains simulator configuration data only. It does not contain saved simulation results.
+
+TinyURL sharing requires a TinyURL account and an API token with the **Create TinyURL** permission. Store the token in Streamlit secrets as `TINYURL_API_TOKEN` or set the `TINYURL_API_TOKEN` environment variable. Streamlit secrets take precedence when both are present. Never commit the real token to GitHub.
+
+For Codespaces or local Streamlit secrets setup:
+
+```bash
+mkdir -p .streamlit
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+nano .streamlit/secrets.toml
+```
+
+The file should contain:
+
+```toml
+TINYURL_API_TOKEN = "your-actual-token"
+```
