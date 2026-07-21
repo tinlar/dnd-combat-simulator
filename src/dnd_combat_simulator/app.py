@@ -425,11 +425,13 @@ SHARE_TOOLBAR_HTML = """
 
 SHARE_TOOLBAR_CSS = """
 .share-toolbar {
-    min-height: 48px;
-    height: 48px;
-    display: flex;
+    min-height: 42px;
+    height: 42px;
+    display: inline-flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 8px;
+    width: max-content;
+    max-width: 100%;
     color: var(--st-text-color);
     background: var(--st-background-color);
     font-family: var(--st-font);
@@ -439,6 +441,7 @@ SHARE_TOOLBAR_CSS = """
 .share-button {
     height: 42px;
     min-width: 42px;
+    box-sizing: border-box;
     padding: 0 0.9rem;
     border-radius: 999px; /* legacy circle control used border-radius: 50% */
     border: 1px solid var(--st-border-color);
@@ -637,6 +640,71 @@ export default function(component) {
         button.onclick = null;
     };
 }
+"""
+
+CONFIGURATION_TOOLBAR_CSS = """
+<style>
+.st-key-configuration-toolbar {
+    display: inline-flex;
+    width: max-content;
+    max-width: 100%;
+    align-items: center;
+    gap: 8px;
+}
+
+.st-key-configuration-toolbar [data-testid="stHorizontalBlock"] {
+    display: inline-flex;
+    width: max-content;
+    max-width: 100%;
+    align-items: center;
+    gap: 8px;
+}
+
+.st-key-configuration-toolbar [data-testid="stVerticalBlock"],
+.st-key-configuration-toolbar [data-testid="stElementContainer"] {
+    width: max-content;
+    max-width: 100%;
+}
+
+.st-key-configuration-toolbar [data-testid="stPopover"] {
+    width: max-content;
+}
+
+.st-key-configuration-toolbar [data-testid="stPopover"] button,
+.st-key-configuration-toolbar button[kind="secondary"] {
+    height: 42px;
+    min-height: 42px;
+    min-width: 42px;
+    box-sizing: border-box;
+    padding: 0 0.9rem;
+    border: 1px solid var(--st-border-color);
+    border-radius: 999px;
+    background: var(--st-secondary-background-color);
+    color: var(--st-text-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    margin: 0;
+}
+
+.st-key-configuration-toolbar [data-testid="stPopover"] button {
+    width: 42px;
+    padding: 0;
+}
+
+.st-key-configuration-toolbar [data-testid="stPopover"] button:hover:not(:disabled),
+.st-key-configuration-toolbar button[kind="secondary"]:hover:not(:disabled) {
+    border-color: var(--st-primary-color);
+    color: var(--st-primary-color);
+}
+
+.st-key-configuration-toolbar [data-testid="stPopover"] button:focus-visible,
+.st-key-configuration-toolbar button[kind="secondary"]:focus-visible {
+    outline: 2px solid var(--st-primary-color);
+    outline-offset: 2px;
+}
+</style>
 """
 
 _SHARE_TOOLBAR_COMPONENT = None
@@ -2140,13 +2208,43 @@ def _render_simulation_settings() -> tuple[int, int]:
 
     popover = getattr(st, "popover", None)
     if popover is not None:
-        with popover("⚙️", help="Simulation settings") as settings_area:
+        with popover(
+            "⚙️",
+            help="Simulation settings",
+            width="content",
+            use_container_width=False,
+            key="simulation-settings",
+        ) as settings_area:
             return render_controls(settings_area)
     expander = getattr(st, "expander", None)
     if expander is not None:
         with expander("⚙️ Simulation settings", expanded=False) as settings_area:
             return render_controls(settings_area or st)
     return render_controls(st)
+
+
+def _render_configuration_toolbar() -> tuple[int, int]:
+    import streamlit as st
+
+    st.markdown(CONFIGURATION_TOOLBAR_CSS, unsafe_allow_html=True)
+    container = getattr(st, "container", None)
+    if container is None:
+        simulations, seed = _render_simulation_settings()
+        _render_share_configuration_button()
+        return simulations, seed
+
+    toolbar = container(
+        key="configuration-toolbar",
+        width="content",
+        horizontal=True,
+        horizontal_alignment="left",
+        vertical_alignment="center",
+        gap=None,
+    )
+    with toolbar if hasattr(toolbar, "__enter__") else nullcontext():
+        simulations, seed = _render_simulation_settings()
+        _render_share_configuration_button()
+    return simulations, seed
 
 
 def _render_share_configuration_button() -> None:
@@ -2242,13 +2340,7 @@ def main() -> None:
         "Class, round count, and simulation count."
     )
     ensure_session_random_seed(getattr(st, "session_state", {}))
-    toolbar_columns = st.columns([1, 8])
-    settings_column = toolbar_columns[0]
-    share_column = toolbar_columns[1]
-    with settings_column if hasattr(settings_column, "__enter__") else nullcontext():
-        simulations, seed = _render_simulation_settings()
-    with share_column if hasattr(share_column, "__enter__") else nullcontext():
-        _render_share_configuration_button()
+    simulations, seed = _render_configuration_toolbar()
 
     with _render_section_container():
         st.subheader("Shared scenario")

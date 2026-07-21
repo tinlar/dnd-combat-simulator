@@ -1198,7 +1198,7 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
     assert "height: 42px" in css
     assert "border-radius: 999px" in css
     assert "text-overflow: ellipsis" in css
-    assert "height: 48px" in css
+    assert "height: 42px" in css
     assert "--st-text-color" in css
     assert "--st-background-color" in css
     assert "--st-secondary-background-color" in css
@@ -1208,6 +1208,55 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
     assert "focus-visible" in css
     assert "black" not in combined.lower()
     assert "white" not in combined.lower().replace("white-space", "")
+
+
+def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
+    from dnd_combat_simulator import app
+
+    toolbar_css = app.CONFIGURATION_TOOLBAR_CSS
+    share_css = app.SHARE_TOOLBAR_CSS
+
+    assert "gap: 8px" in toolbar_css
+    assert "gap: 8px" in share_css
+    assert "width: max-content" in toolbar_css
+    assert "width: max-content" in share_css
+    assert "height: 42px" in toolbar_css
+    assert "height: 42px" in share_css
+    assert "border: 1px solid var(--st-border-color)" in toolbar_css
+    assert "border: 1px solid var(--st-border-color)" in share_css
+    assert "background: var(--st-secondary-background-color)" in toolbar_css
+    assert "background: var(--st-secondary-background-color)" in share_css
+    assert "border-radius: 999px" in toolbar_css
+    assert "border-radius: 999px" in share_css
+    assert "hover:not(:disabled)" in toolbar_css
+    assert "hover:not(:disabled)" in share_css
+    assert "focus-visible" in toolbar_css
+    assert "focus-visible" in share_css
+
+
+def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
+    from pathlib import Path
+
+    source = Path("src/dnd_combat_simulator/app.py").read_text()
+    toolbar_source = source[
+        source.index("def _render_configuration_toolbar") : source.index(
+            "def _render_share_configuration_button"
+        )
+    ]
+    main_source = source[source.index("def main") :]
+    main_toolbar_source = main_source[
+        : main_source.index("with _render_section_container()")
+    ]
+
+    assert 'key="configuration-toolbar"' in toolbar_source
+    assert 'width="content"' in toolbar_source
+    assert "horizontal=True" in toolbar_source
+    assert 'vertical_alignment="center"' in toolbar_source
+    assert "gap=None" in toolbar_source
+    assert "_render_simulation_settings()" in toolbar_source
+    assert "_render_share_configuration_button()" in toolbar_source
+    assert "st.columns([1, 8])" not in main_toolbar_source
+    assert "_render_configuration_toolbar()" in main_toolbar_source
 
 
 def test_build_from_state_filters_attack_roll_feature_after_automatic_damage_change(
