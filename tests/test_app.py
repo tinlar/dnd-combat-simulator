@@ -846,7 +846,7 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     assert disabled_by_label["Stop on Miss"] is True
 
 
-def test_shorten_share_url_with_isgd_constructs_official_form_request(
+def test_shorten_share_url_with_cleanuri_constructs_form_request(
     monkeypatch,
 ) -> None:
     from urllib.parse import parse_qs, urlparse
@@ -865,7 +865,7 @@ def test_shorten_share_url_with_isgd_constructs_official_form_request(
 
         def read(self, size):
             assert size == 8192
-            return b'{"shorturl": "https://is.gd/R709K6"}'
+            return b'{"result_url":"https:\\/\\/cleanuri.com\\/ok1De0"}'
 
     def fake_urlopen(request, *, timeout):
         calls.append((request, timeout))
@@ -873,111 +873,41 @@ def test_shorten_share_url_with_isgd_constructs_official_form_request(
 
     monkeypatch.setattr(app, "urlopen", fake_urlopen)
 
-    result = app.shorten_share_url_with_isgd(long_url)
+    result = app.shorten_share_url_with_cleanuri(long_url)
 
-    assert result.url == "https://is.gd/R709K6"
+    assert result.url == "https://cleanuri.com/ok1De0"
     assert result.shortened is True
     assert result.rate_limited is False
     request, timeout = calls[0]
     assert timeout == 4.0
-    assert request.full_url == app.ISGD_CREATE_API_URL
+    assert request.full_url == app.CLEANURI_CREATE_API_URL
     assert urlparse(request.full_url).query == ""
     assert request.get_method() == "POST"
     assert request.headers["Accept"] == "application/json"
     assert request.headers["Content-type"] == "application/x-www-form-urlencoded"
-    assert request.headers["User-agent"] == (
-        "Mozilla/5.0 (compatible; DnDCombatSimulator/1.0; "
-        "+https://github.com/tinlar/dnd-combat-simulator)"
-    )
+    assert request.headers["User-agent"] == "DnDCombatSimulator/1.0"
     assert "Authorization" not in request.headers
-    body = parse_qs(request.data.decode("utf-8"), keep_blank_values=True)
-    assert body == {"format": ["json"], "url": [long_url]}
-    assert "logstats" not in body
-    assert "callback" not in body
-    assert "shorturl" not in body
-
-
-def test_shorten_share_url_with_isgd_accepts_javascript_content_type(
-    monkeypatch,
-) -> None:
-    from dnd_combat_simulator import app
-
-    class Response:
-        headers = {"Content-Type": "text/javascript; charset=utf8"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self, size):
-            assert size == 8192
-            return b'{ "shorturl": "https://is.gd/jGamH3" }'
-
-    monkeypatch.setattr(app, "urlopen", lambda request, *, timeout: Response())
-
-    result = app.shorten_share_url_with_isgd("https://example.test/sim?config=abc")
-
-    assert result.url == "https://is.gd/jGamH3"
-    assert result.shortened is True
-    assert result.rate_limited is False
-    assert result.error_message is None
+    assert parse_qs(request.data.decode("utf-8"), keep_blank_values=True) == {
+        "url": [long_url]
+    }
 
 
 @pytest.mark.parametrize(
-    ("payload", "expected_message", "rate_limited"),
+    "payload",
     [
-        (
-            b'{"errorcode": 1, "errormessage": "bad"}',
-            "is.gd rejected the configuration URL.",
-            False,
-        ),
-        (
-            b'{"errorcode": 2, "errormessage": "bad"}',
-            "is.gd rejected the configuration URL.",
-            False,
-        ),
-        (
-            b'{"errorcode": 3, "errormessage": "slow"}',
-            "The is.gd rate limit was reached.",
-            True,
-        ),
-        (
-            b'{"errorcode": 4, "errormessage": "down"}',
-            "is.gd is temporarily unavailable.",
-            False,
-        ),
-        (b"", "is.gd returned an invalid response.", False),
-        (b"{}", "is.gd returned an invalid response.", False),
-        (b"{", "is.gd returned an invalid response.", False),
-        (b"[]", "is.gd returned an invalid response.", False),
-        (b'{"shorturl": 3}', "is.gd returned an invalid response.", False),
-        (
-            b'{"shorturl": "http://is.gd/R709K6"}',
-            "is.gd returned an invalid response.",
-            False,
-        ),
-        (
-            b'{"shorturl": "https://example.com/R709K6"}',
-            "is.gd returned an invalid response.",
-            False,
-        ),
-        (
-            b'{"shorturl": "https://is.gd/R709 K6"}',
-            "is.gd returned an invalid response.",
-            False,
-        ),
-        (
-            ('{"shorturl": "https://is.gd/preview/' + 'deprecated/R709K6"}').encode(),
-            "is.gd returned an invalid response.",
-            False,
-        ),
-        (b"\xff", "is.gd returned an invalid response.", False),
+        b"",
+        b"{}",
+        b"{",
+        b"[]",
+        b'{"result_url": 3}',
+        b'{"result_url": "http://cleanuri.com/ok1De0"}',
+        b'{"result_url": "https://example.com/ok1De0"}',
+        b'{"result_url": "https://cleanuri.com/ok1 De0"}',
+        b"\xff",
     ],
 )
-def test_shorten_share_url_with_isgd_falls_back_on_invalid_responses(
-    monkeypatch, payload, expected_message, rate_limited
+def test_shorten_share_url_with_cleanuri_falls_back_on_invalid_responses(
+    monkeypatch, payload
 ) -> None:
     from dnd_combat_simulator import app
 
@@ -994,24 +924,22 @@ def test_shorten_share_url_with_isgd_falls_back_on_invalid_responses(
     monkeypatch.setattr(app, "urlopen", lambda request, *, timeout: Response())
     url = "https://example.test/sim?config=abc"
 
-    result = app.shorten_share_url_with_isgd(url)
+    result = app.shorten_share_url_with_cleanuri(url)
 
     assert result.url == url
     assert result.shortened is False
-    assert result.rate_limited is rate_limited
-    assert result.error_message == expected_message
+    assert result.error_message == "CleanURI returned an invalid response."
 
 
 @pytest.mark.parametrize(
     ("status", "expected_message", "rate_limited"),
     [
-        (400, "is.gd rejected the configuration URL.", False),
-        (406, "is.gd rejected the configuration URL.", False),
-        (502, "The is.gd rate limit was reached.", True),
-        (503, "is.gd is temporarily unavailable.", False),
+        (400, "CleanURI rejected the configuration URL.", False),
+        (429, "The CleanURI rate limit was reached.", True),
+        (503, "CleanURI is temporarily unavailable.", False),
     ],
 )
-def test_shorten_share_url_with_isgd_falls_back_on_http_errors(
+def test_shorten_share_url_with_cleanuri_falls_back_on_http_errors(
     monkeypatch, status, expected_message, rate_limited
 ) -> None:
     from urllib.error import HTTPError
@@ -1024,22 +952,49 @@ def test_shorten_share_url_with_isgd_falls_back_on_http_errors(
     monkeypatch.setattr(app, "urlopen", fake_urlopen)
     url = "https://example.test/sim?config=abc"
 
-    result = app.shorten_share_url_with_isgd(url)
+    result = app.shorten_share_url_with_cleanuri(url)
 
     assert result.url == url
     assert result.shortened is False
-    assert result.rate_limited is rate_limited
     assert result.error_message == expected_message
+    assert result.rate_limited is rate_limited
+
+
+def test_shorten_share_url_with_cleanuri_includes_sanitized_http_error_body(
+    monkeypatch,
+) -> None:
+    from io import BytesIO
+    from urllib.error import HTTPError
+
+    from dnd_combat_simulator import app
+
+    def fake_urlopen(request, *, timeout):
+        raise HTTPError(
+            request.full_url,
+            400,
+            "bad",
+            {},
+            BytesIO(b'{"error":"invalid url"}\nsecond line'),
+        )
+
+    monkeypatch.setattr(app, "urlopen", fake_urlopen)
+
+    result = app.shorten_share_url_with_cleanuri("https://example.test/sim?config=abc")
+
+    assert result.shortened is False
+    assert result.error_message == (
+        'CleanURI returned HTTP 400: {"error":"invalid url"} second line'
+    )
 
 
 @pytest.mark.parametrize(
     ("exception", "message"),
     [
-        (TimeoutError(), "The is.gd request timed out."),
-        (OSError("network"), "is.gd returned an invalid response."),
+        (TimeoutError(), "The CleanURI request timed out."),
+        (OSError("network"), "CleanURI returned an invalid response."),
     ],
 )
-def test_shorten_share_url_with_isgd_falls_back_on_request_errors(
+def test_shorten_share_url_with_cleanuri_falls_back_on_request_errors(
     monkeypatch, exception, message
 ) -> None:
     from dnd_combat_simulator import app
@@ -1050,41 +1005,41 @@ def test_shorten_share_url_with_isgd_falls_back_on_request_errors(
     monkeypatch.setattr(app, "urlopen", fake_urlopen)
     url = "https://example.test/sim?config=abc"
 
-    result = app.shorten_share_url_with_isgd(url)
+    result = app.shorten_share_url_with_cleanuri(url)
 
     assert result.url == url
     assert result.shortened is False
     assert result.error_message == message
 
 
-def test_shorten_share_url_with_isgd_empty_url() -> None:
+def test_shorten_share_url_with_cleanuri_empty_url() -> None:
     from dnd_combat_simulator import app
 
-    result = app.shorten_share_url_with_isgd("")
+    result = app.shorten_share_url_with_cleanuri("")
 
     assert result.url == ""
     assert result.shortened is False
     assert result.error_message == "A share URL is required."
 
 
-def test_resolve_share_url_to_copy_reuses_existing_isgd_link(monkeypatch) -> None:
+def test_resolve_share_url_to_copy_reuses_existing_cleanuri_link(monkeypatch) -> None:
     from dnd_combat_simulator import app
 
     calls = []
 
     def fake_shorten(url):
         calls.append(url)
-        return app.ShortenedUrlResult("https://is.gd/new", True)
+        return app.ShortenedUrlResult("https://cleanuri.com/new", True)
 
-    monkeypatch.setattr(app, "shorten_share_url_with_isgd", fake_shorten)
+    monkeypatch.setattr(app, "shorten_share_url_with_cleanuri", fake_shorten)
     state = {
         app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://is.gd/old",
+        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://cleanuri.com/old",
     }
 
     result = app.resolve_share_url_to_copy("https://example.test/?config=1", state)
 
-    assert result.url == "https://is.gd/old"
+    assert result.url == "https://cleanuri.com/old"
     assert calls == []
     assert state[app.GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] == result.url
 
@@ -1099,13 +1054,13 @@ def test_resolve_share_url_to_copy_changed_config_requests_new_and_clears_old(
     def fake_shorten(url):
         calls.append(url)
         return app.ShortenedUrlResult(
-            url, False, "is.gd rejected the configuration URL."
+            url, False, "CleanURI rejected the configuration URL."
         )
 
-    monkeypatch.setattr(app, "shorten_share_url_with_isgd", fake_shorten)
+    monkeypatch.setattr(app, "shorten_share_url_with_cleanuri", fake_shorten)
     state = {
         app.GENERATED_LONG_SHARE_URL_SESSION_KEY: "https://example.test/?config=1",
-        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://is.gd/old",
+        app.GENERATED_SHORT_SHARE_URL_SESSION_KEY: "https://cleanuri.com/old",
     }
 
     result = app.resolve_share_url_to_copy("https://example.test/?config=2", state)
