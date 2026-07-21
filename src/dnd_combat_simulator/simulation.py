@@ -642,6 +642,29 @@ def run_damage_simulations(
     )
 
 
+def simulate_build(
+    build: BuildConfig,
+    scenario: ScenarioConfig,
+    seed: int,
+) -> SimulationResult:
+    """Validate and simulate one build in one scenario with a deterministic seed."""
+    _validate_scenario(scenario)
+    _validate_build(build, label=build.name.strip() or "Build")
+    return run_damage_simulations(
+        attack_bonus=build.attack_bonus,
+        target_armor_class=scenario.target_armor_class,
+        enemy_save_bonus=scenario.enemy_save_bonus,
+        damage_dice=build.damage_dice.strip(),
+        damage_modifier=build.damage_modifier,
+        rounds=scenario.rounds,
+        simulations=scenario.simulations,
+        attacks_per_round=build.attacks_per_round,
+        attack_roll_mode=build.attack_roll_mode,
+        attack_profiles=build.resolved_attack_profiles(),
+        rng=Random(seed),
+    )
+
+
 def compare_builds(
     *,
     first_build: BuildConfig,
@@ -655,34 +678,8 @@ def compare_builds(
     same seed. The two simulations are therefore repeatable and consume identical
     random-number streams without sharing mutable RNG state.
     """
-    _validate_scenario(scenario)
-    _validate_build(first_build, label="First")
-    _validate_build(second_build, label="Second")
-
-    first_result = run_damage_simulations(
-        attack_bonus=first_build.attack_bonus,
-        target_armor_class=scenario.target_armor_class,
-        damage_dice=first_build.damage_dice.strip(),
-        damage_modifier=first_build.damage_modifier,
-        rounds=scenario.rounds,
-        simulations=scenario.simulations,
-        attacks_per_round=first_build.attacks_per_round,
-        attack_roll_mode=first_build.attack_roll_mode,
-        attack_profiles=first_build.resolved_attack_profiles(),
-        rng=Random(seed),
-    )
-    second_result = run_damage_simulations(
-        attack_bonus=second_build.attack_bonus,
-        target_armor_class=scenario.target_armor_class,
-        damage_dice=second_build.damage_dice.strip(),
-        damage_modifier=second_build.damage_modifier,
-        rounds=scenario.rounds,
-        simulations=scenario.simulations,
-        attacks_per_round=second_build.attacks_per_round,
-        attack_roll_mode=second_build.attack_roll_mode,
-        attack_profiles=second_build.resolved_attack_profiles(),
-        rng=Random(seed),
-    )
+    first_result = simulate_build(first_build, scenario, seed)
+    second_result = simulate_build(second_build, scenario, seed)
 
     if first_result.average_damage_per_round > second_result.average_damage_per_round:
         higher_name = first_build.name.strip()
