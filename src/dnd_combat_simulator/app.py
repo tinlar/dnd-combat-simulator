@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
+    AttackProfile,
     BuildComparisonResult,
     BuildConfig,
     ScenarioConfig,
@@ -180,6 +181,24 @@ def _render_results(result: SimulationResult) -> None:
     st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
 
 
+def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
+    """Build per-profile damage breakdown rows."""
+    return [
+        {
+            "Attack profile": profile_result.attack_profile.name,
+            "Average damage per round": format_damage(
+                profile_result.average_damage_per_round
+            ),
+            "Average total damage": format_damage(
+                profile_result.average_total_damage_per_simulation
+            ),
+            "Hit percentage": format_rate(profile_result.hit_rate),
+            "Critical hit percentage": format_rate(profile_result.critical_hit_rate),
+        }
+        for profile_result in result.attack_profile_results
+    ]
+
+
 def _render_comparison_results(comparison: BuildComparisonResult) -> None:
     """Render two build results side by side with deltas."""
     import streamlit as st
@@ -192,18 +211,21 @@ def _render_comparison_results(comparison: BuildComparisonResult) -> None:
             f"{comparison.higher_average_damage_build_name} has higher average damage."
         )
     st.table(_result_rows(comparison))
+    st.markdown(f"##### {comparison.first_build.name} attack breakdown")
+    st.table(_profile_breakdown_rows(comparison.first_result))
+    st.markdown(f"##### {comparison.second_build.name} attack breakdown")
+    st.table(_profile_breakdown_rows(comparison.second_result))
     st.caption(
         "Difference is first build minus second build. Both builds used separate "
         "random-number-generator instances initialized with the same seed."
     )
 
 
-def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
-    """Render and collect one build's input controls."""
+def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
+    """Render and collect one attack profile's input controls."""
     import streamlit as st
 
-    st.markdown(f"#### {default_name}")
-    name = st.text_input("Build name", value=default_name, key=f"{prefix}-name")
+    attack_name = st.text_input("Attack name", value=default_name, key=f"{prefix}-name")
     row_one = st.columns(2)
     attack_bonus = row_one[0].number_input(
         "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
@@ -224,13 +246,40 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
         index=0,
         key=f"{prefix}-mode",
     )
-    return BuildConfig(
-        name=name,
+    return AttackProfile(
+        name=attack_name,
         attack_bonus=int(attack_bonus),
         damage_dice=damage_dice,
         damage_modifier=int(damage_modifier),
         attacks_per_round=int(attacks_per_round),
         attack_roll_mode=AttackRollMode(attack_roll_mode_label.lower()),
+    )
+
+
+def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
+    """Render and collect one build's input controls."""
+    import streamlit as st
+
+    st.markdown(f"#### {default_name}")
+    name = st.text_input("Build name", value=default_name, key=f"{prefix}-build-name")
+    st.markdown("##### Required attack profile")
+    primary = _attack_profile_inputs(f"{prefix}-primary", "Primary attack")
+    profiles = [primary]
+    if st.checkbox(
+        "Enable optional second attack profile", key=f"{prefix}-second-enabled"
+    ):
+        st.markdown("##### Optional attack profile")
+        profiles.append(
+            _attack_profile_inputs(f"{prefix}-secondary", "Secondary attack")
+        )
+    return BuildConfig(
+        name=name,
+        attack_bonus=primary.attack_bonus,
+        damage_dice=primary.damage_dice,
+        damage_modifier=primary.damage_modifier,
+        attacks_per_round=primary.attacks_per_round,
+        attack_roll_mode=primary.attack_roll_mode,
+        attack_profiles=tuple(profiles),
     )
 
 
