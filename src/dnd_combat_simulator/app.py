@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+from html import escape
 from textwrap import dedent
+from urllib.error import URLError
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import (
@@ -112,6 +116,56 @@ DAMAGE_FORMULA_HELP = dedent(
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
 
 
+def shorten_share_url(url: str, *, timeout: float = 4.0) -> str:
+    """Return a TinyURL-shortened URL, or the original URL if shortening fails."""
+    if not url:
+        return url
+    request_url = f"{TINYURL_API_URL}?{urlencode({'url': url})}"
+    try:
+        with urlopen(request_url, timeout=timeout) as response:
+            shortened = response.read(2048).decode("utf-8").strip()
+    except (OSError, TimeoutError, UnicodeDecodeError, URLError):
+        return url
+    if shortened.startswith("http://") or shortened.startswith("https://"):
+        return shortened
+    return url
+
+
+def _copy_share_url_to_clipboard(url: str) -> None:
+    """Render a tiny client-side script that copies the generated URL."""
+    import streamlit.components.v1 as components
+
+    escaped_url = escape(url, quote=True)
+    components.html(
+        f"""
+        <script>
+        const shareUrl = {url!r};
+        async function copyShareUrl() {{
+            try {{
+                await navigator.clipboard.writeText(shareUrl);
+            }} catch (error) {{
+                const textArea = document.createElement("textarea");
+                textArea.value = shareUrl;
+                textArea.style.position = "fixed";
+                textArea.style.opacity = "0";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textArea);
+            }}
+        }}
+        copyShareUrl();
+        </script>
+        <span style="font-size: 0.8rem;">
+            Copied <a href="{escaped_url}" target="_blank"
+                rel="noopener noreferrer">share link</a>.
+        </span>
+        """,
+        height=28,
+    )
+
+
 SCENARIO_WIDGET_KEYS = {
     "target_armor_class": "scenario-target-ac",
     "enemy_save_bonus": "scenario-enemy-save-bonus",
@@ -123,6 +177,7 @@ COMPARE_WIDGET_KEY = "compare-builds-enabled"
 LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 SHARE_URL_SESSION_KEY = "_generated_share_url"
+TINYURL_API_URL = "https://tinyurl.com/api-create.php"
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1280,67 +1335,81 @@ def load_shared_configuration_from_query() -> None:
     st.session_state[LOADED_SHARED_CONFIG_MESSAGE_KEY] = True
 
 
-def _default_second_build_from_state() -> BuildConfig:
-    """Build hidden Build B from existing session-state values or widget defaults."""
+def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
+    """Build a configuration from existing session-state values or widget defaults."""
     import streamlit as st
 
-    if "second-build-name" not in getattr(st, "session_state", {}):
+    if f"{prefix}-build-name" not in getattr(st, "session_state", {}):
         return _build_config_from_profiles(
-            "Build B", (AttackProfile("Primary attack", 5, "1d8+3", 1),)
+            default_build_name, (AttackProfile("Primary attack", 5, "1d8+3", 1),)
         )
-    count = int(st.session_state.get("second-additional-attack-count", 0))
+    count = int(st.session_state.get(f"{prefix}-additional-attack-count", 0))
     profiles = []
-    for index, (_, _, default_name) in enumerate(_profile_definitions("second", count)):
-        prefix = profile_prefix("second", index)
+    for index, (_, _, default_name) in enumerate(_profile_definitions(prefix, count)):
+        widget_prefix = profile_prefix(prefix, index)
         resolution = {
             "Attack Roll": ResolutionType.ATTACK_ROLL,
             "Saving Throw": ResolutionType.SAVING_THROW,
             "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
         }.get(
             st.session_state.get(
-                profile_widget_key(prefix, "resolution_type"), "Attack Roll"
+                profile_widget_key(widget_prefix, "resolution_type"), "Attack Roll"
             ),
             ResolutionType.ATTACK_ROLL,
         )
         features = frozenset(
             feature
             for feature in FEATURE_ORDER
-            if st.session_state.get(feature_widget_key(prefix, feature), False)
+            if st.session_state.get(feature_widget_key(widget_prefix, feature), False)
         )
         profiles.append(
             AttackProfile(
-                st.session_state.get(profile_widget_key(prefix, "name"), default_name),
-                int(st.session_state.get(profile_widget_key(prefix, "attack_bonus"), 5))
-                if resolution is ResolutionType.ATTACK_ROLL
-                else None,
                 st.session_state.get(
-                    profile_widget_key(prefix, "damage_formula"), "1d8+3"
+                    profile_widget_key(widget_prefix, "name"), default_name
                 ),
                 int(
                     st.session_state.get(
-                        profile_widget_key(prefix, "attacks_per_round"), 1
+                        profile_widget_key(widget_prefix, "attack_bonus"), 5
+                    )
+                )
+                if resolution is ResolutionType.ATTACK_ROLL
+                else None,
+                st.session_state.get(
+                    profile_widget_key(widget_prefix, "damage_formula"), "1d8+3"
+                ),
+                int(
+                    st.session_state.get(
+                        profile_widget_key(widget_prefix, "attacks_per_round"), 1
                     )
                 ),
                 int(
                     st.session_state.get(
-                        profile_widget_key(prefix, "affected_targets"), 1
+                        profile_widget_key(widget_prefix, "affected_targets"), 1
                     )
                 ),
                 AttackRollMode(
                     str(
                         st.session_state.get(
-                            profile_widget_key(prefix, "attack_roll_mode"), "Normal"
+                            profile_widget_key(widget_prefix, "attack_roll_mode"),
+                            "Normal",
                         )
                     ).lower()
                 ),
-                st.session_state.get(profile_widget_key(prefix, "active_rounds"), ""),
+                st.session_state.get(
+                    profile_widget_key(widget_prefix, "active_rounds"), ""
+                ),
                 resolution,
-                int(st.session_state.get(profile_widget_key(prefix, "save_dc"), 13))
+                int(
+                    st.session_state.get(
+                        profile_widget_key(widget_prefix, "save_dc"), 13
+                    )
+                )
                 if resolution is ResolutionType.SAVING_THROW
                 else None,
                 SuccessfulSaveDamage.HALF_DAMAGE
                 if st.session_state.get(
-                    profile_widget_key(prefix, "successful_save_damage"), "No damage"
+                    profile_widget_key(widget_prefix, "successful_save_damage"),
+                    "No damage",
                 )
                 == "Half damage"
                 else SuccessfulSaveDamage.NO_DAMAGE,
@@ -1348,44 +1417,56 @@ def _default_second_build_from_state() -> BuildConfig:
             )
         )
     return _build_config_from_profiles(
-        st.session_state.get("second-build-name", "Build B"), tuple(profiles)
+        st.session_state.get(f"{prefix}-build-name", default_build_name),
+        tuple(profiles),
     )
 
 
-def _render_share_configuration_section(
-    *,
-    compare_enabled: bool,
-    scenario: ScenarioConfig,
-    seed: int,
-    first_build: BuildConfig,
-    second_build: BuildConfig,
-) -> None:
+def _default_second_build_from_state() -> BuildConfig:
+    """Build hidden Build B from existing session-state values or widget defaults."""
+    return _build_from_state("second", "Build B")
+
+
+def _render_share_configuration_button() -> None:
     import streamlit as st
 
-    with _render_section_container():
-        st.subheader("Share Configuration")
-        if st.button("Generate Share Link"):
+    share_row = st.columns([0.88, 0.12])
+    with share_row[1]:
+        if st.button(
+            "📤",
+            help="Share: generate a shortened link and copy it to your clipboard.",
+            key="share-configuration-icon-button",
+        ):
+            scenario = ScenarioConfig(
+                target_armor_class=int(
+                    st.session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
+                ),
+                enemy_save_bonus=int(
+                    st.session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
+                ),
+                rounds=int(st.session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
+                simulations=int(
+                    st.session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)
+                ),
+            )
             configuration = shared_configuration_from_configs(
-                compare_enabled=compare_enabled,
+                compare_enabled=bool(st.session_state.get(COMPARE_WIDGET_KEY, False)),
                 scenario=scenario,
-                seed=seed,
-                build_a=first_build,
-                build_b=second_build,
+                seed=int(st.session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
+                build_a=_build_from_state("first", "Build A"),
+                build_b=_build_from_state("second", "Build B"),
             )
             token = serialize_shared_configuration(configuration)
-            st.session_state[SHARE_URL_SESSION_KEY] = build_share_url(
-                getattr(st.context, "url", ""), token
-            )
-        share_url = getattr(st, "session_state", {}).get(SHARE_URL_SESSION_KEY)
-        if share_url:
-            st.code(share_url, language=None, wrap_lines=True, width="stretch")
-            st.link_button("Open Shared Configuration", share_url)
-            st.caption(f"Share link length: {len(share_url):,} characters.")
-            if len(share_url) > 8_000:
-                st.warning(
-                    "This configuration creates a long URL. Some messaging or "
-                    "link-shortening services may truncate it."
+            long_url = build_share_url(getattr(st.context, "url", ""), token)
+            share_url = shorten_share_url(long_url)
+            st.session_state[SHARE_URL_SESSION_KEY] = share_url
+            _copy_share_url_to_clipboard(share_url)
+            if share_url == long_url:
+                st.caption(
+                    "Copied full share link. TinyURL shortening was unavailable."
                 )
+            else:
+                st.caption("Copied shortened TinyURL share link.")
 
 
 def main() -> None:
@@ -1401,6 +1482,7 @@ def main() -> None:
         "Compare two named DnD combat builds against the same target Armor "
         "Class, round count, and simulation count."
     )
+    _render_share_configuration_button()
 
     with _render_section_container():
         st.subheader("Shared scenario")
@@ -1456,14 +1538,6 @@ def main() -> None:
         with build_columns[1]:
             second_build = _build_inputs("second", "Build B")
 
-        _render_share_configuration_section(
-            compare_enabled=bool(compare_enabled),
-            scenario=scenario,
-            seed=int(seed),
-            first_build=first_build,
-            second_build=second_build,
-        )
-
         if st.button("Compare Builds"):
             inputs = ComparisonInputs(
                 first_build=first_build,
@@ -1479,15 +1553,6 @@ def main() -> None:
                 _render_comparison_results(comparison)
     else:
         first_build = _build_inputs("first", "Build A")
-
-        second_build = _default_second_build_from_state()
-        _render_share_configuration_section(
-            compare_enabled=bool(compare_enabled),
-            scenario=scenario,
-            seed=int(seed),
-            first_build=first_build,
-            second_build=second_build,
-        )
 
         if st.button("Run Simulation"):
             inputs = SingleBuildInputs(

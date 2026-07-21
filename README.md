@@ -227,8 +227,8 @@ ruff format .
 ## Sharing Configurations
 
 1. Configure the shared Scenario inputs and Build A/Build B inputs you want to send.
-2. Click **Generate Share Link** in the **Share Configuration** section.
-3. Copy the displayed URL.
+2. Click the **📤** share icon near the top of the app.
+3. The app generates the share URL, asks TinyURL for a shorter version, and copies the shortened URL to your clipboard. If TinyURL is unavailable, the full share URL is copied instead.
 4. Anyone who opens that URL receives the same simulator inputs, including hidden Build B values when comparison mode is disabled.
 5. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
