@@ -229,7 +229,7 @@ ruff format .
 ## Sharing Configurations
 
 1. Configure the simulation, including the shared Scenario inputs and Build A/Build B inputs you want to send.
-2. Click **Share Configuration** near the top of the app, then use the share toolbar to copy the generated link.
+2. Click the single **Share Configuration** control near the top of the app. The app creates the link and attempts to copy it automatically; if browser clipboard permissions block that automatic copy, the same control changes to **Copy Link** so you can copy the generated URL without creating another share record.
 3. New share links are short first-party URLs in the form `?share=<short-id>`, such as `?share=yiEwgVR97pGY`. The configuration inputs are stored in the application database and the URL contains only the short record ID.
 4. A brief **Link copied** message confirms the link was copied.
 5. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.

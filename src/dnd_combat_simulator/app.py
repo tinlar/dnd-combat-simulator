@@ -144,6 +144,10 @@ COMPARE_WIDGET_KEY = "compare-builds-enabled"
 LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARE_ID_KEY = "_loaded_share_id"
 GENERATED_SHARE_URL_KEY = "_generated_share_url"
+GENERATED_SHARE_FINGERPRINT_KEY = "_generated_share_fingerprint"
+GENERATED_SHARE_COPY_NONCE_KEY = "_generated_share_copy_nonce"
+PROCESSED_SHARE_TRIGGER_KEY = "_processed_share_trigger"
+SHARE_ERROR_MESSAGE_KEY = "_share_error_message"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 INVALID_SHARED_CONFIG_MESSAGE_KEY = "_invalid_shared_config_message"
 
@@ -399,6 +403,7 @@ SHARE_TOOLBAR_HTML = """
                 stroke-linejoin="round"
             />
         </svg>
+        <span class="share-label">Share Configuration</span>
     </button>
     <span class="share-status" aria-live="polite"></span>
     <input class="share-fallback" type="text" readonly hidden />
@@ -419,12 +424,10 @@ SHARE_TOOLBAR_CSS = """
 }
 
 .share-button {
-    width: 42px;
     height: 42px;
     min-width: 42px;
-    min-height: 42px;
-    padding: 0;
-    border-radius: 50%;
+    padding: 0 0.9rem;
+    border-radius: 999px; /* legacy circle control used border-radius: 50% */
     border: 1px solid var(--st-border-color);
     background: var(--st-secondary-background-color);
     color: var(--st-text-color);
@@ -432,11 +435,12 @@ SHARE_TOOLBAR_CSS = """
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 0.45rem;
     line-height: 1;
     cursor: pointer;
 }
 
-.share-button:hover {
+.share-button:hover:not(:disabled) {
     border-color: var(--st-primary-color);
     color: var(--st-primary-color);
 }
@@ -446,9 +450,15 @@ SHARE_TOOLBAR_CSS = """
     outline-offset: 2px;
 }
 
+.share-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
 .share-icon {
-    width: 23px;
-    height: 23px;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 auto;
 }
 
 .share-status {
@@ -465,60 +475,113 @@ SHARE_TOOLBAR_CSS = """
 }
 
 .share-fallback {
-    position: fixed;
-    inset-inline-start: -10000px;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
+    width: min(24rem, 45vw);
+    min-width: 12rem;
+    font-family: var(--st-font);
+}
+
+.share-fallback[hidden] {
+    display: none;
 }
 """
 
 SHARE_TOOLBAR_JS = """
 export default function(component) {
-    const { data, parentElement } = component;
+    const { data, parentElement, setTriggerValue } = component;
     const button = parentElement.querySelector('.share-button');
+    const label = parentElement.querySelector('.share-label');
     const status = parentElement.querySelector('.share-status');
     const fallbackInput = parentElement.querySelector('.share-fallback');
     let statusTimer = null;
+    let lastCopyNonce = null;
+    let mode = 'create';
 
-    function showTemporaryStatus(message) {
-        status.textContent = message;
-        status.classList.add('visible');
+    function setStatus(message, temporary = false) {
+        status.textContent = message || '';
+        status.classList.toggle('visible', Boolean(message));
         if (statusTimer !== null) {
             window.clearTimeout(statusTimer);
+            statusTimer = null;
         }
-        statusTimer = window.setTimeout(() => {
-            status.classList.remove('visible');
-            status.textContent = '';
-        }, 1500);
+        if (temporary && message) {
+            statusTimer = window.setTimeout(() => setStatus(''), 1500);
+        }
+    }
+
+    function render(nextData) {
+        button.disabled = Boolean(nextData.disabled || nextData.creating);
+        fallbackInput.hidden = true;
+        fallbackInput.value = data['url'];
+        if (!fallbackInput.value) {
+            fallbackInput.value = nextData.url || '';
+        }
+        button.title = nextData.url ? 'Copy share link' : 'Share configuration';
+        button.setAttribute('aria-label', button.title);
+
+        if (nextData.disabled) {
+            label.textContent = 'Temporarily unavailable';
+            setStatus(nextData.message || '');
+            mode = 'disabled';
+        } else if (nextData.creating) {
+            label.textContent = 'Creating...';
+            setStatus('');
+            mode = 'creating';
+        } else if (nextData.url) {
+            label.textContent = nextData.copy_blocked ? 'Copy Link' : 'Link copied';
+            mode = 'copy';
+            if (nextData.copy_blocked) {
+                fallbackInput.hidden = false;
+            }
+        } else {
+            label.textContent = 'Share Configuration';
+            setStatus(nextData.message || '');
+            mode = 'create';
+        }
+    }
+
+    async function copyUrl(url, automatic = false) {
+        try {
+            const targetUrl = data.url || url;
+            await navigator.clipboard.writeText(targetUrl);
+            fallbackInput.hidden = true;
+            label.textContent = 'Link copied';
+            setStatus('Link copied', true);
+            return true;
+        } catch (error) {
+            if (!automatic) {
+                fallbackInput.hidden = false;
+                fallbackInput.focus();
+                fallbackInput.select();
+                try {
+                    if (document.execCommand("copy")) {
+                        label.textContent = 'Link copied';
+                        setStatus('Link copied', true);
+                        return true;
+                    }
+                } catch (fallbackError) {
+                    // Keep the selectable fallback visible.
+                }
+            }
+            label.textContent = 'Copy Link';
+            fallbackInput.hidden = false;
+            setStatus('Copy blocked. Use Copy Link or the selected URL.');
+            return false;
+        }
+    }
+
+    render(data || {});
+    if (data && data.url && data.copy_nonce && data.copy_nonce !== lastCopyNonce) {
+        lastCopyNonce = data.copy_nonce;
+        copyUrl(data.url, true);
     }
 
     button.onclick = async () => {
-        try {
-            await navigator.clipboard.writeText(data.url);
-            showTemporaryStatus('Link copied');
-            return;
-        } catch (error) {
-            // Use the fallback below.
-        }
-
-        fallbackInput.value = data.url;
-        fallbackInput.hidden = false;
-        fallbackInput.focus();
-        fallbackInput.select();
-
-        let copied = false;
-        try {
-            copied = document.execCommand('copy');
-        } catch (error) {
-            copied = false;
-        }
-
-        if (copied) {
-            fallbackInput.hidden = true;
-            showTemporaryStatus('Link copied');
-        } else {
-            showTemporaryStatus('Copy blocked. Link selected.');
+        if (mode === 'create') {
+            label.textContent = 'Creating...';
+            button.disabled = true;
+            setTriggerValue('create_share', `${Date.now()}-${Math.random()}`);
+        } else if (mode === 'copy' && data.url) {
+            await copyUrl(data.url, false);
         }
     };
 
@@ -1997,41 +2060,110 @@ def _default_second_build_from_state() -> BuildConfig:
     return _build_from_state("second", "Build B")
 
 
+def _share_configuration_fingerprint(configuration: SharedConfiguration) -> str:
+    return serialize_shared_configuration(configuration)
+
+
+def _share_component_requested_creation(result: object) -> str | None:
+    if isinstance(result, dict):
+        value = result.get("create_share") or result.get("trigger_value")
+        if value is not None:
+            return str(value)
+    if isinstance(result, str):
+        return result
+    return None
+
+
+def _mount_unified_share_component(data: dict[str, object]) -> object:
+    share_toolbar = _get_share_toolbar_component()
+    return share_toolbar(data=data, key="unified-share-configuration")
+
+
 def _render_share_configuration_button() -> None:
     import streamlit as st
 
+    state = getattr(st, "session_state", {})
+    base_data: dict[str, object] = {
+        "url": "",
+        "copy_nonce": state.get(GENERATED_SHARE_COPY_NONCE_KEY, 0),
+        "creating": False,
+        "disabled": False,
+        "message": state.pop(SHARE_ERROR_MESSAGE_KEY, ""),
+    }
+
     if _configuration_errors_for_current_state():
-        getattr(st, "button", lambda *args, **kwargs: False)(
-            "Share Configuration", disabled=True
+        state.pop(GENERATED_SHARE_URL_KEY, None)
+        state.pop(GENERATED_SHARE_FINGERPRINT_KEY, None)
+        base_data.update(
+            {"disabled": True, "message": "Fix field errors before sharing."}
         )
+        _mount_unified_share_component(base_data)
         return
 
     share_store = get_streamlit_share_store()
     if share_store is None:
-        getattr(st, "button", lambda *args, **kwargs: False)(
-            "Share Configuration", disabled=True
+        state.pop(GENERATED_SHARE_URL_KEY, None)
+        state.pop(GENERATED_SHARE_FINGERPRINT_KEY, None)
+        base_data.update(
+            {
+                "disabled": True,
+                "message": "Share links are not configured for this deployment.",
+            }
         )
+        _mount_unified_share_component(base_data)
         caption = getattr(st, "caption", None)
         if caption is not None:
             caption("Share links are not configured for this deployment.")
         return
 
-    if getattr(st, "button", lambda *args, **kwargs: False)("Share Configuration"):
-        try:
-            st.session_state[GENERATED_SHARE_URL_KEY] = (
-                _current_short_shared_configuration_url(share_store)
-            )
-        except (SharedConfigurationError, ShareStoreError):
-            st.session_state.pop(GENERATED_SHARE_URL_KEY, None)
-            st.error("Unable to create a share link right now. Try again later.")
-            return
-
-    share_url = st.session_state.get(GENERATED_SHARE_URL_KEY)
-    if not share_url:
+    try:
+        configuration = _current_shared_configuration()
+        fingerprint = _share_configuration_fingerprint(configuration)
+    except SharedConfigurationError:
+        state.pop(GENERATED_SHARE_URL_KEY, None)
+        state.pop(GENERATED_SHARE_FINGERPRINT_KEY, None)
+        base_data.update(
+            {"disabled": True, "message": "Fix field errors before sharing."}
+        )
+        _mount_unified_share_component(base_data)
         return
 
-    share_toolbar = _get_share_toolbar_component()
-    share_toolbar(data={"url": share_url})
+    stored_fingerprint = state.get(GENERATED_SHARE_FINGERPRINT_KEY)
+    if stored_fingerprint is None and state.get(GENERATED_SHARE_URL_KEY):
+        state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
+    elif stored_fingerprint != fingerprint:
+        state.pop(GENERATED_SHARE_URL_KEY, None)
+        state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
+
+    share_url = state.get(GENERATED_SHARE_URL_KEY, "")
+    base_data["url"] = share_url
+    result = _mount_unified_share_component(base_data)
+    trigger_value = _share_component_requested_creation(result)
+
+    if not trigger_value or share_url:
+        return
+    if state.get(PROCESSED_SHARE_TRIGGER_KEY) == trigger_value:
+        return
+
+    state[PROCESSED_SHARE_TRIGGER_KEY] = trigger_value
+    try:
+        share_id = save_shared_configuration(share_store, configuration)
+        state[GENERATED_SHARE_URL_KEY] = build_short_share_url(
+            getattr(getattr(st, "context", None), "url", ""), share_id
+        )
+        state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
+        state[GENERATED_SHARE_COPY_NONCE_KEY] = (
+            int(state.get(GENERATED_SHARE_COPY_NONCE_KEY, 0)) + 1
+        )
+        rerun = getattr(st, "rerun", None)
+        if rerun is not None:
+            rerun()
+    except (SharedConfigurationError, ShareStoreError):
+        state.pop(GENERATED_SHARE_URL_KEY, None)
+        state[SHARE_ERROR_MESSAGE_KEY] = (
+            "Unable to create a share link right now. Try again later."
+        )
+        st.error("Unable to create a share link right now. Try again later.")
 
 
 def main() -> None:
