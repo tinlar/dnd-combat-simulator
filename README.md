@@ -26,18 +26,22 @@ The project also includes Streamlit-independent simulation logic for repeated da
 
 Simulation inputs are:
 
-- One or more attack profiles, each with:
-  - Attack name
+- One or more reusable attack profiles, each with:
+  - Attack name, used as the stable schedule reference
   - Attack bonus
   - Damage dice, without an embedded modifier
   - Damage modifier
-  - Attacks per round, defaulting to 1
+  - Legacy attacks per round, defaulting to 1
   - Attack roll mode, defaulting to normal
+- An optional round schedule made from ordered round plans. Each round plan has a round number and zero or more attack uses. Each attack use references one of the build's attack profiles and sets how many times to resolve it during that round.
+- Undefined-round behavior for rounds beyond the explicit schedule: `repeat_final_round` (default), `repeat_entire_schedule`, or `no_attacks`.
 - Target Armor Class
 - Number of rounds
 - Number of simulations
 
-Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, combined attacks per round across all attack profiles, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation. Results also include a per-attack-profile breakdown with each profile's total attacks, average damage, hit rate, and critical hit rate. Overall hit and critical-hit statistics are preserved across all attacks from all profiles.
+For example, a build can define reusable Longbow, Scimitar, Shortsword, and Greatsword profiles, then schedule them as: Round 1 Longbow ×1; Round 2 Scimitar ×1 and Shortsword ×1; Round 3 Scimitar ×1 and Shortsword ×1; Round 4 Greatsword ×1. During each simulated round, only the listed attack uses are resolved, preserving each selected profile's own attack bonus, damage dice, damage modifier, and roll mode. A scheduled round may intentionally contain zero attacks. Existing builds without a round schedule remain valid; the simulator automatically creates a compatibility schedule that repeats every profile according to its legacy attacks-per-round value.
+
+Simulation results summarize aggregate outcomes without retaining every individual attack result. The returned summary includes simulations run, rounds per simulation, average attacks per round across the schedule, total attacks made, average total damage per simulation, average damage per round, hit rate, critical hit rate, and the minimum and maximum total damage observed in a simulation. Results also include a per-attack-profile breakdown with each profile's total attacks, average damage, hit rate, and critical hit rate. A per-round breakdown reports each round number, average damage, average attacks, hit percentage, and critical hit percentage. Summary metrics include first-round burst damage, average damage after round 1, highest-damage round, highest-round average damage, average damage per round, and average total damage. Overall hit and critical-hit statistics are preserved across all attacks from all profiles.
 
 Random number generation can be injected so simulations are deterministic in tests. Rounds, attacks per round, and simulation counts must all be at least 1; lower values are rejected with clear errors.
 
@@ -94,7 +98,9 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, number of rounds, number of simulations, and random seed once, then enter each build's name plus one required primary attack profile. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode, and every displayed profile is passed into the comparison simulation. Select **Compare Builds** to view side-by-side aggregate damage, hit-rate, and critical-hit-rate results with differences and the higher-damage build called out.
+The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, number of rounds, number of simulations, and random seed once, then enter each build's name plus one required primary attack profile. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode, and every displayed profile is passed into the comparison simulation.
+
+Below each build's attack profile library, the **Round Schedule** section defaults its scheduled round count to the shared scenario's number of rounds. Each build has independent controls to select one or more profiles per round, set the number of uses for each selected profile, remove attacks, copy the previous round, clear a round, add a scheduled round, remove the final scheduled round, and choose undefined-round behavior. Select **Compare Builds** to view side-by-side aggregate damage, per-round damage, burst/sustained/total winners, hit-rate, and critical-hit-rate results with differences and per-profile breakdowns.
 
 ## Run tests
 
