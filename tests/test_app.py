@@ -1783,3 +1783,132 @@ def test_missing_secrets_disable_unified_component(monkeypatch):
     assert len(mounts) == 1
     assert mounts[0]["data"]["disabled"] is True
     assert "not configured" in mounts[0]["data"]["message"]
+
+
+def test_fresh_session_receives_generated_seed_and_reruns_keep_it(monkeypatch) -> None:
+    from dnd_combat_simulator import app
+
+    generated = [8675309, 123]
+    monkeypatch.setattr(app, "_generate_default_seed", lambda: generated.pop(0))
+    state = {}
+
+    assert app.ensure_session_random_seed(state) == 8675309
+    assert state[app.SCENARIO_WIDGET_KEYS["seed"]] == 8675309
+    assert app.ensure_session_random_seed(state) == 8675309
+    assert generated == [123]
+
+
+def test_shared_configuration_overrides_generated_seed() -> None:
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.sharing import (
+        SharedAttackProfileConfiguration,
+        SharedBuildConfiguration,
+        SharedConfiguration,
+        SharedScenarioConfiguration,
+    )
+
+    state = {app.SCENARIO_WIDGET_KEYS["seed"]: 111}
+    from dnd_combat_simulator.combat import (
+        AttackRollMode,
+        ResolutionType,
+        SuccessfulSaveDamage,
+    )
+
+    profile = SharedAttackProfileConfiguration(
+        name="Blade",
+        resolution_type=ResolutionType.ATTACK_ROLL,
+        attack_bonus=5,
+        save_dc=None,
+        successful_save_damage=SuccessfulSaveDamage.NO_DAMAGE,
+        attack_roll_mode=AttackRollMode.NORMAL,
+        damage_formula="1d8+3",
+        attacks_per_round=1,
+        affected_targets=1,
+        active_rounds="",
+        features=frozenset(),
+    )
+    config = SharedConfiguration(
+        version=1,
+        compare_enabled=False,
+        scenario=SharedScenarioConfiguration(
+            target_armor_class=15,
+            enemy_save_bonus=3,
+            rounds=4,
+            simulations=222,
+            seed=999,
+        ),
+        build_a=SharedBuildConfiguration(name="Build A", attack_profiles=(profile,)),
+        build_b=SharedBuildConfiguration(name="Build B", attack_profiles=(profile,)),
+    )
+
+    app.hydrate_session_state_from_shared_configuration(state, config)
+
+    assert app.ensure_session_random_seed(state) == 999
+    assert state[app.SCENARIO_WIDGET_KEYS["simulations"]] == 222
+
+
+class _SettingsContainer:
+    def __init__(self, calls, state):
+        self.calls = calls
+        self.state = state
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def number_input(self, label, **kwargs):
+        self.calls.append((label, kwargs))
+        key = kwargs["key"]
+        return self.state.get(key, kwargs.get("value", 0))
+
+
+def test_simulation_settings_keep_existing_widget_keys(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls = []
+    state = {
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 321,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 654,
+    }
+    container = _SettingsContainer(calls, state)
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        popover=lambda *args, **kwargs: container,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    assert app._render_simulation_settings() == (321, 654)
+    assert calls[0] == (
+        "Number of simulations",
+        {
+            "min_value": 1,
+            "value": 10_000,
+            "step": 1,
+            "key": app.SCENARIO_WIDGET_KEYS["simulations"],
+        },
+    )
+    assert calls[1] == (
+        "Random seed",
+        {"step": 1, "key": app.SCENARIO_WIDGET_KEYS["seed"]},
+    )
+
+
+def test_shared_scenario_row_no_longer_contains_simulation_count_or_seed() -> None:
+    from pathlib import Path
+
+    source = Path("src/dnd_combat_simulator/app.py").read_text()
+    shared_block = source.split('st.subheader("Shared scenario")', 1)[1].split(
+        "scenario = ScenarioConfig", 1
+    )[0]
+
+    assert '"Number of simulations"' not in shared_block
+    assert '"Random seed"' not in shared_block
+    assert '"Target Armor Class"' in shared_block
+    assert '"Enemy Save Bonus"' in shared_block
+    assert '"Number of rounds"' in shared_block
+    assert '"Compare with another build"' in shared_block
