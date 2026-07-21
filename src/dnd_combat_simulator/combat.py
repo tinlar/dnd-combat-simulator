@@ -6,11 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from random import Random
 
-from dnd_combat_simulator.dice import (
-    RandomNumberGenerator,
-    parse_dice_notation,
-    roll_dice,
-)
+from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
 
 
 class AttackRollMode(StrEnum):
@@ -125,18 +121,8 @@ def roll_attack_d20(
     )
 
 
-def _parse_damage_dice_without_modifier(damage_dice: str):
-    dice = parse_dice_notation(damage_dice)
-    if dice.modifier != 0:
-        msg = "Damage dice must not include a modifier; use damage_modifier instead."
-        raise ValueError(msg)
-    return dice
-
-
-def _roll_noncritical_damage(*, damage_dice: str, damage_modifier: int, rng) -> int:
-    dice = _parse_damage_dice_without_modifier(damage_dice)
-    damage_roll = roll_dice(f"{dice.count}d{dice.sides}", rng=rng)
-    return max(0, damage_roll + damage_modifier)
+def _roll_noncritical_damage(*, damage_dice: str, rng) -> int:
+    return roll_damage_formula(damage_dice, rng=rng)
 
 
 def resolve_weapon_attack(
@@ -144,13 +130,10 @@ def resolve_weapon_attack(
     attack_bonus: int,
     target_armor_class: int,
     damage_dice: str,
-    damage_modifier: int,
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     rng: RandomNumberGenerator | None = None,
 ) -> AttackResult:
     """Resolve one DnD weapon attack."""
-    dice = _parse_damage_dice_without_modifier(damage_dice)
-
     random_number_generator = rng if rng is not None else Random()
     attack_roll = roll_attack_d20(attack_roll_mode, rng=random_number_generator)
     natural_d20_roll = attack_roll.selected_d20_roll
@@ -163,11 +146,9 @@ def resolve_weapon_attack(
 
     damage_dealt = 0
     if hit:
-        dice_count = dice.count * (2 if critical_hit else 1)
-        damage_roll = roll_dice(
-            f"{dice_count}d{dice.sides}", rng=random_number_generator
+        damage_dealt = roll_damage_formula(
+            damage_dice, critical=critical_hit, rng=random_number_generator
         )
-        damage_dealt = max(0, damage_roll + damage_modifier)
 
     return AttackResult(
         attack_roll_mode=attack_roll.mode,
@@ -185,7 +166,6 @@ def resolve_saving_throw_damage(
     save_dc: int,
     enemy_save_bonus: int,
     damage_dice: str,
-    damage_modifier: int,
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
     rng: RandomNumberGenerator | None = None,
 ) -> SavingThrowResult:
@@ -194,7 +174,6 @@ def resolve_saving_throw_damage(
         msg = "Save DC must be a positive integer."
         raise ValueError(msg)
     random_number_generator = rng if rng is not None else Random()
-    _parse_damage_dice_without_modifier(damage_dice)
     natural_d20_roll = random_number_generator.randint(1, 20)
     modified_save_total = natural_d20_roll + enemy_save_bonus
     successful_save = modified_save_total >= save_dc
@@ -204,7 +183,6 @@ def resolve_saving_throw_damage(
     if failed_save or successful_save_damage is SuccessfulSaveDamage.HALF_DAMAGE:
         full_damage = _roll_noncritical_damage(
             damage_dice=damage_dice,
-            damage_modifier=damage_modifier,
             rng=random_number_generator,
         )
         damage_dealt = full_damage if failed_save else full_damage // 2
@@ -223,14 +201,12 @@ def resolve_saving_throw_damage(
 def resolve_automatic_damage(
     *,
     damage_dice: str,
-    damage_modifier: int,
     rng: RandomNumberGenerator | None = None,
 ) -> AutomaticDamageResult:
     """Resolve one automatic damage application without rolling a d20."""
     random_number_generator = rng if rng is not None else Random()
     damage_dealt = _roll_noncritical_damage(
         damage_dice=damage_dice,
-        damage_modifier=damage_modifier,
         rng=random_number_generator,
     )
     return AutomaticDamageResult(critical_hit=False, damage_dealt=damage_dealt)
@@ -244,7 +220,6 @@ def resolve_damage_profile(
     save_dc: int | None,
     enemy_save_bonus: int,
     damage_dice: str,
-    damage_modifier: int,
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
     rng: RandomNumberGenerator | None = None,
@@ -258,7 +233,6 @@ def resolve_damage_profile(
             attack_bonus=attack_bonus,
             target_armor_class=target_armor_class,
             damage_dice=damage_dice,
-            damage_modifier=damage_modifier,
             attack_roll_mode=attack_roll_mode,
             rng=rng,
         )
@@ -269,9 +243,7 @@ def resolve_damage_profile(
             critical_hit=attack.critical_hit,
         )
     if ResolutionType(resolution_type) is ResolutionType.AUTOMATIC_DAMAGE:
-        automatic = resolve_automatic_damage(
-            damage_dice=damage_dice, damage_modifier=damage_modifier, rng=rng
-        )
+        automatic = resolve_automatic_damage(damage_dice=damage_dice, rng=rng)
         return DamageResolutionResult(
             resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
             damage_dealt=automatic.damage_dealt,
@@ -286,7 +258,6 @@ def resolve_damage_profile(
         save_dc=save_dc,
         enemy_save_bonus=enemy_save_bonus,
         damage_dice=damage_dice,
-        damage_modifier=damage_modifier,
         successful_save_damage=successful_save_damage,
         rng=rng,
     )

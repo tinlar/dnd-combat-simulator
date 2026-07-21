@@ -4,7 +4,7 @@ Initial project setup for a browser-based DnD combat simulator built with Python
 
 ## Combat rules
 
-The simulator includes Streamlit-independent logic for resolving damage profiles as attack rolls, saving throws, or automatic damage. Attack-roll profiles use an attack bonus, target Armor Class, damage dice such as `1d8`, and a separate damage modifier. Saving-throw profiles use a Save DC, the shared Enemy Save Bonus, damage dice, a damage modifier, and a successful-save damage behavior. Automatic-damage profiles use damage dice, a damage modifier, attacks per active round, affected targets, and Active Rounds without requiring Attack Bonus or Save DC.
+The simulator includes Streamlit-independent logic for resolving damage profiles as attack rolls, saving throws, or automatic damage. Attack-roll profiles use an attack bonus, target Armor Class, damage formulas such as `1d8+3`. Saving-throw profiles use a Save DC, the shared Enemy Save Bonus, damage formulas, and a successful-save damage behavior. Automatic-damage profiles use damage formulas, attacks per active round, affected targets, and Active Rounds without requiring Attack Bonus or Save DC.
 
 Attack-roll resolution follows these rules:
 
@@ -12,8 +12,8 @@ Attack-roll resolution follows these rules:
 - A selected natural 1 automatically misses, even if the modified total would meet the target Armor Class.
 - A selected natural 20 automatically hits and is a critical hit.
 - Any other attack hits when the modified attack total equals or exceeds the target Armor Class.
-- A normal hit rolls the listed damage dice once and adds the damage modifier once.
-- A critical hit doubles only the number of damage dice, then adds the damage modifier once. For example, `1d8 + 3` becomes `2d8 + 3` on a critical hit.
+- A normal hit evaluates the listed damage formula once.
+- A critical hit evaluates the dice-pool portion twice and applies the formula's flat modifier once. For example, `1d8+3` rolls two independent `1d8` pools and adds `3` once on a critical hit.
 - A miss deals zero damage.
 - Final damage cannot be below zero.
 
@@ -23,7 +23,7 @@ Saving-throw resolution follows these rules:
 - The enemy succeeds when the total equals or exceeds the Save DC, and fails when the total is below the Save DC.
 - On a failed save, the profile deals full damage.
 - On a successful save, the profile deals either no damage or half damage depending on its **Successful Save Damage** setting. Half damage rounds down.
-- Damage modifiers are included before halving.
+- Formula modifiers are included before halving.
 - Saving throws cannot critically hit. Natural 1 and natural 20 do not automatically fail or succeed.
 - Final damage cannot be below zero.
 
@@ -32,7 +32,7 @@ Automatic-damage resolution follows these rules:
 - No d20 is rolled: the simulator does not make an attack roll or a saving throw.
 - Damage is always applied and automatic damage cannot critically hit.
 - Damage is rolled separately for each attack use and each affected target.
-- The damage modifier is added to each automatic damage roll.
+- The formula flat modifier is applied to each automatic damage roll.
 - Final damage cannot be below zero.
 - Automatic damage applications are tracked separately and are excluded from attack-roll hit-rate and saving-throw rate denominators.
 
@@ -61,7 +61,7 @@ Total damage metrics include damage dealt across all affected targets. Per-targe
 
 ## Damage simulations
 
-The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs one or more distinct attack profiles per round for a requested number of rounds. Each attack profile has its own attack name, attack bonus, damage dice, damage modifier, attacks per round, attack roll mode, and optional Active Rounds expression. That full combat is repeated for the requested number of simulations.
+The project also includes Streamlit-independent simulation logic for repeated damage estimates. A simulation uses the existing single-attack combat resolver and runs one or more distinct attack profiles per round for a requested number of rounds. Each attack profile has its own attack name, attack bonus, damage formula, attacks per round, attack roll mode, and optional Active Rounds expression. That full combat is repeated for the requested number of simulations.
 
 Simulation inputs are:
 
@@ -72,8 +72,7 @@ Simulation inputs are:
   - Save DC for saving-throw profiles
   - Successful Save Damage for saving-throw profiles, defaulting to no damage
   - No Attack Bonus, Attack Roll Mode, Save DC, or Successful Save Damage requirement for automatic-damage profiles
-  - Damage dice, without an embedded modifier
-  - Damage modifier
+  - Damage Formula, including any flat modifier
   - Attacks per round, defaulting to 1
   - Affected Targets, defaulting to 1
   - Attack roll mode for attack-roll profiles, defaulting to normal
@@ -102,21 +101,34 @@ Each compared build has its own build name and one or more attack profiles. Exis
 
 Build comparisons are implemented in Streamlit-independent simulation code. For repeatable and fair comparisons, the comparison runner creates separate random-number-generator instances for the two builds and initializes both with the same seed.
 
-## Dice notation
+## Damage Formula Syntax
 
-The dice foundation supports simple notation in the form `XdY`, where `X` is the number of dice to roll and `Y` is the number of sides on each die. An optional flat modifier may be added with `+N` or `-N`.
+Damage is entered as one inline **Damage Formula**; there is no separate flat damage modifier field. Use the general order:
 
-Supported examples include:
+```text
+XdY[reroll clauses][explosion][keep-or-drop][modifier]
+```
 
-- `1d4`
-- `1d6`
-- `1d8`
-- `1d10+4`
-- `1d12`
-- `2d6-1`
-- `3d8`
+The flat modifier (`+N` or `-N`) is applied once after all dice processing, and final damage is never below zero. Critical hits evaluate the dice-pool portion twice as independent pools, then apply the flat modifier once.
 
-Invalid notation is rejected with a clear error.
+| Feature | Syntax | Meaning | Examples |
+| --- | --- | --- | --- |
+| Basic dice | `XdY` | Roll X dice with Y sides. | `1d8`, `2d6` |
+| Modifier | `+N`, `-N` | Add or subtract after dice processing. | `1d8+4`, `2d6-1` |
+| Reroll exact | `rN` | Reroll accepted dice showing N until another value appears. | `2d8r8` |
+| Reroll low/high | `r<N`, `r>N` | Inclusive reroll threshold (`<= N` or `>= N`). | `2d8r<2`, `2d8r>6` |
+| Multiple rerolls | repeated `r...` | Reroll if any condition matches. | `2d8r1r3r5r7` |
+| Explode max | `!` | Explode when a die rolls its maximum. | `3d6!` |
+| Explode exact | `!N` | Explode only on N. | `3d6!3` |
+| Explode threshold | `!>N`, `!<N` | Inclusive explosion threshold (`>= N` or `<= N`). | `3d6!>4`, `3d6!<3` |
+| Keep highest | `kN`, `khN` | Keep the highest N completed die chains. | `8d100k4`, `4d6kh3` |
+| Keep lowest | `klN` | Keep the lowest N completed die chains. | `8d100kl3` |
+| Drop lowest | `dN`, `dlN` | Drop the lowest N completed die chains. | `8d100d3`, `8d100dl3` |
+| Drop highest | `dhN` | Drop the highest N completed die chains. | `8d100dh3` |
+
+Processing order for each dice-pool evaluation is deterministic: roll each initial die and its rerolls, resolve that die's explosion chain, continue to the next initial die, apply keep/drop to completed chain totals, sum retained values, then apply the modifier once. Rerolls and explosions include safety limits to prevent infinite rolling, and formulas that would reroll or explode on every possible face are rejected.
+
+Examples: `1d8+4`, `2d6-1`, `3d6!`, `3d6!>4`, `3d6!3`, `4d6r1!kh3+2`, `8d100r100dh3`.
 
 ## Requirements
 
@@ -143,7 +155,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a browser interface for simulating one named build by default, with optional side-by-side comparison. Configure the shared target Armor Class, Enemy Save Bonus, number of rounds, number of simulations, and random seed once, then enter Build A's name plus one required primary attack profile. Leave **Compare with another build** off to give Build A the full input width and run a single-build simulation with **Run Simulation**. Turn **Compare with another build** on to restore the two-column Build A / Build B layout and use **Compare Builds** for side-by-side results. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, **Resolution Type**, damage dice, damage modifier, attacks per round, **Affected Targets**, and **Active Rounds** field. Attack-roll profiles show Attack Bonus and Attack Roll Mode while hiding Save DC and Successful Save Damage. Saving-throw profiles show Save DC and Successful Save Damage while hiding Attack Bonus and Attack Roll Mode. Automatic-damage profiles hide Attack Bonus, Attack Roll Mode, Save DC, and Successful Save Damage while continuing to show damage dice, damage modifier, attacks per active round, Affected Targets, and Active Rounds. Every displayed profile is passed into the active simulation mode. In single-build mode, only Build A is rendered, validated, and simulated; Build B's Streamlit keys and entered values are preserved while hidden so they return if comparison is re-enabled. Single-build results include aggregate damage metrics, total attack uses, target resolutions, per-round breakdowns, per-profile breakdowns, and resolution-specific statistics for attack rolls, saving throws, and automatic damage. Select **Compare Builds** in comparison mode to view side-by-side aggregate damage, per-target damage, per-round damage, burst/sustained/total winners, hit-rate, and critical-hit-rate results with differences and per-profile breakdowns.
+The app opens a browser interface for simulating one named build by default, with optional side-by-side comparison. Configure the shared target Armor Class, Enemy Save Bonus, number of rounds, number of simulations, and random seed once, then enter Build A's name plus one required primary attack profile. Leave **Compare with another build** off to give Build A the full input width and run a single-build simulation with **Run Simulation**. Turn **Compare with another build** on to restore the two-column Build A / Build B layout and use **Compare Builds** for side-by-side results. Each build also has an independent **Additional Distinct Attacks** number input with Streamlit plus/minus controls. It defaults to `0`, accepts whole-step values from `0` through `10`, and immediately adds or removes attack profile sections as the value changes because the dynamic build controls are rendered outside a Streamlit form. A value of `0` shows only **Primary Attack**; `1` adds **Additional Attack 1**; `2` adds **Additional Attack 2**; and so on through the selected count. Remaining visible profiles keep stable, build-specific Streamlit keys so reruns preserve current input values without renumbering. Every displayed profile includes an attack name, **Resolution Type**, damage formula, attacks per round, **Affected Targets**, and **Active Rounds** field. Attack-roll profiles show Attack Bonus and Attack Roll Mode while hiding Save DC and Successful Save Damage. Saving-throw profiles show Save DC and Successful Save Damage while hiding Attack Bonus and Attack Roll Mode. Automatic-damage profiles hide Attack Bonus, Attack Roll Mode, Save DC, and Successful Save Damage while continuing to show damage formula, attacks per active round, Affected Targets, and Active Rounds. Every displayed profile is passed into the active simulation mode. In single-build mode, only Build A is rendered, validated, and simulated; Build B's Streamlit keys and entered values are preserved while hidden so they return if comparison is re-enabled. Single-build results include aggregate damage metrics, total attack uses, target resolutions, per-round breakdowns, per-profile breakdowns, and resolution-specific statistics for attack rolls, saving throws, and automatic damage. Select **Compare Builds** in comparison mode to view side-by-side aggregate damage, per-target damage, per-round damage, burst/sustained/total winners, hit-rate, and critical-hit-rate results with differences and per-profile breakdowns.
 
 The Streamlit interface uses rounded, bordered containers for the shared scenario, visible build configuration, and simulation results while preserving the wide centered layout and dark-mode compatibility. Attack profiles are separated with clear dividers and headings such as **Primary Attack** and **Additional Attack 1**. Results now keep compact headline cards above responsive charts: single-build runs show damage by round, damage by attack profile, and damage contribution, while comparison runs show side-by-side round trends, grouped key damage metrics, and separate attack-profile charts for each build. Detailed aggregate, per-round, and per-profile tables remain available below the charts in a **Detailed Results** expander.
 

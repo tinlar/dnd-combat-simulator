@@ -14,11 +14,7 @@ from dnd_combat_simulator.combat import (
     resolve_saving_throw_damage,
     resolve_weapon_attack,
 )
-from dnd_combat_simulator.dice import (
-    RandomNumberGenerator,
-    parse_dice_notation,
-    roll_dice,
-)
+from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
 
 
 @dataclass(frozen=True)
@@ -28,7 +24,6 @@ class AttackProfile:
     name: str
     attack_bonus: int | None
     damage_dice: str
-    damage_modifier: int
     attacks_per_round: int
     affected_targets: int = 1
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
@@ -108,7 +103,6 @@ class BuildConfig:
     name: str
     attack_bonus: int
     damage_dice: str
-    damage_modifier: int
     attacks_per_round: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
     attack_profiles: tuple[AttackProfile, ...] = field(default_factory=tuple)
@@ -122,7 +116,6 @@ class BuildConfig:
                 name="Attack",
                 attack_bonus=self.attack_bonus,
                 damage_dice=self.damage_dice,
-                damage_modifier=self.damage_modifier,
                 attacks_per_round=self.attacks_per_round,
                 attack_roll_mode=self.attack_roll_mode,
             ),
@@ -272,7 +265,6 @@ def run_damage_simulations(
     attack_bonus: int,
     target_armor_class: int,
     damage_dice: str,
-    damage_modifier: int,
     enemy_save_bonus: int = 3,
     rounds: int,
     simulations: int,
@@ -301,7 +293,6 @@ def run_damage_simulations(
                 name="Attack",
                 attack_bonus=attack_bonus,
                 damage_dice=damage_dice,
-                damage_modifier=damage_modifier,
                 attacks_per_round=attacks_per_round,
                 attack_roll_mode=attack_roll_mode,
             ),
@@ -378,7 +369,6 @@ def run_damage_simulations(
                                 attack_bonus=profile.attack_bonus or 0,
                                 target_armor_class=target_armor_class,
                                 damage_dice=profile.damage_dice.strip(),
-                                damage_modifier=profile.damage_modifier,
                                 attack_roll_mode=profile.attack_roll_mode,
                                 rng=random_number_generator,
                             )
@@ -411,7 +401,6 @@ def run_damage_simulations(
                                 save_dc=profile.save_dc or 0,
                                 enemy_save_bonus=enemy_save_bonus,
                                 damage_dice=profile.damage_dice.strip(),
-                                damage_modifier=profile.damage_modifier,
                                 successful_save_damage=(profile.successful_save_damage),
                                 rng=random_number_generator,
                             )
@@ -436,20 +425,8 @@ def run_damage_simulations(
                                 save.successful_save
                             )
                             continue
-                        dice = parse_dice_notation(profile.damage_dice.strip())
-                        if dice.modifier != 0:
-                            msg = (
-                                "Damage dice must not include a modifier; "
-                                "use damage_modifier instead."
-                            )
-                            raise ValueError(msg)
-                        shared_damage = max(
-                            0,
-                            roll_dice(
-                                f"{dice.count}d{dice.sides}",
-                                rng=random_number_generator,
-                            )
-                            + profile.damage_modifier,
+                        shared_damage = roll_damage_formula(
+                            profile.damage_dice.strip(), rng=random_number_generator
                         )
                         for _ in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
@@ -488,7 +465,6 @@ def run_damage_simulations(
                         for _ in range(profile.affected_targets):
                             automatic = resolve_automatic_damage(
                                 damage_dice=profile.damage_dice.strip(),
-                                damage_modifier=profile.damage_modifier,
                                 rng=random_number_generator,
                             )
                             damage = automatic.damage_dealt
@@ -655,7 +631,6 @@ def simulate_build(
         target_armor_class=scenario.target_armor_class,
         enemy_save_bonus=scenario.enemy_save_bonus,
         damage_dice=build.damage_dice.strip(),
-        damage_modifier=build.damage_modifier,
         rounds=scenario.rounds,
         simulations=scenario.simulations,
         attacks_per_round=build.attacks_per_round,

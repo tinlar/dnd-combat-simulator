@@ -83,3 +83,87 @@ def test_roll_dice_rolls_each_requested_die_and_subtracts_modifier() -> None:
 def test_roll_dice_rejects_invalid_notation() -> None:
     with pytest.raises(ValueError, match="Invalid dice notation"):
         roll_dice("not dice", rng=PredictableRng([]))
+
+
+class SequenceRng:
+    def __init__(self, rolls: list[int]) -> None:
+        self.rolls = rolls
+
+    def randint(self, a: int, b: int) -> int:
+        return self.rolls.pop(0)
+
+
+def test_exploding_keep_drop_and_modifier_order() -> None:
+    assert roll_dice("4d6!kh3+2", SequenceRng([6, 3, 2, 5, 1])) == 18
+
+
+@pytest.mark.parametrize(
+    ("formula", "rolls", "expected"),
+    [
+        ("1d6!", [5], 5),
+        ("1d6!", [6, 4], 10),
+        ("1d6!", [6, 6, 3], 15),
+        ("2d6!", [6, 1, 6, 2], 15),
+        ("1d6!3", [3, 4], 7),
+        ("1d6!>4", [4, 2], 6),
+        ("1d6!<3", [3, 5], 8),
+    ],
+)
+def test_exploding_dice_forms(formula: str, rolls: list[int], expected: int) -> None:
+    assert roll_dice(formula, SequenceRng(rolls)) == expected
+
+
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        ("4d6k2", 11),
+        ("4d6kh2", 11),
+        ("4d6kl2", 3),
+        ("4d6d2", 11),
+        ("4d6dl2", 11),
+        ("4d6dh2", 3),
+        ("2d6d2+5", 5),
+        ("4d6kh3+2", 15),
+    ],
+)
+def test_keep_drop_forms(formula: str, expected: int) -> None:
+    assert roll_dice(formula, SequenceRng([1, 2, 5, 6])) == expected
+
+
+@pytest.mark.parametrize(
+    ("formula", "rolls", "expected"),
+    [
+        ("2d8r8", [8, 3, 4], 7),
+        ("2d8r<2", [1, 2, 3, 4], 7),
+        ("2d8r>6", [7, 8, 2, 3], 5),
+        ("2d8r1r3r5r7", [1, 3, 2, 7, 4], 6),
+        ("1d6r1!", [1, 6, 1, 4], 10),
+        ("4d6r1kh3+2", [1, 6, 2, 3, 4], 15),
+    ],
+)
+def test_reroll_forms(formula: str, rolls: list[int], expected: int) -> None:
+    assert roll_dice(formula, SequenceRng(rolls)) == expected
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "1d1!",
+        "3d6!>1",
+        "3d6!<6",
+        "3d6!7",
+        "8d100k0",
+        "8d100k9",
+        "8d100k1d1",
+        "3d6!!",
+        "2d8r",
+        "2d8r0",
+        "2d8r9",
+        "2d8r<8",
+        "2d8r>1",
+        "1d1r1",
+    ],
+)
+def test_complex_formula_validation(formula: str) -> None:
+    with pytest.raises(ValueError):
+        parse_dice_notation(formula)

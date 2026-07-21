@@ -22,6 +22,38 @@ from dnd_combat_simulator.simulation import (
     simulate_build,
 )
 
+DAMAGE_FORMULA_HELP = """Enter a dice formula with optional rerolls, exploding dice,
+keep/drop rules, and a flat modifier.
+
+Basic:
+• 1d8
+• 2d6+4
+• 1d10-1
+
+Reroll:
+• 2d8r<2 — reroll 1s and 2s
+• 2d8r8 — reroll 8s
+• 2d8r1r3r5r7 — reroll odd results
+
+Exploding:
+• 3d6! — explode on 6
+• 3d6!>4 — explode on 4, 5, or 6
+• 3d6!3 — explode only on 3
+
+Keep or drop:
+• 4d6kh3 — keep highest 3
+• 4d6kl3 — keep lowest 3
+• 8d100dl3 — drop lowest 3
+• 8d100dh3 — drop highest 3
+
+Combined:
+• 4d6r1!kh3+2
+
+Processing order:
+Reroll, explode, keep/drop, then apply the modifier."""
+
+DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
+
 PAGE_WIDTH_CSS = """
 <style>
     .stApp .block-container {
@@ -71,7 +103,6 @@ class SimulationInputs:
     attack_bonus: int
     target_armor_class: int
     damage_dice: str
-    damage_modifier: int
     rounds: int
     attacks_per_round: int
     simulations: int
@@ -105,7 +136,7 @@ def validate_simulation_inputs(inputs: SimulationInputs) -> None:
         ValueError: If an input cannot produce a usable damage simulation.
     """
     if not inputs.damage_dice.strip():
-        msg = "Damage dice is required. Use notation such as 1d8."
+        msg = "Damage Formula is required. Use notation such as 1d8+4."
         raise ValueError(msg)
     if inputs.target_armor_class < 1:
         msg = "Target Armor Class must be at least 1."
@@ -149,7 +180,6 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
         target_armor_class=inputs.target_armor_class,
         enemy_save_bonus=inputs.enemy_save_bonus,
         damage_dice=inputs.damage_dice.strip(),
-        damage_modifier=inputs.damage_modifier,
         rounds=inputs.rounds,
         simulations=inputs.simulations,
         attacks_per_round=inputs.attacks_per_round,
@@ -800,16 +830,17 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         attack_bonus = None
         save_dc = None
     damage_dice = row_one[1].text_input(
-        "Damage dice", value="1d8", key=f"{prefix}-damage-dice"
+        "Damage Formula",
+        value="1d8+3",
+        placeholder=DAMAGE_FORMULA_PLACEHOLDER,
+        help=DAMAGE_FORMULA_HELP,
+        key=f"{prefix}-damage-dice",
     )
-    row_two = st.columns(4)
-    damage_modifier = row_two[0].number_input(
-        "Damage modifier", value=3, step=1, key=f"{prefix}-damage-modifier"
-    )
-    attacks_per_round = row_two[1].number_input(
+    row_two = st.columns(3)
+    attacks_per_round = row_two[0].number_input(
         "Attacks per round", min_value=1, value=1, step=1, key=f"{prefix}-attacks"
     )
-    affected_targets = row_two[2].number_input(
+    affected_targets = row_two[1].number_input(
         "Affected Targets",
         min_value=1,
         value=1,
@@ -817,7 +848,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         key=f"{prefix}-affected-targets",
     )
     if resolution_type is ResolutionType.ATTACK_ROLL:
-        attack_roll_mode_label = row_two[3].selectbox(
+        attack_roll_mode_label = row_two[2].selectbox(
             "Attack roll mode",
             options=[mode.value.title() for mode in AttackRollMode],
             index=0,
@@ -826,7 +857,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
         successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
     elif resolution_type is ResolutionType.SAVING_THROW:
-        successful_save_damage_label = row_two[3].selectbox(
+        successful_save_damage_label = row_two[2].selectbox(
             "Successful Save Damage",
             options=["No damage", "Half damage"],
             index=0,
@@ -851,7 +882,6 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         name=attack_name,
         attack_bonus=None if attack_bonus is None else int(attack_bonus),
         damage_dice=damage_dice,
-        damage_modifier=int(damage_modifier),
         attacks_per_round=int(attacks_per_round),
         affected_targets=int(affected_targets),
         attack_roll_mode=attack_roll_mode,
@@ -896,7 +926,6 @@ def _build_config_from_profiles(
         name=name,
         attack_bonus=primary.attack_bonus or 0,
         damage_dice=primary.damage_dice,
-        damage_modifier=primary.damage_modifier,
         attacks_per_round=primary.attacks_per_round,
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
@@ -961,7 +990,7 @@ def main() -> None:
             "Enemy Save Bonus", value=3, step=1, key="scenario-enemy-save-bonus"
         )
         rounds = scenario_row[2].number_input(
-            "Number of rounds", min_value=1, value=5, step=1, key="scenario-rounds"
+            "Number of rounds", min_value=1, value=4, step=1, key="scenario-rounds"
         )
         simulations = scenario_row[3].number_input(
             "Number of simulations",

@@ -28,23 +28,23 @@ def test_format_rate_uses_percentage() -> None:
     ("inputs", "message"),
     [
         (
-            SimulationInputs(5, 15, "", 3, 5, 1, 10_000),
-            "Damage dice is required",
+            SimulationInputs(5, 15, "", 5, 1, 10_000),
+            "Damage Formula is required",
         ),
         (
-            SimulationInputs(5, 0, "1d8", 3, 5, 1, 10_000),
+            SimulationInputs(5, 0, "1d8", 5, 1, 10_000),
             "Target Armor Class must be at least 1",
         ),
         (
-            SimulationInputs(5, 15, "1d8", 3, 0, 1, 10_000),
+            SimulationInputs(5, 15, "1d8", 0, 1, 10_000),
             "Number of rounds must be at least 1",
         ),
         (
-            SimulationInputs(5, 15, "1d8", 3, 5, 0, 10_000),
+            SimulationInputs(5, 15, "1d8", 5, 0, 10_000),
             "Attacks per round must be at least 1",
         ),
         (
-            SimulationInputs(5, 15, "1d8", 3, 5, 1, 0),
+            SimulationInputs(5, 15, "1d8", 5, 1, 0),
             "Number of simulations must be at least 1",
         ),
     ],
@@ -61,8 +61,7 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
         SimulationInputs(
             attack_bonus=5,
             target_armor_class=15,
-            damage_dice=" 1d8 ",
-            damage_modifier=3,
+            damage_dice=" 1d8+3 ",
             rounds=1,
             attacks_per_round=2,
             simulations=1,
@@ -87,8 +86,8 @@ def test_result_rows_show_side_by_side_comparison() -> None:
 
     comparison = run_comparison_from_inputs(
         ComparisonInputs(
-            first_build=BuildConfig("Build A", 20, "1d4", 0, 1),
-            second_build=BuildConfig("Build B", 20, "1d4", 1, 1),
+            first_build=BuildConfig("Build A", 20, "1d4", 1),
+            second_build=BuildConfig("Build B", 20, "1d4+1", 1),
             scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
             seed=7,
         )
@@ -154,11 +153,11 @@ def test_builds_can_use_different_numbers_of_attack_profiles() -> None:
     )
 
     first_profiles = (
-        AttackProfile("Primary A", 20, "1d4", 0, 1),
-        AttackProfile("Extra A 1", 20, "1d4", 0, 1),
-        AttackProfile("Extra A 2", 20, "1d4", 0, 1),
+        AttackProfile("Primary A", 20, "1d4", 1),
+        AttackProfile("Extra A 1", 20, "1d4", 1),
+        AttackProfile("Extra A 2", 20, "1d4", 1),
     )
-    second_profiles = (AttackProfile("Primary B", 20, "1d4", 0, 1),)
+    second_profiles = (AttackProfile("Primary B", 20, "1d4", 1),)
 
     comparison = compare_builds(
         first_build=_build_config_from_profiles("Build A", first_profiles),
@@ -233,7 +232,7 @@ def test_single_build_rows_include_required_complete_results() -> None:
 
     result = run_single_build_from_inputs(
         SingleBuildInputs(
-            build=BuildConfig("Custom", 20, "1d4", 0, 1),
+            build=BuildConfig("Custom", 20, "1d4", 1),
             scenario=ScenarioConfig(target_armor_class=1, rounds=2, simulations=2),
             seed=8,
         )
@@ -393,12 +392,11 @@ def _mixed_profile_result():
         0,
         1,
         attack_profiles=(
-            AttackProfile("Zero opener", 0, "1d4", 0, 1, active_rounds="1"),
+            AttackProfile("Zero opener", 0, "1d4", 1, active_rounds="1"),
             AttackProfile(
                 "Save effect",
                 None,
                 "1d4",
-                0,
                 1,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=10,
@@ -407,7 +405,6 @@ def _mixed_profile_result():
                 "Aura",
                 None,
                 "1d4",
-                0,
                 1,
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
             ),
@@ -431,7 +428,7 @@ def test_single_build_round_chart_data_includes_zero_damage_rounds() -> None:
     )
 
     result = simulate_build(
-        BuildConfig("Misses", 0, "1d4", 0, 1),
+        BuildConfig("Misses", 0, "1d4", 1),
         ScenarioConfig(target_armor_class=99, rounds=2, simulations=2),
         seed=1,
     )
@@ -451,8 +448,8 @@ def test_comparison_round_chart_data_uses_both_builds() -> None:
     )
 
     comparison = compare_builds(
-        first_build=BuildConfig("A", 20, "1d4", 0, 1),
-        second_build=BuildConfig("B", 20, "1d4", 1, 1),
+        first_build=BuildConfig("A", 20, "1d4", 1),
+        second_build=BuildConfig("B", 20, "1d4+1", 1),
         scenario=ScenarioConfig(target_armor_class=1, rounds=2, simulations=1),
         seed=2,
     )
@@ -484,8 +481,8 @@ def test_key_comparison_metric_chart_data() -> None:
     )
 
     comparison = compare_builds(
-        first_build=BuildConfig("A", 20, "1d4", 0, 1),
-        second_build=BuildConfig("B", 20, "1d4", 1, 1),
+        first_build=BuildConfig("A", 20, "1d4", 1),
+        second_build=BuildConfig("B", 20, "1d4+1", 1),
         scenario=ScenarioConfig(target_armor_class=1, rounds=2, simulations=1),
         seed=2,
     )
@@ -554,12 +551,12 @@ def test_single_build_and_comparison_chart_render_paths_are_separate(
     )
     monkeypatch.setitem(__import__("sys").modules, "streamlit", fake_st)
 
-    build = BuildConfig("A", 20, "1d4", 0, 1)
+    build = BuildConfig("A", 20, "1d4", 1)
     result = simulate_build(build, ScenarioConfig(1, 1, 1), 1)
     app._render_single_build_results(build, result)
     comparison = compare_builds(
         first_build=build,
-        second_build=BuildConfig("B", 20, "1d4", 0, 1),
+        second_build=BuildConfig("B", 20, "1d4", 1),
         scenario=ScenarioConfig(1, 1, 1),
         seed=1,
     )
