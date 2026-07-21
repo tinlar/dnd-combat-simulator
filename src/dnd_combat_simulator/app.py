@@ -122,51 +122,188 @@ SCENARIO_WIDGET_KEYS = {
 COMPARE_WIDGET_KEY = "compare-builds-enabled"
 LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
-GENERATED_SHARE_URL_SESSION_KEY = "_generated_share_url"
 
-
-SHARE_BUTTON_KEY = "share-configuration-button"
-SHARE_BUTTON_CSS = """
-<style>
-    .share-configuration-toolbar {
-        min-height: 3.25rem;
-    }
-
-    .st-key-share-configuration-button button {
-        width: 42px;
-        height: 42px;
-        min-width: 42px;
-        min-height: 42px;
-        padding: 0;
-        border-radius: 999px;
-        color: var(--text-color, currentColor);
-        background: transparent;
-        border: 1px solid currentColor;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-        font-size: 1.35rem;
-    }
-
-    .st-key-share-configuration-button button:hover,
-    .st-key-share-configuration-button button:focus,
-    .st-key-share-configuration-button button:focus-visible {
-        color: var(--primary-color, currentColor);
-        border-color: currentColor;
-        background: color-mix(in srgb, currentColor 10%, transparent);
-        box-shadow: 0 0 0 0.15rem color-mix(in srgb, currentColor 28%, transparent);
-    }
-
-    .share-configuration-toolbar div[data-testid="stCodeBlock"] {
-        margin: 0;
-    }
-
-    .share-configuration-toolbar .stAlert {
-        margin: 0;
-    }
-</style>
+SHARE_TOOLBAR_HTML = """
+<div class="share-toolbar" role="group" aria-label="Share configuration">
+    <button
+        class="share-button"
+        type="button"
+        title="Copy share link"
+        aria-label="Copy share link"
+    >
+        <svg
+            class="share-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+        >
+            <path
+                d="M6 18c.8-4.9 4-7.3 9.1-7.3h1.2"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+            />
+            <path
+                d="M13.8 6.2 18.6 11l-4.8 4.8"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            />
+        </svg>
+    </button>
+    <span class="share-status" aria-live="polite"></span>
+    <input class="share-fallback" type="text" readonly hidden />
+</div>
 """
+
+SHARE_TOOLBAR_CSS = """
+.share-toolbar {
+    min-height: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--st-text-color);
+    background: var(--st-background-color);
+    font-family: var(--st-font);
+    overflow: hidden;
+}
+
+.share-button {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    min-height: 42px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid var(--st-border-color);
+    background: var(--st-secondary-background-color);
+    color: var(--st-text-color);
+    font-family: var(--st-font);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.share-button:hover {
+    border-color: var(--st-primary-color);
+    color: var(--st-primary-color);
+}
+
+.share-button:focus-visible {
+    outline: 2px solid var(--st-primary-color);
+    outline-offset: 2px;
+}
+
+.share-icon {
+    width: 23px;
+    height: 23px;
+}
+
+.share-status {
+    min-width: 12rem;
+    color: var(--st-text-color);
+    font-family: var(--st-font);
+    opacity: 0;
+    transition: opacity 180ms ease;
+    text-overflow: ellipsis;
+}
+
+.share-status.visible {
+    opacity: 1;
+}
+
+.share-fallback {
+    position: fixed;
+    inset-inline-start: -10000px;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+"""
+
+SHARE_TOOLBAR_JS = """
+export default function(component) {
+    const { data, parentElement } = component;
+    const button = parentElement.querySelector('.share-button');
+    const status = parentElement.querySelector('.share-status');
+    const fallbackInput = parentElement.querySelector('.share-fallback');
+    let statusTimer = null;
+
+    function showTemporaryStatus(message) {
+        status.textContent = message;
+        status.classList.add('visible');
+        if (statusTimer !== null) {
+            window.clearTimeout(statusTimer);
+        }
+        statusTimer = window.setTimeout(() => {
+            status.classList.remove('visible');
+            status.textContent = '';
+        }, 1500);
+    }
+
+    button.onclick = async () => {
+        try {
+            await navigator.clipboard.writeText(data.url);
+            showTemporaryStatus('Link copied');
+            return;
+        } catch (error) {
+            // Use the fallback below.
+        }
+
+        fallbackInput.value = data.url;
+        fallbackInput.hidden = false;
+        fallbackInput.focus();
+        fallbackInput.select();
+
+        let copied = false;
+        try {
+            copied = document.execCommand('copy');
+        } catch (error) {
+            copied = false;
+        }
+
+        if (copied) {
+            fallbackInput.hidden = true;
+            showTemporaryStatus('Link copied');
+        } else {
+            showTemporaryStatus('Copy blocked. Link selected.');
+        }
+    };
+
+    return () => {
+        if (statusTimer !== null) {
+            window.clearTimeout(statusTimer);
+        }
+        button.onclick = null;
+    };
+}
+"""
+
+_SHARE_TOOLBAR_COMPONENT = None
+
+
+def _get_share_toolbar_component():
+    """Register and return the v2 share toolbar component."""
+    global _SHARE_TOOLBAR_COMPONENT
+    if _SHARE_TOOLBAR_COMPONENT is None:
+        import streamlit as st
+
+        components = getattr(st, "components", None)
+        if components is None or not hasattr(components, "v2"):
+            return lambda **kwargs: None
+        _SHARE_TOOLBAR_COMPONENT = st.components.v2.component(
+            "share_toolbar",
+            html=SHARE_TOOLBAR_HTML,
+            css=SHARE_TOOLBAR_CSS,
+            js=SHARE_TOOLBAR_JS,
+        )
+    return _SHARE_TOOLBAR_COMPONENT
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1328,11 +1465,12 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
     """Build a configuration from existing session-state values or widget defaults."""
     import streamlit as st
 
-    if f"{prefix}-build-name" not in getattr(st, "session_state", {}):
+    session_state = getattr(st, "session_state", {})
+    if f"{prefix}-build-name" not in session_state:
         return _build_config_from_profiles(
             default_build_name, (AttackProfile("Primary attack", 5, "1d8+3", 1),)
         )
-    count = int(st.session_state.get(f"{prefix}-additional-attack-count", 0))
+    count = int(session_state.get(f"{prefix}-additional-attack-count", 0))
     profiles = []
     for index, (_, _, default_name) in enumerate(_profile_definitions(prefix, count)):
         widget_prefix = profile_prefix(prefix, index)
@@ -1341,7 +1479,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
             "Saving Throw": ResolutionType.SAVING_THROW,
             "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
         }.get(
-            st.session_state.get(
+            session_state.get(
                 profile_widget_key(widget_prefix, "resolution_type"), "Attack Roll"
             ),
             ResolutionType.ATTACK_ROLL,
@@ -1349,54 +1487,50 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
         features = frozenset(
             feature
             for feature in FEATURE_ORDER
-            if st.session_state.get(feature_widget_key(widget_prefix, feature), False)
+            if session_state.get(feature_widget_key(widget_prefix, feature), False)
         )
         profiles.append(
             AttackProfile(
-                st.session_state.get(
+                session_state.get(
                     profile_widget_key(widget_prefix, "name"), default_name
                 ),
                 int(
-                    st.session_state.get(
+                    session_state.get(
                         profile_widget_key(widget_prefix, "attack_bonus"), 5
                     )
                 )
                 if resolution is ResolutionType.ATTACK_ROLL
                 else None,
-                st.session_state.get(
+                session_state.get(
                     profile_widget_key(widget_prefix, "damage_formula"), "1d8+3"
                 ),
                 int(
-                    st.session_state.get(
+                    session_state.get(
                         profile_widget_key(widget_prefix, "attacks_per_round"), 1
                     )
                 ),
                 int(
-                    st.session_state.get(
+                    session_state.get(
                         profile_widget_key(widget_prefix, "affected_targets"), 1
                     )
                 ),
                 AttackRollMode(
                     str(
-                        st.session_state.get(
+                        session_state.get(
                             profile_widget_key(widget_prefix, "attack_roll_mode"),
                             "Normal",
                         )
                     ).lower()
                 ),
-                st.session_state.get(
+                session_state.get(
                     profile_widget_key(widget_prefix, "active_rounds"), ""
                 ),
                 resolution,
-                int(
-                    st.session_state.get(
-                        profile_widget_key(widget_prefix, "save_dc"), 13
-                    )
-                )
+                int(session_state.get(profile_widget_key(widget_prefix, "save_dc"), 13))
                 if resolution is ResolutionType.SAVING_THROW
                 else None,
                 SuccessfulSaveDamage.HALF_DAMAGE
-                if st.session_state.get(
+                if session_state.get(
                     profile_widget_key(widget_prefix, "successful_save_damage"),
                     "No damage",
                 )
@@ -1406,7 +1540,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
             )
         )
     return _build_config_from_profiles(
-        st.session_state.get(f"{prefix}-build-name", default_build_name),
+        session_state.get(f"{prefix}-build-name", default_build_name),
         tuple(profiles),
     )
 
@@ -1416,52 +1550,35 @@ def _default_second_build_from_state() -> BuildConfig:
     return _build_from_state("second", "Build B")
 
 
-def _render_share_configuration_button() -> None:
+def _current_shared_configuration_url() -> str:
     import streamlit as st
 
-    st.markdown(SHARE_BUTTON_CSS, unsafe_allow_html=True)
-    st.markdown('<div class="share-configuration-toolbar">', unsafe_allow_html=True)
-    share_button_column, share_output_column = st.columns(
-        [0.06, 0.94],
-        vertical_alignment="center",
+    session_state = getattr(st, "session_state", {})
+    scenario = ScenarioConfig(
+        target_armor_class=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
+        ),
+        enemy_save_bonus=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
+        ),
+        rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
+        simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
     )
-    with share_button_column:
-        share_clicked = st.button(
-            "⤴",
-            help="Create share link",
-            key=SHARE_BUTTON_KEY,
-        )
-    with share_output_column:
-        if share_clicked:
-            scenario = ScenarioConfig(
-                target_armor_class=int(
-                    st.session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
-                ),
-                enemy_save_bonus=int(
-                    st.session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
-                ),
-                rounds=int(st.session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
-                simulations=int(
-                    st.session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)
-                ),
-            )
-            configuration = shared_configuration_from_configs(
-                compare_enabled=bool(st.session_state.get(COMPARE_WIDGET_KEY, False)),
-                scenario=scenario,
-                seed=int(st.session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
-                build_a=_build_from_state("first", "Build A"),
-                build_b=_build_from_state("second", "Build B"),
-            )
-            token = serialize_shared_configuration(configuration)
-            share_url = build_share_url(getattr(st.context, "url", ""), token)
-            st.session_state[GENERATED_SHARE_URL_SESSION_KEY] = share_url
-            st.toast("Share link ready")
-            st.code(
-                share_url,
-                language=None,
-                wrap_lines=False,
-            )
-    st.markdown("</div>", unsafe_allow_html=True)
+    configuration = shared_configuration_from_configs(
+        compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
+        scenario=scenario,
+        seed=int(session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
+        build_a=_build_from_state("first", "Build A"),
+        build_b=_build_from_state("second", "Build B"),
+    )
+    token = serialize_shared_configuration(configuration)
+    return build_share_url(getattr(getattr(st, "context", None), "url", ""), token)
+
+
+def _render_share_configuration_button() -> None:
+    share_url = _current_shared_configuration_url()
+    share_toolbar = _get_share_toolbar_component()
+    share_toolbar(data={"url": share_url})
 
 
 def main() -> None:

@@ -226,10 +226,10 @@ ruff format .
 
 ## Sharing Configurations
 
-1. Configure the shared Scenario inputs and Build A/Build B inputs you want to send.
-2. Click the circular swept-arrow **⤴** share button near the top-left of the app.
-3. The app generates a first-party simulator configuration URL with the compressed configuration token inside the URL. No third-party URL-shortening service is used.
-4. Click the native copy icon beside the displayed URL.
+1. Configure the simulation, including the shared Scenario inputs and Build A/Build B inputs you want to send.
+2. Click the circular swept-arrow share button near the top-left of the app.
+3. The complete first-party Streamlit configuration URL is copied immediately with the compressed configuration token inside the URL. No third-party URL-shortening service is used.
+4. A brief **Link copied** message confirms success.
 5. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
 The link contains configuration data only, not saved simulation results. The configuration remains inside the URL and is never sent through an external shortening or redirect service.
