@@ -75,7 +75,7 @@ def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
     fake_streamlit = SimpleNamespace(
         selectbox=col.selectbox,
         text_input=col.text_input,
-        columns=lambda spec: [
+        columns=lambda spec, **kwargs: [
             col for _ in range(spec if isinstance(spec, int) else len(spec))
         ],
     )
@@ -349,7 +349,7 @@ def test_comparison_toggle_default_off_and_single_mode_uses_only_first_build(
 
     col = Column()
 
-    def columns(spec):
+    def columns(spec, **kwargs):
         count = spec if isinstance(spec, int) else len(spec)
         return [col for _ in range(count)]
 
@@ -421,7 +421,7 @@ def test_comparison_mode_still_renders_second_build_with_stable_keys(
         title=lambda *args, **kwargs: None,
         write=lambda *args, **kwargs: None,
         subheader=lambda *args, **kwargs: None,
-        columns=lambda spec: [
+        columns=lambda spec, **kwargs: [
             col for _ in range(spec if isinstance(spec, int) else len(spec))
         ],
         number_input=col.number_input,
@@ -647,7 +647,7 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
         selectbox=col.selectbox,
         text_input=col.text_input,
         number_input=col.number_input,
-        columns=lambda spec: [col for _ in range(spec)],
+        columns=lambda spec, **kwargs: [col for _ in range(spec)],
         expander=expander,
         checkbox=checkbox,
     )
@@ -1092,3 +1092,150 @@ def test_repository_does_not_reference_removed_url_shorteners() -> None:
             text = path.read_text(encoding="utf-8", errors="ignore")
             for value in forbidden:
                 assert value not in text
+
+
+def test_share_toolbar_button_left_column_icon_help_and_cleanuri_output(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls: list[tuple[str, object]] = []
+
+    class Column:
+        def __enter__(self):
+            calls.append(("enter_column", self.name))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __init__(self, name):
+            self.name = name
+
+    def columns(spec, **kwargs):
+        calls.append(("columns", {"spec": spec, **kwargs}))
+        return [Column("left"), Column("right")]
+
+    def button(label, **kwargs):
+        calls.append(("button", {"label": label, **kwargs}))
+        return True
+
+    def code(body, **kwargs):
+        calls.append(("code", {"body": body, **kwargs}))
+
+    fake_streamlit = SimpleNamespace(
+        session_state={},
+        context=SimpleNamespace(url="https://example.test/sim"),
+        columns=columns,
+        button=button,
+        code=code,
+        markdown=lambda *args, **kwargs: calls.append(("markdown", args[0])),
+        toast=lambda *args, **kwargs: calls.append(("toast", args[0])),
+        warning=lambda *args, **kwargs: calls.append(("warning", args[0])),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(
+        app,
+        "resolve_share_url_to_copy",
+        lambda long_url, state: app.ShortenedUrlResult(
+            "https://cleanuri.com/ready", True
+        ),
+    )
+
+    app._render_share_configuration_button()
+
+    assert ("columns", {"spec": [0.06, 0.94], "vertical_alignment": "center"}) in calls
+    button_index = next(i for i, call in enumerate(calls) if call[0] == "button")
+    assert calls[button_index - 1] == ("enter_column", "left")
+    assert calls[button_index][1] == {
+        "label": "⤴",
+        "help": "Create share link",
+        "key": app.SHARE_BUTTON_KEY,
+    }
+    assert all(call[1].get("label") != "📤" for call in calls if call[0] == "button")
+    assert ("toast", "Share link ready") in calls
+    assert (
+        "code",
+        {"body": "https://cleanuri.com/ready", "language": None, "wrap_lines": False},
+    ) in calls
+    assert not any(call == ("success", "Copied CleanURI share link.") for call in calls)
+
+
+def test_share_toolbar_failure_shows_full_url_once_without_link_button(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls: list[tuple[str, object]] = []
+
+    class Column:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    full_url = "https://example.test/sim?config=full"
+
+    fake_streamlit = SimpleNamespace(
+        session_state={},
+        context=SimpleNamespace(url="https://example.test/sim"),
+        columns=lambda *args, **kwargs: [Column(), Column()],
+        button=lambda *args, **kwargs: True,
+        code=lambda body, **kwargs: calls.append(("code", {"body": body, **kwargs})),
+        markdown=lambda *args, **kwargs: None,
+        toast=lambda *args, **kwargs: calls.append(("toast", args[0])),
+        warning=lambda *args, **kwargs: calls.append(("warning", args[0])),
+        link_button=lambda *args, **kwargs: calls.append(("link_button", args[0])),
+        success=lambda *args, **kwargs: calls.append(("success", args[0])),
+        caption=lambda *args, **kwargs: calls.append(("caption", args[0])),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(
+        app,
+        "resolve_share_url_to_copy",
+        lambda long_url, state: app.ShortenedUrlResult(
+            full_url, False, "<html>diagnostic</html>"
+        ),
+    )
+
+    app._render_share_configuration_button()
+
+    assert calls == [
+        ("warning", "CleanURI unavailable; full link shown."),
+        ("code", {"body": full_url, "language": None, "wrap_lines": False}),
+    ]
+
+
+def test_share_clipboard_autocopy_and_link_button_removed_from_source() -> None:
+    from pathlib import Path
+
+    source = Path("src/dnd_combat_simulator/app.py").read_text()
+
+    assert "def _copy_share_url_to_clipboard" not in source
+    assert "components.html" not in source
+    assert "navigator.clipboard.writeText" not in source
+    assert "document.execCommand" not in source
+    assert "Copied CleanURI share link" not in source
+    assert "Open Shared Configuration" not in source
+
+
+def test_share_button_css_is_scoped_and_theme_compatible() -> None:
+    from dnd_combat_simulator import app
+
+    css = app.SHARE_BUTTON_CSS
+
+    assert ".st-key-share-configuration-button button" in css
+    assert "42px" in css
+    assert "border-radius: 999px" in css
+    assert "currentColor" in css
+    assert "var(--text-color" in css
+    assert "var(--primary-color" in css
+    assert "black" not in css.lower()
+    assert "white" not in css.lower()

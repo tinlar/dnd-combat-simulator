@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from dataclasses import dataclass
-from html import escape
 from json import JSONDecodeError
 from textwrap import dedent
 from urllib.error import HTTPError, URLError
@@ -232,41 +231,6 @@ def resolve_share_url_to_copy(
     return result
 
 
-def _copy_share_url_to_clipboard(url: str) -> None:
-    """Render a tiny client-side script that copies the generated URL."""
-    import streamlit.components.v1 as components
-
-    escaped_url = escape(url, quote=True)
-    components.html(
-        f"""
-        <script>
-        const shareUrl = {url!r};
-        async function copyShareUrl() {{
-            try {{
-                await navigator.clipboard.writeText(shareUrl);
-            }} catch (error) {{
-                const textArea = document.createElement("textarea");
-                textArea.value = shareUrl;
-                textArea.style.position = "fixed";
-                textArea.style.opacity = "0";
-                document.body.appendChild(textArea);
-                textArea.focus();
-                textArea.select();
-                document.execCommand("copy");
-                document.body.removeChild(textArea);
-            }}
-        }}
-        copyShareUrl();
-        </script>
-        <span style="font-size: 0.8rem;">
-            Copied <a href="{escaped_url}" target="_blank"
-                rel="noopener noreferrer">share link</a>.
-        </span>
-        """,
-        height=28,
-    )
-
-
 SCENARIO_WIDGET_KEYS = {
     "target_armor_class": "scenario-target-ac",
     "enemy_save_bonus": "scenario-enemy-save-bonus",
@@ -281,6 +245,50 @@ GENERATED_LONG_SHARE_URL_SESSION_KEY = "_generated_long_share_url"
 GENERATED_SHORT_SHARE_URL_SESSION_KEY = "_generated_short_share_url"
 GENERATED_SHARE_URL_TO_COPY_SESSION_KEY = "_generated_share_url_to_copy"
 CLEANURI_CREATE_API_URL = "https://cleanuri.com/api/v1/shorten"
+
+
+SHARE_BUTTON_KEY = "share-configuration-button"
+SHARE_BUTTON_CSS = """
+<style>
+    .share-configuration-toolbar {
+        min-height: 3.25rem;
+    }
+
+    .st-key-share-configuration-button button {
+        width: 42px;
+        height: 42px;
+        min-width: 42px;
+        min-height: 42px;
+        padding: 0;
+        border-radius: 999px;
+        color: var(--text-color, currentColor);
+        background: transparent;
+        border: 1px solid currentColor;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        font-size: 1.35rem;
+    }
+
+    .st-key-share-configuration-button button:hover,
+    .st-key-share-configuration-button button:focus,
+    .st-key-share-configuration-button button:focus-visible {
+        color: var(--primary-color, currentColor);
+        border-color: currentColor;
+        background: color-mix(in srgb, currentColor 10%, transparent);
+        box-shadow: 0 0 0 0.15rem color-mix(in srgb, currentColor 28%, transparent);
+    }
+
+    .share-configuration-toolbar div[data-testid="stCodeBlock"] {
+        margin: 0;
+    }
+
+    .share-configuration-toolbar .stAlert {
+        margin: 0;
+    }
+</style>
+"""
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1533,13 +1541,20 @@ def _default_second_build_from_state() -> BuildConfig:
 def _render_share_configuration_button() -> None:
     import streamlit as st
 
-    share_row = st.columns([0.88, 0.12])
-    with share_row[1]:
-        if st.button(
-            "📤",
-            help="Share: generate a shortened link and copy it to your clipboard.",
-            key="share-configuration-icon-button",
-        ):
+    st.markdown(SHARE_BUTTON_CSS, unsafe_allow_html=True)
+    st.markdown('<div class="share-configuration-toolbar">', unsafe_allow_html=True)
+    share_button_column, share_output_column = st.columns(
+        [0.06, 0.94],
+        vertical_alignment="center",
+    )
+    with share_button_column:
+        share_clicked = st.button(
+            "⤴",
+            help="Create share link",
+            key=SHARE_BUTTON_KEY,
+        )
+    with share_output_column:
+        if share_clicked:
             scenario = ScenarioConfig(
                 target_armor_class=int(
                     st.session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
@@ -1565,24 +1580,16 @@ def _render_share_configuration_button() -> None:
                 long_url,
                 st.session_state,
             )
-            url_to_copy = shortening_result.url
-            _copy_share_url_to_clipboard(url_to_copy)
             if shortening_result.shortened:
-                st.success("Copied CleanURI share link.")
-            elif shortening_result.rate_limited:
-                st.warning(
-                    "Copied the full share link because the CleanURI rate limit "
-                    "was reached."
-                )
-                if shortening_result.error_message:
-                    st.caption(shortening_result.error_message)
+                st.toast("Share link ready")
             else:
-                st.warning(
-                    "Copied the full share link because CleanURI shortening failed."
-                )
-                if shortening_result.error_message:
-                    st.caption(shortening_result.error_message)
-            st.link_button("Open Shared Configuration", url_to_copy)
+                st.warning("CleanURI unavailable; full link shown.")
+            st.code(
+                shortening_result.url,
+                language=None,
+                wrap_lines=False,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def main() -> None:
