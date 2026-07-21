@@ -13,6 +13,15 @@ from dnd_combat_simulator.combat import (
     ResolutionType,
     SuccessfulSaveDamage,
 )
+from dnd_combat_simulator.sharing import (
+    SharedBuildConfiguration,
+    SharedConfiguration,
+    SharedConfigurationError,
+    build_share_url,
+    deserialize_shared_configuration,
+    serialize_shared_configuration,
+    shared_configuration_from_configs,
+)
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     AttackProfileResult,
@@ -101,6 +110,48 @@ DAMAGE_FORMULA_HELP = dedent(
 ).strip()
 
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
+
+
+SCENARIO_WIDGET_KEYS = {
+    "target_armor_class": "scenario-target-ac",
+    "enemy_save_bonus": "scenario-enemy-save-bonus",
+    "rounds": "scenario-rounds",
+    "simulations": "scenario-simulations",
+    "seed": "scenario-seed",
+}
+COMPARE_WIDGET_KEY = "compare-builds-enabled"
+LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
+LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
+SHARE_URL_SESSION_KEY = "_generated_share_url"
+
+
+def profile_prefix(build_prefix: str, index: int) -> str:
+    return (
+        f"{build_prefix}-primary"
+        if index == 0
+        else f"{build_prefix}-additional-{index}"
+    )
+
+
+def profile_widget_key(prefix: str, field: str) -> str:
+    suffixes = {
+        "name": "name",
+        "resolution_type": "resolution-type",
+        "attack_bonus": "attack-bonus",
+        "save_dc": "save-dc",
+        "successful_save_damage": "successful-save-damage",
+        "attack_roll_mode": "mode",
+        "damage_formula": "damage-dice",
+        "attacks_per_round": "attacks",
+        "affected_targets": "affected-targets",
+        "active_rounds": "active-rounds",
+    }
+    return f"{prefix}-{suffixes[field]}"
+
+
+def feature_widget_key(prefix: str, feature: AttackFeature) -> str:
+    return f"{prefix}-feature-{feature.value}"
+
 
 PAGE_WIDTH_CSS = """
 <style>
@@ -946,7 +997,7 @@ def _feature_inputs(
             checked = checkbox(
                 FEATURE_LABELS[feature],
                 value=False,
-                key=f"{prefix}-feature-{feature.value}",
+                key=feature_widget_key(prefix, feature),
                 help=FEATURE_HELP[feature],
                 disabled=disabled,
             )
@@ -959,12 +1010,14 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     """Render and collect one attack profile's input controls."""
     import streamlit as st
 
-    attack_name = st.text_input("Attack name", value=default_name, key=f"{prefix}-name")
+    attack_name = st.text_input(
+        "Attack name", value=default_name, key=profile_widget_key(prefix, "name")
+    )
     resolution_type_label = st.selectbox(
         "Resolution Type",
         options=["Attack Roll", "Saving Throw", "Automatic Damage"],
         index=0,
-        key=f"{prefix}-resolution-type",
+        key=profile_widget_key(prefix, "resolution_type"),
     )
     resolution_type = {
         "Attack Roll": ResolutionType.ATTACK_ROLL,
@@ -974,13 +1027,20 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     row_one = st.columns(2)
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus = row_one[0].number_input(
-            "Attack bonus", value=5, step=1, key=f"{prefix}-attack-bonus"
+            "Attack bonus",
+            value=5,
+            step=1,
+            key=profile_widget_key(prefix, "attack_bonus"),
         )
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc = row_one[0].number_input(
-            "Save DC", min_value=1, value=13, step=1, key=f"{prefix}-save-dc"
+            "Save DC",
+            min_value=1,
+            value=13,
+            step=1,
+            key=profile_widget_key(prefix, "save_dc"),
         )
     else:
         attack_bonus = None
@@ -990,25 +1050,29 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         value="1d8+3",
         placeholder=DAMAGE_FORMULA_PLACEHOLDER,
         help=DAMAGE_FORMULA_HELP,
-        key=f"{prefix}-damage-dice",
+        key=profile_widget_key(prefix, "damage_formula"),
     )
     row_two = st.columns(3)
     attacks_per_round = row_two[0].number_input(
-        "Attacks per round", min_value=1, value=1, step=1, key=f"{prefix}-attacks"
+        "Attacks per round",
+        min_value=1,
+        value=1,
+        step=1,
+        key=profile_widget_key(prefix, "attacks_per_round"),
     )
     affected_targets = row_two[1].number_input(
         "Affected Targets",
         min_value=1,
         value=1,
         step=1,
-        key=f"{prefix}-affected-targets",
+        key=profile_widget_key(prefix, "affected_targets"),
     )
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_roll_mode_label = row_two[2].selectbox(
             "Attack roll mode",
             options=[mode.value.title() for mode in AttackRollMode],
             index=0,
-            key=f"{prefix}-mode",
+            key=profile_widget_key(prefix, "attack_roll_mode"),
         )
         attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
         successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
@@ -1017,7 +1081,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
             "Successful Save Damage",
             options=["No damage", "Half damage"],
             index=0,
-            key=f"{prefix}-successful-save-damage",
+            key=profile_widget_key(prefix, "successful_save_damage"),
         )
         attack_roll_mode = AttackRollMode.NORMAL
         successful_save_damage = (
@@ -1032,7 +1096,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         "Active Rounds",
         value="",
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
-        key=f"{prefix}-active-rounds",
+        key=profile_widget_key(prefix, "active_rounds"),
     )
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
@@ -1123,11 +1187,215 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
     return _build_config_from_profiles(name, tuple(profiles))
 
 
+def _resolution_type_label(resolution_type: ResolutionType) -> str:
+    return {
+        ResolutionType.ATTACK_ROLL: "Attack Roll",
+        ResolutionType.SAVING_THROW: "Saving Throw",
+        ResolutionType.AUTOMATIC_DAMAGE: "Automatic Damage",
+    }[resolution_type]
+
+
+def _successful_save_damage_label(value: SuccessfulSaveDamage) -> str:
+    return "Half damage" if value is SuccessfulSaveDamage.HALF_DAMAGE else "No damage"
+
+
+def _hydrate_build_session_state(
+    session_state, prefix: str, build: SharedBuildConfiguration
+) -> None:
+    session_state[f"{prefix}-build-name"] = build.name
+    session_state[f"{prefix}-additional-attack-count"] = len(build.attack_profiles) - 1
+    for index, profile in enumerate(build.attack_profiles):
+        widget_prefix = profile_prefix(prefix, index)
+        session_state[profile_widget_key(widget_prefix, "name")] = profile.name
+        session_state[profile_widget_key(widget_prefix, "resolution_type")] = (
+            _resolution_type_label(profile.resolution_type)
+        )
+        session_state[profile_widget_key(widget_prefix, "attack_bonus")] = (
+            profile.attack_bonus if profile.attack_bonus is not None else 5
+        )
+        session_state[profile_widget_key(widget_prefix, "save_dc")] = (
+            profile.save_dc if profile.save_dc is not None else 13
+        )
+        session_state[profile_widget_key(widget_prefix, "successful_save_damage")] = (
+            _successful_save_damage_label(profile.successful_save_damage)
+        )
+        session_state[profile_widget_key(widget_prefix, "attack_roll_mode")] = (
+            profile.attack_roll_mode.value.title()
+        )
+        session_state[profile_widget_key(widget_prefix, "damage_formula")] = (
+            profile.damage_formula
+        )
+        session_state[profile_widget_key(widget_prefix, "attacks_per_round")] = (
+            profile.attacks_per_round
+        )
+        session_state[profile_widget_key(widget_prefix, "affected_targets")] = (
+            profile.affected_targets
+        )
+        session_state[profile_widget_key(widget_prefix, "active_rounds")] = (
+            profile.active_rounds
+        )
+        for feature in FEATURE_ORDER:
+            session_state[feature_widget_key(widget_prefix, feature)] = (
+                feature in profile.features
+            )
+
+
+def hydrate_session_state_from_shared_configuration(
+    session_state, configuration: SharedConfiguration
+) -> None:
+    """Populate Streamlit widget state from a fully validated shared config."""
+    scenario = configuration.scenario
+    session_state[SCENARIO_WIDGET_KEYS["target_armor_class"]] = (
+        scenario.target_armor_class
+    )
+    session_state[SCENARIO_WIDGET_KEYS["enemy_save_bonus"]] = scenario.enemy_save_bonus
+    session_state[SCENARIO_WIDGET_KEYS["rounds"]] = scenario.rounds
+    session_state[SCENARIO_WIDGET_KEYS["simulations"]] = scenario.simulations
+    session_state[SCENARIO_WIDGET_KEYS["seed"]] = scenario.seed
+    session_state[COMPARE_WIDGET_KEY] = configuration.compare_enabled
+    _hydrate_build_session_state(session_state, "first", configuration.build_a)
+    _hydrate_build_session_state(session_state, "second", configuration.build_b)
+
+
+def load_shared_configuration_from_query() -> None:
+    """Apply a shared configuration query token once before widgets are created."""
+    import streamlit as st
+
+    query_params = getattr(st, "query_params", {})
+    token = query_params.get("config") if hasattr(query_params, "get") else None
+    if isinstance(token, list):
+        token = token[0] if token else None
+    if (
+        not token
+        or getattr(st, "session_state", {}).get(LOADED_SHARED_CONFIG_TOKEN_KEY) == token
+    ):
+        return
+    try:
+        configuration = deserialize_shared_configuration(token)
+    except SharedConfigurationError as error:
+        st.error(f"Invalid shared configuration link: {error}")
+        return
+    hydrate_session_state_from_shared_configuration(st.session_state, configuration)
+    st.session_state[LOADED_SHARED_CONFIG_TOKEN_KEY] = token
+    st.session_state[LOADED_SHARED_CONFIG_MESSAGE_KEY] = True
+
+
+def _default_second_build_from_state() -> BuildConfig:
+    """Build hidden Build B from existing session-state values or widget defaults."""
+    import streamlit as st
+
+    if "second-build-name" not in getattr(st, "session_state", {}):
+        return _build_config_from_profiles(
+            "Build B", (AttackProfile("Primary attack", 5, "1d8+3", 1),)
+        )
+    count = int(st.session_state.get("second-additional-attack-count", 0))
+    profiles = []
+    for index, (_, _, default_name) in enumerate(_profile_definitions("second", count)):
+        prefix = profile_prefix("second", index)
+        resolution = {
+            "Attack Roll": ResolutionType.ATTACK_ROLL,
+            "Saving Throw": ResolutionType.SAVING_THROW,
+            "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+        }.get(
+            st.session_state.get(
+                profile_widget_key(prefix, "resolution_type"), "Attack Roll"
+            ),
+            ResolutionType.ATTACK_ROLL,
+        )
+        features = frozenset(
+            feature
+            for feature in FEATURE_ORDER
+            if st.session_state.get(feature_widget_key(prefix, feature), False)
+        )
+        profiles.append(
+            AttackProfile(
+                st.session_state.get(profile_widget_key(prefix, "name"), default_name),
+                int(st.session_state.get(profile_widget_key(prefix, "attack_bonus"), 5))
+                if resolution is ResolutionType.ATTACK_ROLL
+                else None,
+                st.session_state.get(
+                    profile_widget_key(prefix, "damage_formula"), "1d8+3"
+                ),
+                int(
+                    st.session_state.get(
+                        profile_widget_key(prefix, "attacks_per_round"), 1
+                    )
+                ),
+                int(
+                    st.session_state.get(
+                        profile_widget_key(prefix, "affected_targets"), 1
+                    )
+                ),
+                AttackRollMode(
+                    str(
+                        st.session_state.get(
+                            profile_widget_key(prefix, "attack_roll_mode"), "Normal"
+                        )
+                    ).lower()
+                ),
+                st.session_state.get(profile_widget_key(prefix, "active_rounds"), ""),
+                resolution,
+                int(st.session_state.get(profile_widget_key(prefix, "save_dc"), 13))
+                if resolution is ResolutionType.SAVING_THROW
+                else None,
+                SuccessfulSaveDamage.HALF_DAMAGE
+                if st.session_state.get(
+                    profile_widget_key(prefix, "successful_save_damage"), "No damage"
+                )
+                == "Half damage"
+                else SuccessfulSaveDamage.NO_DAMAGE,
+                features,
+            )
+        )
+    return _build_config_from_profiles(
+        st.session_state.get("second-build-name", "Build B"), tuple(profiles)
+    )
+
+
+def _render_share_configuration_section(
+    *,
+    compare_enabled: bool,
+    scenario: ScenarioConfig,
+    seed: int,
+    first_build: BuildConfig,
+    second_build: BuildConfig,
+) -> None:
+    import streamlit as st
+
+    with _render_section_container():
+        st.subheader("Share Configuration")
+        if st.button("Generate Share Link"):
+            configuration = shared_configuration_from_configs(
+                compare_enabled=compare_enabled,
+                scenario=scenario,
+                seed=seed,
+                build_a=first_build,
+                build_b=second_build,
+            )
+            token = serialize_shared_configuration(configuration)
+            st.session_state[SHARE_URL_SESSION_KEY] = build_share_url(
+                getattr(st.context, "url", ""), token
+            )
+        share_url = getattr(st, "session_state", {}).get(SHARE_URL_SESSION_KEY)
+        if share_url:
+            st.code(share_url, language=None, wrap_lines=True, width="stretch")
+            st.link_button("Open Shared Configuration", share_url)
+            st.caption(f"Share link length: {len(share_url):,} characters.")
+            if len(share_url) > 8_000:
+                st.warning(
+                    "This configuration creates a long URL. Some messaging or "
+                    "link-shortening services may truncate it."
+                )
+
+
 def main() -> None:
     """Render the Streamlit simulation page."""
     import streamlit as st
 
     configure_page()
+    load_shared_configuration_from_query()
+    if getattr(st, "session_state", {}).pop(LOADED_SHARED_CONFIG_MESSAGE_KEY, False):
+        st.success("Shared configuration loaded.")
     st.title(APP_TITLE)
     st.write(
         "Compare two named DnD combat builds against the same target Armor "
@@ -1142,29 +1410,36 @@ def main() -> None:
             min_value=1,
             value=15,
             step=1,
-            key="scenario-target-ac",
+            key=SCENARIO_WIDGET_KEYS["target_armor_class"],
         )
         enemy_save_bonus = scenario_row[1].number_input(
-            "Enemy Save Bonus", value=3, step=1, key="scenario-enemy-save-bonus"
+            "Enemy Save Bonus",
+            value=3,
+            step=1,
+            key=SCENARIO_WIDGET_KEYS["enemy_save_bonus"],
         )
         rounds = scenario_row[2].number_input(
-            "Number of rounds", min_value=1, value=4, step=1, key="scenario-rounds"
+            "Number of rounds",
+            min_value=1,
+            value=4,
+            step=1,
+            key=SCENARIO_WIDGET_KEYS["rounds"],
         )
         simulations = scenario_row[3].number_input(
             "Number of simulations",
             min_value=1,
             value=10_000,
             step=1,
-            key="scenario-simulations",
+            key=SCENARIO_WIDGET_KEYS["simulations"],
         )
         seed = scenario_row[4].number_input(
-            "Random seed", value=20240721, step=1, key="scenario-seed"
+            "Random seed", value=20240721, step=1, key=SCENARIO_WIDGET_KEYS["seed"]
         )
 
         compare_enabled = st.toggle(
             "Compare with another build",
             value=False,
-            key="compare-builds-enabled",
+            key=COMPARE_WIDGET_KEY,
         )
 
     scenario = ScenarioConfig(
@@ -1181,6 +1456,14 @@ def main() -> None:
         with build_columns[1]:
             second_build = _build_inputs("second", "Build B")
 
+        _render_share_configuration_section(
+            compare_enabled=bool(compare_enabled),
+            scenario=scenario,
+            seed=int(seed),
+            first_build=first_build,
+            second_build=second_build,
+        )
+
         if st.button("Compare Builds"):
             inputs = ComparisonInputs(
                 first_build=first_build,
@@ -1196,6 +1479,15 @@ def main() -> None:
                 _render_comparison_results(comparison)
     else:
         first_build = _build_inputs("first", "Build A")
+
+        second_build = _default_second_build_from_state()
+        _render_share_configuration_section(
+            compare_enabled=bool(compare_enabled),
+            scenario=scenario,
+            seed=int(seed),
+            first_build=first_build,
+            second_build=second_build,
+        )
 
         if st.button("Run Simulation"):
             inputs = SingleBuildInputs(

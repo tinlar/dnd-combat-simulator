@@ -223,3 +223,13 @@ Apply formatting:
 ```bash
 ruff format .
 ```
+
+## Sharing Configurations
+
+1. Configure the shared Scenario inputs and Build A/Build B inputs you want to send.
+2. Click **Generate Share Link** in the **Share Configuration** section.
+3. Copy the displayed URL.
+4. Anyone who opens that URL receives the same simulator inputs, including hidden Build B values when comparison mode is disabled.
+5. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
+
+The link contains simulator configuration data only. It does not contain saved simulation results.
