@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import os
 from contextlib import nullcontext
 from dataclasses import dataclass
 from html import escape
+from json import JSONDecodeError
 from textwrap import dedent
-from urllib.error import URLError
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import (
@@ -116,19 +118,142 @@ DAMAGE_FORMULA_HELP = dedent(
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
 
 
-def shorten_share_url(url: str, *, timeout: float = 4.0) -> str:
-    """Return a TinyURL-shortened URL, or the original URL if shortening fails."""
-    if not url:
-        return url
-    request_url = f"{TINYURL_API_URL}?{urlencode({'url': url})}"
+@dataclass(frozen=True)
+class ShortenedUrlResult:
+    url: str
+    shortened: bool
+    error_message: str | None = None
+
+
+def get_tinyurl_api_token() -> str | None:
+    """Return the configured TinyURL API token without logging or displaying it."""
+    token = None
     try:
-        with urlopen(request_url, timeout=timeout) as response:
-            shortened = response.read(2048).decode("utf-8").strip()
-    except (OSError, TimeoutError, UnicodeDecodeError, URLError):
-        return url
-    if shortened.startswith("http://") or shortened.startswith("https://"):
-        return shortened
-    return url
+        import streamlit as st
+
+        token = st.secrets.get("TINYURL_API_TOKEN")
+    except Exception:  # noqa: BLE001 - Streamlit secrets may be unavailable in tests/CLI.
+        token = None
+    if token is None or not str(token).strip():
+        token = os.environ.get("TINYURL_API_TOKEN")
+    if token is None:
+        return None
+    stripped = str(token).strip()
+    return stripped or None
+
+
+def _tinyurl_http_error_message(status_code: int) -> str:
+    if status_code == 400:
+        return "TinyURL rejected the request."
+    if status_code in {401, 403}:
+        return "TinyURL API token or permissions problem."
+    if status_code == 422:
+        return "TinyURL validation problem."
+    if status_code == 429:
+        return "TinyURL rate limit reached."
+    if 500 <= status_code <= 599:
+        return "TinyURL service failure."
+    return "TinyURL shortening failed."
+
+
+def _validate_tinyurl_response(raw: object) -> str:
+    if not isinstance(raw, dict):
+        msg = "TinyURL returned an invalid response."
+        raise ValueError(msg)
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        msg = "TinyURL returned an invalid response."
+        raise ValueError(msg)
+    tiny_url = data.get("tiny_url")
+    if not isinstance(tiny_url, str):
+        msg = "TinyURL returned an invalid response."
+        raise ValueError(msg)
+    if not tiny_url.startswith("https://tinyurl.com/"):
+        msg = "TinyURL returned an invalid response."
+        raise ValueError(msg)
+    if ("/preview/" + "deprecated/") in tiny_url:
+        msg = "TinyURL returned an invalid response."
+        raise ValueError(msg)
+    return tiny_url
+
+
+def shorten_share_url_with_tinyurl(
+    url: str,
+    *,
+    api_token: str | None = None,
+    timeout: float = 4.0,
+) -> ShortenedUrlResult:
+    """Return a TinyURL-shortened URL result using TinyURL's authenticated API."""
+    if not url:
+        return ShortenedUrlResult(
+            url=url, shortened=False, error_message="A share URL is required."
+        )
+    if api_token is None or not api_token.strip():
+        return ShortenedUrlResult(
+            url=url,
+            shortened=False,
+            error_message="TinyURL is not configured.",
+        )
+    request = Request(
+        TINYURL_CREATE_API_URL,
+        data=json.dumps({"url": url, "domain": "tinyurl.com"}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_token.strip()}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            body = response.read(8192).decode("utf-8")
+        raw = json.loads(body)
+        return ShortenedUrlResult(url=_validate_tinyurl_response(raw), shortened=True)
+    except HTTPError as error:
+        return ShortenedUrlResult(
+            url=url,
+            shortened=False,
+            error_message=_tinyurl_http_error_message(error.code),
+        )
+    except TimeoutError:
+        return ShortenedUrlResult(
+            url=url, shortened=False, error_message="TinyURL request timed out."
+        )
+    except URLError:
+        return ShortenedUrlResult(
+            url=url, shortened=False, error_message="TinyURL network error."
+        )
+    except (OSError, UnicodeDecodeError, JSONDecodeError, ValueError):
+        return ShortenedUrlResult(
+            url=url,
+            shortened=False,
+            error_message="TinyURL returned an invalid response.",
+        )
+
+
+def resolve_share_url_to_copy(
+    long_url: str,
+    session_state: dict[str, object],
+    *,
+    api_token: str | None,
+) -> ShortenedUrlResult:
+    """Return the share URL to copy while reusing matching session TinyURLs."""
+    previous_long_url = session_state.get(GENERATED_LONG_SHARE_URL_SESSION_KEY)
+    previous_short_url = session_state.get(GENERATED_SHORT_SHARE_URL_SESSION_KEY)
+    if (
+        long_url == previous_long_url
+        and isinstance(previous_short_url, str)
+        and previous_short_url.startswith("https://tinyurl.com/")
+    ):
+        result = ShortenedUrlResult(url=previous_short_url, shortened=True)
+    else:
+        session_state[GENERATED_LONG_SHARE_URL_SESSION_KEY] = long_url
+        session_state.pop(GENERATED_SHORT_SHARE_URL_SESSION_KEY, None)
+        result = shorten_share_url_with_tinyurl(long_url, api_token=api_token)
+        if result.shortened:
+            session_state[GENERATED_SHORT_SHARE_URL_SESSION_KEY] = result.url
+    session_state[GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] = result.url
+    return result
 
 
 def _copy_share_url_to_clipboard(url: str) -> None:
@@ -176,8 +301,10 @@ SCENARIO_WIDGET_KEYS = {
 COMPARE_WIDGET_KEY = "compare-builds-enabled"
 LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
-SHARE_URL_SESSION_KEY = "_generated_share_url"
-TINYURL_API_URL = "https://tinyurl.com/api-create.php"
+GENERATED_LONG_SHARE_URL_SESSION_KEY = "_generated_long_share_url"
+GENERATED_SHORT_SHARE_URL_SESSION_KEY = "_generated_short_share_url"
+GENERATED_SHARE_URL_TO_COPY_SESSION_KEY = "_generated_share_url_to_copy"
+TINYURL_CREATE_API_URL = "https://api.tinyurl.com/create"
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1458,15 +1585,27 @@ def _render_share_configuration_button() -> None:
             )
             token = serialize_shared_configuration(configuration)
             long_url = build_share_url(getattr(st.context, "url", ""), token)
-            share_url = shorten_share_url(long_url)
-            st.session_state[SHARE_URL_SESSION_KEY] = share_url
-            _copy_share_url_to_clipboard(share_url)
-            if share_url == long_url:
-                st.caption(
-                    "Copied full share link. TinyURL shortening was unavailable."
+            shortening_result = resolve_share_url_to_copy(
+                long_url,
+                st.session_state,
+                api_token=get_tinyurl_api_token(),
+            )
+            url_to_copy = shortening_result.url
+            _copy_share_url_to_clipboard(url_to_copy)
+            if shortening_result.shortened:
+                st.success("Copied TinyURL share link.")
+            elif shortening_result.error_message == "TinyURL is not configured.":
+                st.info(
+                    "Copied the full share link because the TinyURL API "
+                    "is not configured."
                 )
             else:
-                st.caption("Copied shortened TinyURL share link.")
+                st.warning(
+                    "Copied the full share link because TinyURL shortening failed."
+                )
+                if shortening_result.error_message:
+                    st.caption(shortening_result.error_message)
+            st.link_button("Open Shared Configuration", url_to_copy)
 
 
 def main() -> None:
