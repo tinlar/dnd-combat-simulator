@@ -8,6 +8,7 @@ from dnd_combat_simulator.app import (
     run_simulation_from_inputs,
     validate_simulation_inputs,
 )
+from dnd_combat_simulator.combat import AttackRollMode
 
 
 def test_app_title() -> None:
@@ -65,6 +66,7 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
             rounds=1,
             attacks_per_round=2,
             simulations=1,
+            attack_roll_mode=AttackRollMode.DISADVANTAGE,
         )
     )
 
@@ -72,3 +74,4 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
     assert result.rounds_per_simulation == 1
     assert result.attacks_per_round == 2
     assert result.total_attacks_made == 2
+    assert result.attack_roll_mode is AttackRollMode.DISADVANTAGE

@@ -1,5 +1,6 @@
 import pytest
 
+from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
     SimulationResult,
     run_damage_simulations,
@@ -46,6 +47,7 @@ def test_run_damage_simulations_returns_summary_statistics() -> None:
         simulations_run=2,
         rounds_per_simulation=3,
         attacks_per_round=1,
+        attack_roll_mode=AttackRollMode.NORMAL,
         total_attacks_made=6,
         average_total_damage_per_simulation=9.5,
         average_damage_per_round=19 / 6,
@@ -153,6 +155,7 @@ def test_multiple_attacks_per_round_are_deterministic(
         simulations_run=1,
         rounds_per_simulation=1,
         attacks_per_round=attacks_per_round,
+        attack_roll_mode=AttackRollMode.NORMAL,
         total_attacks_made=attacks_per_round,
         average_total_damage_per_simulation=6 * attacks_per_round,
         average_damage_per_round=6 * attacks_per_round,
@@ -175,3 +178,32 @@ def test_invalid_damage_dice_errors_are_reused_from_attack_resolution() -> None:
             simulations=1,
             rng=PredictableRng([]),
         )
+
+
+def test_attack_roll_mode_applies_to_every_attack_in_simulation() -> None:
+    rng = PredictableRng([1, 12, 4, 18, 7, 5])
+
+    result = run_damage_simulations(
+        attack_bonus=3,
+        target_armor_class=15,
+        damage_dice="1d6",
+        damage_modifier=1,
+        rounds=1,
+        simulations=1,
+        attacks_per_round=2,
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        rng=rng,
+    )
+
+    assert result.attack_roll_mode is AttackRollMode.ADVANTAGE
+    assert result.total_attacks_made == 2
+    assert result.hit_rate == 1
+    assert result.average_total_damage_per_simulation == 11
+    assert rng.calls == [
+        (1, 20),
+        (1, 20),
+        (1, 6),
+        (1, 20),
+        (1, 20),
+        (1, 6),
+    ]
