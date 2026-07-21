@@ -870,7 +870,7 @@ def test_repository_does_not_reference_removed_url_shorteners() -> None:
                 assert value not in text
 
 
-def test_share_toolbar_displays_exact_first_party_url_without_external_call(
+def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     monkeypatch,
 ) -> None:
     import sys
@@ -881,27 +881,13 @@ def test_share_toolbar_displays_exact_first_party_url_without_external_call(
 
     calls: list[tuple[str, object]] = []
 
-    class Column:
-        def __enter__(self):
-            calls.append(("enter_column", self.name))
-            return self
+    def component(name, **kwargs):
+        calls.append(("component_register", {"name": name, **kwargs}))
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+        def mount(**mount_kwargs):
+            calls.append(("component_mount", mount_kwargs))
 
-        def __init__(self, name):
-            self.name = name
-
-    def columns(spec, **kwargs):
-        calls.append(("columns", {"spec": spec, **kwargs}))
-        return [Column("left"), Column("right")]
-
-    def button(label, **kwargs):
-        calls.append(("button", {"label": label, **kwargs}))
-        return True
-
-    def code(body, **kwargs):
-        calls.append(("code", {"body": body, **kwargs}))
+        return mount
 
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 18,
@@ -932,39 +918,26 @@ def test_share_toolbar_displays_exact_first_party_url_without_external_call(
     fake_streamlit = SimpleNamespace(
         session_state=state,
         context=SimpleNamespace(url="https://first-party.example/sim?old=1"),
-        columns=columns,
-        button=button,
-        code=code,
-        markdown=lambda *args, **kwargs: calls.append(("markdown", args[0])),
-        toast=lambda *args, **kwargs: calls.append(("toast", args[0])),
-        warning=lambda *args, **kwargs: calls.append(("warning", args[0])),
-        success=lambda *args, **kwargs: calls.append(("success", args[0])),
-        link_button=lambda *args, **kwargs: calls.append(("link_button", args[0])),
-        caption=lambda *args, **kwargs: calls.append(("caption", args[0])),
+        components=SimpleNamespace(v2=SimpleNamespace(component=component)),
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
 
     app._render_share_configuration_button()
 
-    code_calls = [call[1] for call in calls if call[0] == "code"]
-    assert len(code_calls) == 1
-    share_url = code_calls[0]["body"]
+    registrations = [call[1] for call in calls if call[0] == "component_register"]
+    assert len(registrations) == 1
+    assert registrations[0]["name"] == "share_toolbar"
+    assert registrations[0]["html"] == app.SHARE_TOOLBAR_HTML
+    assert registrations[0]["css"] == app.SHARE_TOOLBAR_CSS
+    assert registrations[0]["js"] == app.SHARE_TOOLBAR_JS
+
+    mounts = [call[1] for call in calls if call[0] == "component_mount"]
+    assert len(mounts) == 1
+    assert list(mounts[0]) == ["data"]
+    share_url = mounts[0]["data"]["url"]
     assert share_url.startswith("https://first-party.example/sim?config=")
-    assert code_calls[0] == {"body": share_url, "language": None, "wrap_lines": False}
-    assert state[app.GENERATED_SHARE_URL_SESSION_KEY] == share_url
-    assert ("columns", {"spec": [0.06, 0.94], "vertical_alignment": "center"}) in calls
-    button_index = next(i for i, call in enumerate(calls) if call[0] == "button")
-    assert calls[button_index - 1] == ("enter_column", "left")
-    assert calls[button_index][1] == {
-        "label": "⤴",
-        "help": "Create share link",
-        "key": app.SHARE_BUTTON_KEY,
-    }
-    assert all(call[1].get("label") != "📤" for call in calls if call[0] == "button")
-    assert ("toast", "Share link ready") in calls
-    assert not any(
-        call[0] in {"warning", "success", "caption", "link_button"} for call in calls
-    )
+    assert "_generated_share_url" not in state
 
     token = share_url.split("config=", 1)[1]
     config = deserialize_shared_configuration(token)
@@ -976,31 +949,70 @@ def test_share_toolbar_displays_exact_first_party_url_without_external_call(
     assert config.build_b.attack_profiles[0].affected_targets == 3
 
 
-def test_share_source_has_no_auto_copy_or_obsolete_controls() -> None:
+def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
     from pathlib import Path
+
+    from dnd_combat_simulator import app
 
     source = Path("src/dnd_combat_simulator/app.py").read_text()
 
-    assert "def _copy_share_url_to_clipboard" not in source
+    assert "st.components.v2.component" in source
+    assert "st.components.v1.html" not in source
     assert "components.html" not in source
-    assert "navigator.clipboard.writeText" not in source
-    assert "document.execCommand" not in source
-    assert "copied" not in source.lower()
+    assert "iframe" not in source.lower()
+    share_source = source[
+        source.index("def _render_share_configuration_button") : source.index(
+            "\ndef main"
+        )
+    ]
+    assert "st.button(" not in share_source
+    assert "st.code" not in source
+    assert "Share link ready" not in source
+    assert "GENERATED_SHARE_URL_SESSION_KEY" not in source
     assert "Open Shared Configuration" not in source
-    assert "urlopen" not in source
-    assert "Request(" not in source
+    assert "setTriggerValue" not in app.SHARE_TOOLBAR_JS
+    assert "setStateValue" not in app.SHARE_TOOLBAR_JS
 
 
-def test_share_button_css_is_scoped_and_theme_compatible() -> None:
+def test_share_component_copies_inside_button_click_with_fallback() -> None:
     from dnd_combat_simulator import app
 
-    css = app.SHARE_BUTTON_CSS
+    js = app.SHARE_TOOLBAR_JS
+    onclick_index = js.index("button.onclick = async () =>")
+    write_index = js.index("navigator.clipboard.writeText(data.url)")
+    fallback_index = js.index("fallbackInput.value = data.url")
+    exec_index = js.index("document.execCommand('copy')")
+    assert onclick_index < write_index < fallback_index < exec_index
+    assert "showTemporaryStatus('Link copied')" in js
+    assert "showTemporaryStatus('Copy blocked. Link selected.')" in js
+    assert "setTriggerValue" not in js[:write_index]
+    assert "setStateValue" not in js[:write_index]
 
-    assert ".st-key-share-configuration-button button" in css
-    assert "42px" in css
-    assert "border-radius: 999px" in css
-    assert "currentColor" in css
-    assert "var(--text-color" in css
-    assert "var(--primary-color" in css
-    assert "black" not in css.lower()
-    assert "white" not in css.lower()
+
+def test_share_component_markup_and_css_are_accessible_and_theme_compatible() -> None:
+    from dnd_combat_simulator import app
+
+    html = app.SHARE_TOOLBAR_HTML
+    css = app.SHARE_TOOLBAR_CSS
+    combined = f"{html}\n{css}"
+
+    assert 'class="share-button"' in html
+    assert 'title="Copy share link"' in html
+    assert 'aria-label="Copy share link"' in html
+    assert "<svg" in html
+    assert 'stroke="currentColor"' in html
+    assert 'class="share-status"' in html
+    assert 'class="share-fallback" type="text" readonly hidden' in html
+    assert "width: 42px" in css
+    assert "height: 42px" in css
+    assert "border-radius: 50%" in css
+    assert "height: 48px" in css
+    assert "--st-text-color" in css
+    assert "--st-background-color" in css
+    assert "--st-secondary-background-color" in css
+    assert "--st-border-color" in css
+    assert "--st-primary-color" in css
+    assert "--st-font" in css
+    assert "focus-visible" in css
+    assert "black" not in combined.lower()
+    assert "white" not in combined.lower()
