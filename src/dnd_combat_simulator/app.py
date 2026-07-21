@@ -18,6 +18,7 @@ from dnd_combat_simulator.simulation import (
     SimulationResult,
     compare_builds,
     run_damage_simulations,
+    simulate_build,
 )
 
 PAGE_WIDTH_CSS = """
@@ -73,6 +74,15 @@ class ComparisonInputs:
 
     first_build: BuildConfig
     second_build: BuildConfig
+    scenario: ScenarioConfig
+    seed: int
+
+
+@dataclass(frozen=True)
+class SingleBuildInputs:
+    """Validated user inputs for a single named build simulation."""
+
+    build: BuildConfig
     scenario: ScenarioConfig
     seed: int
 
@@ -134,6 +144,11 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
         attacks_per_round=inputs.attacks_per_round,
         attack_roll_mode=inputs.attack_roll_mode,
     )
+
+
+def run_single_build_from_inputs(inputs: SingleBuildInputs) -> SimulationResult:
+    """Validate inputs and run the shared single-build simulation engine."""
+    return simulate_build(inputs.build, inputs.scenario, inputs.seed)
 
 
 def run_comparison_from_inputs(inputs: ComparisonInputs) -> BuildComparisonResult:
@@ -337,6 +352,95 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             )
         rows.append(row)
     return rows
+
+
+def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
+    """Build aggregate rows for a single-build result table."""
+    return [
+        {
+            "Metric": "Average total damage per round",
+            "Value": format_damage(result.average_damage_per_round),
+        },
+        {
+            "Metric": "Average total damage across the combat",
+            "Value": format_damage(result.average_total_damage_per_simulation),
+        },
+        {
+            "Metric": "Average damage per target per round",
+            "Value": format_damage(result.average_damage_per_target_per_round),
+        },
+        {
+            "Metric": "Round 1 burst damage",
+            "Value": format_damage(result.first_round_burst_damage),
+        },
+        {
+            "Metric": "Average damage after round 1",
+            "Value": format_damage(result.average_damage_after_round_1),
+        },
+        {
+            "Metric": "Highest-damage round",
+            "Value": (
+                f"{result.highest_damage_round} "
+                f"({format_damage(result.highest_round_average_damage)})"
+            ),
+        },
+        {
+            "Metric": "Minimum total damage",
+            "Value": format_damage(result.minimum_total_damage_in_simulation),
+        },
+        {
+            "Metric": "Maximum total damage",
+            "Value": format_damage(result.maximum_total_damage_in_simulation),
+        },
+        {"Metric": "Total attack uses", "Value": f"{result.total_attacks_made:,}"},
+        {
+            "Metric": "Total target resolutions",
+            "Value": f"{result.total_target_resolutions:,}",
+        },
+    ]
+
+
+def _single_round_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
+    """Build per-round rows for a single-build result."""
+    return [
+        {
+            "Round": str(round_result.round_number),
+            "Average damage": format_damage(round_result.average_damage),
+            "Average attack uses": format_damage(round_result.average_attacks),
+            "Hit percentage": format_rate(round_result.hit_rate),
+            "Critical hit percentage": format_rate(round_result.critical_hit_rate),
+            "Failed save percentage": format_rate(round_result.failed_save_rate),
+            "Successful save percentage": format_rate(
+                round_result.successful_save_rate
+            ),
+        }
+        for round_result in result.round_results
+    ]
+
+
+def _render_single_build_results(build: BuildConfig, result: SimulationResult) -> None:
+    """Render complete results for one build without comparison labels or deltas."""
+    import streamlit as st
+
+    heading = build.name.strip() or "Simulation"
+    st.subheader(f"{heading} results")
+    metric_rows = st.columns(3)
+    metric_rows[0].metric(
+        "Average total damage per round", format_damage(result.average_damage_per_round)
+    )
+    metric_rows[1].metric(
+        "Average total damage across the combat",
+        format_damage(result.average_total_damage_per_simulation),
+    )
+    metric_rows[2].metric(
+        "Average damage per target per round",
+        format_damage(result.average_damage_per_target_per_round),
+    )
+    st.table(_single_result_rows(result))
+    st.markdown("##### Per-round breakdown")
+    st.table(_single_round_breakdown_rows(result))
+    st.markdown("##### Per-attack-profile breakdown")
+    st.table(_profile_breakdown_rows(result))
 
 
 def _render_comparison_results(comparison: BuildComparisonResult) -> None:
@@ -583,30 +687,56 @@ def main() -> None:
         "Random seed", value=20240721, step=1, key="scenario-seed"
     )
 
-    build_columns = st.columns(2)
-    with build_columns[0]:
-        first_build = _build_inputs("first", "Build A")
-    with build_columns[1]:
-        second_build = _build_inputs("second", "Build B")
+    compare_enabled = st.toggle(
+        "Compare with another build",
+        value=False,
+        key="compare-builds-enabled",
+    )
 
-    if st.button("Compare Builds"):
-        inputs = ComparisonInputs(
-            first_build=first_build,
-            second_build=second_build,
-            scenario=ScenarioConfig(
-                target_armor_class=int(target_armor_class),
-                enemy_save_bonus=int(enemy_save_bonus),
-                rounds=int(rounds),
-                simulations=int(simulations),
-            ),
-            seed=int(seed),
-        )
-        try:
-            comparison = run_comparison_from_inputs(inputs)
-        except ValueError as error:
-            st.error(str(error))
-        else:
-            _render_comparison_results(comparison)
+    scenario = ScenarioConfig(
+        target_armor_class=int(target_armor_class),
+        enemy_save_bonus=int(enemy_save_bonus),
+        rounds=int(rounds),
+        simulations=int(simulations),
+    )
+
+    if compare_enabled:
+        build_columns = st.columns(2)
+        with build_columns[0]:
+            first_build = _build_inputs("first", "Build A")
+        with build_columns[1]:
+            second_build = _build_inputs("second", "Build B")
+
+        if st.button("Compare Builds"):
+            inputs = ComparisonInputs(
+                first_build=first_build,
+                second_build=second_build,
+                scenario=scenario,
+                seed=int(seed),
+            )
+            try:
+                comparison = run_comparison_from_inputs(inputs)
+            except ValueError as error:
+                st.error(str(error))
+            else:
+                _render_comparison_results(comparison)
+    else:
+        _, build_column, _ = st.columns([1, 6, 1])
+        with build_column:
+            first_build = _build_inputs("first", "Build A")
+
+        if st.button("Run Simulation"):
+            inputs = SingleBuildInputs(
+                build=first_build,
+                scenario=scenario,
+                seed=int(seed),
+            )
+            try:
+                result = run_single_build_from_inputs(inputs)
+            except ValueError as error:
+                st.error(str(error))
+            else:
+                _render_single_build_results(first_build, result)
 
 
 if __name__ == "__main__":

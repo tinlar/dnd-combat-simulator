@@ -912,3 +912,33 @@ def test_mixed_profiles_exclude_automatic_damage_from_rate_denominators() -> Non
     assert result.failed_save_rate == 1
     assert result.successful_save_rate == 0
     assert result.automatic_damage_applications == 1
+
+
+def test_simulate_build_matches_same_build_inside_compare_builds() -> None:
+    from dnd_combat_simulator.simulation import simulate_build
+
+    build = BuildConfig("Solo", 7, "1d8", 4, 2)
+    other = BuildConfig("Other", 5, "1d6", 2, 1)
+    scenario = ScenarioConfig(target_armor_class=15, rounds=3, simulations=20)
+
+    result = simulate_build(build, scenario, seed=42)
+    comparison = compare_builds(
+        first_build=build,
+        second_build=other,
+        scenario=scenario,
+        seed=42,
+    )
+
+    assert result == comparison.first_result
+
+
+def test_simulate_build_does_not_validate_unrelated_second_build() -> None:
+    from dnd_combat_simulator.simulation import simulate_build
+
+    result = simulate_build(
+        BuildConfig("Solo", 20, "1d4", 0, 1),
+        ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert result.simulations_run == 1

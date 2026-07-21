@@ -219,3 +219,159 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
             {"body": PAGE_WIDTH_CSS, "unsafe_allow_html": True},
         ),
     ]
+
+
+def test_single_build_rows_include_required_complete_results() -> None:
+    from dnd_combat_simulator.app import (
+        SingleBuildInputs,
+        _profile_breakdown_rows,
+        _single_result_rows,
+        _single_round_breakdown_rows,
+        run_single_build_from_inputs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    result = run_single_build_from_inputs(
+        SingleBuildInputs(
+            build=BuildConfig("Custom", 20, "1d4", 0, 1),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=2, simulations=2),
+            seed=8,
+        )
+    )
+
+    metric_names = {row["Metric"] for row in _single_result_rows(result)}
+    assert "Average total damage per round" in metric_names
+    assert "Average total damage across the combat" in metric_names
+    assert "Average damage per target per round" in metric_names
+    assert "Round 1 burst damage" in metric_names
+    assert "Average damage after round 1" in metric_names
+    assert "Highest-damage round" in metric_names
+    assert "Minimum total damage" in metric_names
+    assert "Maximum total damage" in metric_names
+    assert "Total attack uses" in metric_names
+    assert "Total target resolutions" in metric_names
+    assert len(_single_round_breakdown_rows(result)) == 2
+    assert _profile_breakdown_rows(result)[0]["Attack profile"] == "Attack"
+
+
+def test_comparison_toggle_default_off_and_single_mode_uses_only_first_build(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import main
+
+    calls: list[tuple[str, object]] = []
+
+    class Column:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def number_input(self, label, **kwargs):
+            calls.append(("number_input", kwargs.get("key")))
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            calls.append(("text_input", kwargs.get("key")))
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            calls.append(("selectbox", kwargs.get("key")))
+            return kwargs["options"][kwargs.get("index", 0)]
+
+    col = Column()
+
+    def columns(spec):
+        count = spec if isinstance(spec, int) else len(spec)
+        return [col for _ in range(count)]
+
+    fake_streamlit = SimpleNamespace(
+        set_page_config=lambda **kwargs: None,
+        markdown=lambda *args, **kwargs: calls.append(("markdown", args[0])),
+        title=lambda *args, **kwargs: None,
+        write=lambda *args, **kwargs: None,
+        subheader=lambda *args, **kwargs: None,
+        columns=columns,
+        number_input=col.number_input,
+        text_input=col.text_input,
+        selectbox=col.selectbox,
+        toggle=lambda *args, **kwargs: (
+            calls.append(("toggle", kwargs)) or kwargs["value"]
+        ),
+        button=lambda *args, **kwargs: False,
+        error=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    main()
+
+    assert ("toggle", {"value": False, "key": "compare-builds-enabled"}) in calls
+    keys = [
+        value
+        for kind, value in calls
+        if kind in {"text_input", "number_input", "selectbox"}
+    ]
+    assert "first-build-name" in keys
+    assert "first-primary-active-rounds" in keys
+    assert "second-build-name" not in keys
+    assert "second-primary-active-rounds" not in keys
+
+
+def test_comparison_mode_still_renders_second_build_with_stable_keys(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import main
+
+    keys: list[str | None] = []
+
+    class Column:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def number_input(self, label, **kwargs):
+            keys.append(kwargs.get("key"))
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            keys.append(kwargs.get("key"))
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            keys.append(kwargs.get("key"))
+            return kwargs["options"][kwargs.get("index", 0)]
+
+    col = Column()
+    fake_streamlit = SimpleNamespace(
+        set_page_config=lambda **kwargs: None,
+        markdown=lambda *args, **kwargs: None,
+        title=lambda *args, **kwargs: None,
+        write=lambda *args, **kwargs: None,
+        subheader=lambda *args, **kwargs: None,
+        columns=lambda spec: [
+            col for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+        number_input=col.number_input,
+        text_input=col.text_input,
+        selectbox=col.selectbox,
+        toggle=lambda *args, **kwargs: True,
+        button=lambda *args, **kwargs: False,
+        error=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    main()
+
+    assert "first-build-name" in keys
+    assert "second-build-name" in keys
+    assert "first-primary-resolution-type" in keys
+    assert "second-primary-resolution-type" in keys
