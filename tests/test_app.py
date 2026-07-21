@@ -75,3 +75,30 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
     assert result.attacks_per_round == 2
     assert result.total_attacks_made == 2
     assert result.attack_roll_mode is AttackRollMode.DISADVANTAGE
+
+
+def test_result_rows_show_side_by_side_comparison() -> None:
+    from dnd_combat_simulator.app import (
+        ComparisonInputs,
+        _result_rows,
+        run_comparison_from_inputs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    comparison = run_comparison_from_inputs(
+        ComparisonInputs(
+            first_build=BuildConfig("Build A", 20, "1d4", 0, 1),
+            second_build=BuildConfig("Build B", 20, "1d4", 1, 1),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
+            seed=7,
+        )
+    )
+
+    rows = _result_rows(comparison)
+
+    assert rows[0]["Metric"] == "Average damage per round"
+    assert rows[0]["Build A"] == "1.50"
+    assert rows[0]["Build B"] == "2.50"
+    assert rows[0]["Difference"] == "-1.00"
+    assert rows[2]["Metric"] == "Hit percentage"
+    assert rows[2]["Difference"] == "+0.00%"

@@ -39,6 +39,18 @@ Simulation results summarize aggregate outcomes without retaining every individu
 
 Random number generation can be injected so simulations are deterministic in tests. Rounds, attacks per round, and simulation counts must all be at least 1; lower values are rejected with clear errors.
 
+## Build comparisons
+
+The simulator can compare two named builds side by side while running both builds against the same shared scenario inputs:
+
+- Target Armor Class
+- Number of rounds
+- Number of simulations
+
+Each compared build has its own build name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. The comparison output shows each build's average damage per round, average total damage, hit percentage, and critical hit percentage side by side, plus first-build-minus-second-build differences for those metrics. It also clearly identifies which build has the higher average damage per round, or reports a tie.
+
+Build comparisons are implemented in Streamlit-independent simulation code. For repeatable and fair comparisons, the comparison runner creates separate random-number-generator instances for the two builds and initializes both with the same seed.
+
 ## Dice notation
 
 The dice foundation supports simple notation in the form `XdY`, where `X` is the number of dice to roll and `Y` is the number of sides on each die. An optional flat modifier may be added with `+N` or `-N`.
@@ -80,7 +92,7 @@ pip install -e ".[dev]"
 streamlit run src/dnd_combat_simulator/app.py
 ```
 
-The app opens a simple browser interface for configuring and running damage simulations. Use the input controls for attack bonus, target Armor Class, damage dice, damage modifier, attack roll mode, number of rounds, attacks per round, and number of simulations, then select **Run Simulation** to view aggregate damage, hit-rate, critical-hit-rate, and total-attack results. Total attacks equal number of simulations × number of rounds × attacks per round, and average damage per round includes every attack made during each round.
+The app opens a browser interface for comparing two named builds. Configure the shared target Armor Class, number of rounds, number of simulations, and random seed once, then enter each build's name, attack bonus, damage dice, damage modifier, attacks per round, and attack roll mode. Select **Compare Builds** to view side-by-side aggregate damage, hit-rate, and critical-hit-rate results with differences and the higher-damage build called out.
 
 ## Run tests
 

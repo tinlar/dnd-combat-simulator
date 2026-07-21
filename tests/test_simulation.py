@@ -2,7 +2,11 @@ import pytest
 
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
+    BuildConfig,
+    ComparisonDifference,
+    ScenarioConfig,
     SimulationResult,
+    compare_builds,
     run_damage_simulations,
 )
 
@@ -207,3 +211,55 @@ def test_attack_roll_mode_applies_to_every_attack_in_simulation() -> None:
         (1, 20),
         (1, 6),
     ]
+
+
+def test_compare_builds_uses_same_seed_with_separate_rng_instances() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            name="Accurate",
+            attack_bonus=20,
+            damage_dice="1d4",
+            damage_modifier=0,
+            attacks_per_round=1,
+        ),
+        second_build=BuildConfig(
+            name="Heavy",
+            attack_bonus=20,
+            damage_dice="1d4",
+            damage_modifier=0,
+            attacks_per_round=1,
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=3, simulations=2),
+        seed=1234,
+    )
+
+    assert comparison.first_result == comparison.second_result
+    assert comparison.difference == ComparisonDifference(0, 0, 0, 0)
+    assert comparison.higher_average_damage_build_name is None
+
+
+def test_compare_builds_reports_differences_and_higher_damage_build() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            name="Rapier",
+            attack_bonus=5,
+            damage_dice="1d8",
+            damage_modifier=4,
+            attacks_per_round=1,
+        ),
+        second_build=BuildConfig(
+            name="Greatsword",
+            attack_bonus=5,
+            damage_dice="1d8",
+            damage_modifier=6,
+            attacks_per_round=1,
+        ),
+        scenario=ScenarioConfig(target_armor_class=14, rounds=2, simulations=5),
+        seed=99,
+    )
+
+    assert comparison.higher_average_damage_build_name == "Greatsword"
+    assert comparison.difference.average_damage_per_round == pytest.approx(-1.2)
+    assert comparison.difference.average_total_damage == pytest.approx(-2.4)
+    assert comparison.difference.hit_rate == 0
+    assert comparison.difference.critical_hit_rate == 0
