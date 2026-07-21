@@ -1,6 +1,10 @@
 import pytest
 
-from dnd_combat_simulator.combat import AttackResult, resolve_weapon_attack
+from dnd_combat_simulator.combat import (
+    AttackResult,
+    AttackRollMode,
+    resolve_weapon_attack,
+)
 
 
 class PredictableRng:
@@ -23,7 +27,9 @@ def test_natural_1_automatically_misses_even_when_total_meets_ac() -> None:
         damage_modifier=4,
         rng=rng,
     ) == AttackResult(
+        attack_roll_mode=AttackRollMode.NORMAL,
         natural_d20_roll=1,
+        d20_rolls=(1,),
         modified_attack_total=100,
         hit=False,
         critical_hit=False,
@@ -42,7 +48,9 @@ def test_natural_20_automatically_hits_and_is_critical() -> None:
         damage_modifier=2,
         rng=rng,
     ) == AttackResult(
+        attack_roll_mode=AttackRollMode.NORMAL,
         natural_d20_roll=20,
+        d20_rolls=(20,),
         modified_attack_total=-79,
         hit=True,
         critical_hit=True,
@@ -61,7 +69,9 @@ def test_normal_hit_rolls_damage_once_and_adds_modifier() -> None:
         damage_modifier=3,
         rng=rng,
     ) == AttackResult(
+        attack_roll_mode=AttackRollMode.NORMAL,
         natural_d20_roll=14,
+        d20_rolls=(14,),
         modified_attack_total=18,
         hit=True,
         critical_hit=False,
@@ -98,7 +108,9 @@ def test_miss_deals_zero_damage_and_does_not_roll_damage() -> None:
     )
 
     assert result == AttackResult(
+        attack_roll_mode=AttackRollMode.NORMAL,
         natural_d20_roll=7,
+        d20_rolls=(7,),
         modified_attack_total=9,
         hit=False,
         critical_hit=False,
@@ -147,3 +159,89 @@ def test_damage_dice_modifiers_must_be_passed_separately() -> None:
             damage_modifier=0,
             rng=PredictableRng([15]),
         )
+
+
+def test_advantage_uses_higher_selected_die_for_hit() -> None:
+    rng = PredictableRng([4, 16, 5])
+
+    result = resolve_weapon_attack(
+        attack_bonus=2,
+        target_armor_class=18,
+        damage_dice="1d8",
+        damage_modifier=1,
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        rng=rng,
+    )
+
+    assert result == AttackResult(
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        natural_d20_roll=16,
+        d20_rolls=(4, 16),
+        modified_attack_total=18,
+        hit=True,
+        critical_hit=False,
+        damage_dealt=6,
+    )
+    assert rng.calls == [(1, 20), (1, 20), (1, 8)]
+
+
+def test_disadvantage_uses_lower_selected_die_for_miss() -> None:
+    rng = PredictableRng([17, 6])
+
+    result = resolve_weapon_attack(
+        attack_bonus=8,
+        target_armor_class=15,
+        damage_dice="1d8",
+        damage_modifier=1,
+        attack_roll_mode=AttackRollMode.DISADVANTAGE,
+        rng=rng,
+    )
+
+    assert result == AttackResult(
+        attack_roll_mode=AttackRollMode.DISADVANTAGE,
+        natural_d20_roll=6,
+        d20_rolls=(17, 6),
+        modified_attack_total=14,
+        hit=False,
+        critical_hit=False,
+        damage_dealt=0,
+    )
+    assert rng.calls == [(1, 20), (1, 20)]
+
+
+def test_advantage_selected_natural_20_is_critical() -> None:
+    rng = PredictableRng([1, 20, 2, 3])
+
+    result = resolve_weapon_attack(
+        attack_bonus=-99,
+        target_armor_class=30,
+        damage_dice="1d6",
+        damage_modifier=1,
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        rng=rng,
+    )
+
+    assert result.natural_d20_roll == 20
+    assert result.hit is True
+    assert result.critical_hit is True
+    assert result.damage_dealt == 6
+    assert rng.calls == [(1, 20), (1, 20), (1, 6), (1, 6)]
+
+
+def test_disadvantage_selected_natural_1_automatically_misses() -> None:
+    rng = PredictableRng([20, 1])
+
+    result = resolve_weapon_attack(
+        attack_bonus=99,
+        target_armor_class=10,
+        damage_dice="1d8",
+        damage_modifier=4,
+        attack_roll_mode=AttackRollMode.DISADVANTAGE,
+        rng=rng,
+    )
+
+    assert result.natural_d20_roll == 1
+    assert result.hit is False
+    assert result.critical_hit is False
+    assert result.damage_dealt == 0
+    assert rng.calls == [(1, 20), (1, 20)]

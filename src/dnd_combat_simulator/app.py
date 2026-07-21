@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import streamlit as st
 
 from dnd_combat_simulator import APP_TITLE
+from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import SimulationResult, run_damage_simulations
 
 
@@ -21,6 +22,7 @@ class SimulationInputs:
     rounds: int
     attacks_per_round: int
     simulations: int
+    attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
 
 
 def validate_simulation_inputs(inputs: SimulationInputs) -> None:
@@ -67,6 +69,7 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
         rounds=inputs.rounds,
         simulations=inputs.simulations,
         attacks_per_round=inputs.attacks_per_round,
+        attack_roll_mode=inputs.attack_roll_mode,
     )
 
 
@@ -98,6 +101,8 @@ def _render_results(result: SimulationResult) -> None:
     )
     second_row[2].metric("Total attacks simulated", f"{result.total_attacks_made:,}")
 
+    st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
+
 
 def main() -> None:
     """Render the Streamlit simulation page."""
@@ -120,13 +125,19 @@ def main() -> None:
         damage_modifier = second_row[1].number_input("Damage modifier", value=3, step=1)
 
         third_row = st.columns(3)
-        rounds = third_row[0].number_input(
+        attack_roll_mode_label = third_row[0].selectbox(
+            "Attack roll mode",
+            options=[mode.value.title() for mode in AttackRollMode],
+            index=0,
+        )
+        rounds = third_row[1].number_input(
             "Number of rounds", min_value=1, value=5, step=1
         )
-        attacks_per_round = third_row[1].number_input(
+        attacks_per_round = third_row[2].number_input(
             "Attacks per round", min_value=1, value=1, step=1
         )
-        simulations = third_row[2].number_input(
+        fourth_row = st.columns(1)
+        simulations = fourth_row[0].number_input(
             "Number of simulations", min_value=1, value=10_000, step=1
         )
 
@@ -141,6 +152,7 @@ def main() -> None:
             rounds=int(rounds),
             attacks_per_round=int(attacks_per_round),
             simulations=int(simulations),
+            attack_roll_mode=AttackRollMode(attack_roll_mode_label.lower()),
         )
         try:
             result = run_simulation_from_inputs(inputs)

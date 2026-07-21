@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from random import Random
 
-from dnd_combat_simulator.combat import resolve_weapon_attack
+from dnd_combat_simulator.combat import AttackRollMode, resolve_weapon_attack
 from dnd_combat_simulator.dice import RandomNumberGenerator
 
 
@@ -16,6 +16,7 @@ class SimulationResult:
     simulations_run: int
     rounds_per_simulation: int
     attacks_per_round: int
+    attack_roll_mode: AttackRollMode
     total_attacks_made: int
     average_total_damage_per_simulation: float
     average_damage_per_round: float
@@ -34,6 +35,7 @@ def run_damage_simulations(
     rounds: int,
     simulations: int,
     attacks_per_round: int = 1,
+    attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     rng: RandomNumberGenerator | None = None,
 ) -> SimulationResult:
     """Run repeated damage simulations with configurable attacks per round.
@@ -46,6 +48,8 @@ def run_damage_simulations(
         rounds: Number of rounds in each simulation.
         simulations: Number of simulations to run.
         attacks_per_round: Number of separate attacks to resolve each round.
+        attack_roll_mode: Whether every attack rolls normally, with advantage,
+            or with disadvantage.
         rng: Optional random number generator for deterministic tests.
 
     Returns:
@@ -84,6 +88,7 @@ def run_damage_simulations(
                     target_armor_class=target_armor_class,
                     damage_dice=damage_dice,
                     damage_modifier=damage_modifier,
+                    attack_roll_mode=attack_roll_mode,
                     rng=random_number_generator,
                 )
                 simulation_damage += attack.damage_dealt
@@ -106,6 +111,7 @@ def run_damage_simulations(
         simulations_run=simulations,
         rounds_per_simulation=rounds,
         attacks_per_round=attacks_per_round,
+        attack_roll_mode=attack_roll_mode,
         total_attacks_made=total_attacks,
         average_total_damage_per_simulation=total_damage_all_simulations / simulations,
         average_damage_per_round=total_damage_all_simulations / total_rounds,
