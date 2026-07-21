@@ -969,3 +969,116 @@ def test_saving_throw_shared_damage_applies_features_once_for_multiple_targets()
 
     assert result.average_total_damage == 6
     assert rng.calls == [(1, 6), (1, 6), (1, 20), (1, 20)]
+
+
+def test_average_damage_per_use_for_successful_attack_and_misses() -> None:
+    rng = PredictableRng([15, 4, 1])
+
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=2,
+        simulations=1,
+        rng=rng,
+    )
+
+    profile = result.attack_profile_results[0]
+    assert profile.total_attacks_made == 2
+    assert profile.total_profile_uses == 2
+    assert profile.total_target_resolutions == 2
+    assert profile.average_damage_per_use == pytest.approx(2)
+
+
+def test_average_damage_per_use_for_saving_throw_with_half_damage() -> None:
+    rng = PredictableRng([1, 4, 20, 4])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=2,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Save",
+                None,
+                "1d4",
+                1,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+                successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+            ),
+        ),
+    )
+
+    profile = result.attack_profile_results[0]
+    assert profile.total_profile_uses == 2
+    assert profile.total_target_resolutions == 2
+    assert profile.average_damage_per_use == pytest.approx(3)
+
+
+def test_average_damage_per_use_for_automatic_multiple_targets_and_attacks() -> None:
+    rng = PredictableRng([4, 4, 4, 4])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Aura",
+                None,
+                "1d4",
+                2,
+                affected_targets=2,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+    )
+
+    profile = result.attack_profile_results[0]
+    assert profile.total_profile_uses == 2
+    assert profile.total_target_resolutions == 4
+    assert profile.average_damage_per_use == pytest.approx(8)
+
+
+def test_average_damage_per_use_with_restricted_and_no_active_rounds() -> None:
+    rng = PredictableRng([4])
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=2,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Round two only",
+                None,
+                "1d4",
+                1,
+                active_rounds="2",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+            AttackProfile(
+                "Never",
+                None,
+                "1d4",
+                1,
+                active_rounds="3",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+    )
+
+    active, never = result.attack_profile_results
+    assert active.total_profile_uses == 1
+    assert active.average_damage_per_use == pytest.approx(4)
+    assert never.total_profile_uses == 0
+    assert never.average_damage_per_use == 0

@@ -15,6 +15,7 @@ from dnd_combat_simulator.combat import (
 )
 from dnd_combat_simulator.simulation import (
     AttackProfile,
+    AttackProfileResult,
     BuildComparisonResult,
     BuildConfig,
     ScenarioConfig,
@@ -279,45 +280,50 @@ def _comparison_round_chart_data(
     ]
 
 
-def _profile_chart_data(
+def _profile_metadata(
+    profile_result: AttackProfileResult, index: int, build_name: str
+) -> dict[str, int | float | str]:
+    profile = profile_result.attack_profile
+    return {
+        "Profile": profile.name,
+        "Order": index,
+        "Build": build_name,
+        "Resolution type": profile.resolution_type.value.replace("_", " ").title(),
+        "Active Rounds": profile.active_rounds or "Every round",
+        "Attacks per active round": profile.attacks_per_round,
+        "Affected targets": profile.affected_targets,
+    }
+
+
+def _profile_contribution_chart_data(
     result: SimulationResult, build_name: str
 ) -> list[dict[str, int | float | str]]:
-    """Build profile-level chart data in configured attack-profile order."""
+    """Build profile contribution chart data in configured attack-profile order."""
     total = result.average_damage_per_round
+    rows = []
+    for index, profile_result in enumerate(result.attack_profile_results, start=1):
+        contribution = profile_result.average_damage_per_round
+        rows.append(
+            {
+                **_profile_metadata(profile_result, index, build_name),
+                "Damage per Round contribution": contribution,
+                "Contribution percentage": contribution / total * 100 if total else 0,
+            }
+        )
+    return rows
+
+
+def _profile_damage_per_use_chart_data(
+    result: SimulationResult, build_name: str
+) -> list[dict[str, int | float | str]]:
+    """Build average damage per profile use chart data in configured order."""
     return [
         {
-            "Profile": profile_result.attack_profile.name,
-            "Average damage per round": profile_result.average_damage_per_round,
-            "Damage contribution %": (
-                profile_result.average_damage_per_round / total * 100 if total else 0
-            ),
-            "Order": index,
-            "Build": build_name,
-            "Resolution type": (
-                profile_result.attack_profile.resolution_type.value.replace(
-                    "_", " "
-                ).title()
-            ),
+            **_profile_metadata(profile_result, index, build_name),
+            "Average damage per use": profile_result.average_damage_per_use,
+            "Total profile uses": profile_result.total_profile_uses,
         }
         for index, profile_result in enumerate(result.attack_profile_results, start=1)
-    ]
-
-
-def _comparison_metric_chart_data(
-    comparison: BuildComparisonResult,
-) -> list[dict[str, float | str]]:
-    """Build chart rows for headline comparison damage metrics."""
-    return [
-        {"Metric": metric, "Build": build_name, "Damage": value}
-        for build_name, result in (
-            (comparison.first_build.name, comparison.first_result),
-            (comparison.second_build.name, comparison.second_result),
-        )
-        for metric, value in (
-            ("Average damage per round", result.average_damage_per_round),
-            ("Round 1 burst damage", result.first_round_burst_damage),
-            ("Average damage after round 1", result.average_damage_after_round_1),
-        )
     ]
 
 
@@ -341,7 +347,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
     )
 
 
-def _profile_bar_chart(data):
+def _profile_contribution_bar_chart(data):
     import altair as alt
     import pandas as pd
 
@@ -350,25 +356,67 @@ def _profile_bar_chart(data):
         .mark_bar()
         .encode(
             x=alt.X("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
-            y=alt.Y("Average damage per round:Q", title="Average damage per round"),
+            y=alt.Y(
+                "Damage per Round contribution:Q",
+                title="Damage per Round contribution",
+            ),
             tooltip=[
-                alt.Tooltip("Profile:N", title="Attack profile"),
+                alt.Tooltip("Profile:N", title="Attack name"),
                 alt.Tooltip("Resolution type:N", title="Resolution type"),
                 alt.Tooltip(
-                    "Average damage per round:Q", title="Average damage", format=".2f"
+                    "Damage per Round contribution:Q",
+                    title="Damage per Round contribution",
+                    format=".2f",
                 ),
+                alt.Tooltip(
+                    "Contribution percentage:Q",
+                    title="Contribution percentage",
+                    format=".1f",
+                ),
+                alt.Tooltip("Active Rounds:N", title="Active Rounds"),
+                alt.Tooltip(
+                    "Attacks per active round:Q", title="Attacks per active round"
+                ),
+                alt.Tooltip("Affected targets:Q", title="Affected Targets"),
+            ],
+        )
+    )
+
+
+def _profile_damage_per_use_bar_chart(data):
+    import altair as alt
+    import pandas as pd
+
+    return (
+        alt.Chart(pd.DataFrame(data))
+        .mark_bar()
+        .encode(
+            x=alt.X("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
+            y=alt.Y(
+                "Average damage per use:Q",
+                title="Average total damage from one use",
+            ),
+            tooltip=[
+                alt.Tooltip("Profile:N", title="Attack name"),
+                alt.Tooltip("Resolution type:N", title="Resolution type"),
+                alt.Tooltip(
+                    "Average damage per use:Q",
+                    title="Average damage per use",
+                    format=".2f",
+                ),
+                alt.Tooltip("Total profile uses:Q", title="Total profile uses"),
+                alt.Tooltip("Affected targets:Q", title="Affected Targets"),
+                alt.Tooltip("Active Rounds:N", title="Active Rounds"),
             ],
         )
     )
 
 
 def _render_single_build_charts(build: BuildConfig, result: SimulationResult) -> None:
-    """Render all single-build charts above detailed result tables."""
-    import altair as alt
-    import pandas as pd
+    """Render focused single-build damage charts above detailed result tables."""
     import streamlit as st
 
-    st.markdown("##### Damage by Round")
+    st.markdown("##### Damage per Round")
     st.caption("Average total damage in each round, including zero-damage rounds.")
     st.altair_chart(
         _line_chart(
@@ -380,39 +428,33 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
         width="stretch",
     )
 
-    profile_data = _profile_chart_data(result, build.name)
-    st.markdown("##### Damage by Attack Profile")
-    st.caption("Average damage per round for each configured attack profile.")
-    st.altair_chart(_profile_bar_chart(profile_data), width="stretch")
-
-    st.markdown("##### Damage Contribution")
-    st.caption(
-        "Percent contribution of each profile to average total damage per round."
-    )
-    contribution_chart = (
-        alt.Chart(pd.DataFrame(profile_data))
-        .mark_bar()
-        .encode(
-            x=alt.X("Damage contribution %:Q", title="Contribution (%)"),
-            y=alt.Y("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
-            tooltip=[
-                alt.Tooltip("Profile:N", title="Attack profile"),
-                alt.Tooltip(
-                    "Damage contribution %:Q", title="Contribution", format=".2f"
-                ),
-            ],
+    contribution_data = _profile_contribution_chart_data(result, build.name)
+    damage_per_use_data = _profile_damage_per_use_chart_data(result, build.name)
+    first_col, second_col = st.columns(2)
+    with first_col:
+        st.markdown("##### Attack Contribution to Damage per Round")
+        st.caption(
+            "How much each attack adds to the build's overall average Damage per Round."
         )
-    )
-    st.altair_chart(contribution_chart, width="stretch")
+        st.altair_chart(
+            _profile_contribution_bar_chart(contribution_data), width="stretch"
+        )
+    with second_col:
+        st.markdown("##### Average Damage per Attack Use")
+        st.caption(
+            "Expected total damage each time the attack is used, including misses, "
+            "saves, and all affected targets."
+        )
+        st.altair_chart(
+            _profile_damage_per_use_bar_chart(damage_per_use_data), width="stretch"
+        )
 
 
 def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
-    """Render comparison charts while keeping unrelated profiles separate."""
-    import altair as alt
-    import pandas as pd
+    """Render focused comparison charts while keeping profiles separate."""
     import streamlit as st
 
-    st.markdown("##### Damage by Round")
+    st.markdown("##### Damage per Round")
     st.caption("Round-by-round damage for each build on the same round axis.")
     st.altair_chart(
         _line_chart(
@@ -424,38 +466,34 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
         width="stretch",
     )
 
-    st.markdown("##### Key Damage Comparison")
-    st.caption("Burst, sustained, and overall damage metrics for each build.")
-    metric_chart = (
-        alt.Chart(pd.DataFrame(_comparison_metric_chart_data(comparison)))
-        .mark_bar()
-        .encode(
-            x=alt.X("Metric:N", title="Metric"),
-            xOffset="Build:N",
-            y=alt.Y("Damage:Q", title="Damage"),
-            color=alt.Color("Build:N", title="Build"),
-            tooltip=[
-                alt.Tooltip("Metric:N"),
-                alt.Tooltip("Build:N"),
-                alt.Tooltip("Damage:Q", format=".2f"),
-            ],
-        )
-    )
-    st.altair_chart(metric_chart, width="stretch")
-
-    st.markdown("##### Attack Profile Damage")
-    st.caption(
-        "Each build keeps its own profile chart to avoid cross-build profile merging."
-    )
-    first_col, second_col = st.columns(2)
-    for column, build, result in (
-        (first_col, comparison.first_build, comparison.first_result),
-        (second_col, comparison.second_build, comparison.second_result),
+    for build, result in (
+        (comparison.first_build, comparison.first_result),
+        (comparison.second_build, comparison.second_result),
     ):
-        with column:
-            st.markdown(f"###### {build.name}")
+        st.markdown(f"##### {build.name}")
+        first_col, second_col = st.columns(2)
+        with first_col:
+            st.markdown("###### Attack Contribution to Damage per Round")
+            st.caption(
+                "How much each attack adds to the build's overall average "
+                "Damage per Round."
+            )
             st.altair_chart(
-                _profile_bar_chart(_profile_chart_data(result, build.name)),
+                _profile_contribution_bar_chart(
+                    _profile_contribution_chart_data(result, build.name)
+                ),
+                width="stretch",
+            )
+        with second_col:
+            st.markdown("###### Average Damage per Attack Use")
+            st.caption(
+                "Expected total damage each time the attack is used, including misses, "
+                "saves, and all affected targets."
+            )
+            st.altair_chart(
+                _profile_damage_per_use_bar_chart(
+                    _profile_damage_per_use_chart_data(result, build.name)
+                ),
                 width="stretch",
             )
 
@@ -626,7 +664,12 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Affected targets": str(profile.affected_targets),
             "Active Rounds": profile.active_rounds or "Every round",
             "Feats and Features": format_features(profile.features),
-            "Average total damage per round": format_damage(
+            "Profile uses": f"{profile_result.total_profile_uses:,}",
+            "Target resolutions": f"{profile_result.total_target_resolutions:,}",
+            "Average damage per use": format_damage(
+                profile_result.average_damage_per_use
+            ),
+            "Contribution to total Damage per Round": format_damage(
                 profile_result.average_damage_per_round
             ),
             "Average damage per target per round": format_damage(

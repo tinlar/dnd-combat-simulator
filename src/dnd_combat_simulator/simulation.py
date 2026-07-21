@@ -58,6 +58,8 @@ class AttackProfileResult:
     average_damage_per_round: float
     hit_rate: float
     critical_hit_rate: float
+    average_damage_per_use: float = field(default=0, compare=False)
+    total_profile_uses: int = field(default=0, compare=False)
     failed_save_rate: float = 0
     successful_save_rate: float = 0
     total_target_resolutions: int = field(default=0, compare=False)
@@ -513,6 +515,12 @@ def run_damage_simulations(
                 profile_damage_totals[index] / simulations
             ),
             average_damage_per_round=profile_damage_totals[index] / total_rounds,
+            average_damage_per_use=(
+                profile_damage_totals[index] / profile_attacks[index]
+                if profile_attacks[index]
+                else 0
+            ),
+            total_profile_uses=profile_attacks[index],
             hit_rate=(profile_hits[index] / profile_attack_roll_resolutions[index])
             if profile_attack_roll_resolutions[index]
             else 0,

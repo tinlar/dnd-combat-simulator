@@ -525,41 +525,16 @@ def test_comparison_round_chart_data_uses_both_builds() -> None:
     assert [row["Round"] for row in rows] == [1, 2, 1, 2]
 
 
-def test_profile_chart_data_keeps_configured_order_and_automatic_profiles() -> None:
-    from dnd_combat_simulator.app import _profile_chart_data
+def test_profile_contribution_data_keeps_order_and_automatic_profiles() -> None:
+    from dnd_combat_simulator.app import _profile_contribution_chart_data
 
     build, result = _mixed_profile_result()
 
-    rows = _profile_chart_data(result, build.name)
+    rows = _profile_contribution_chart_data(result, build.name)
 
     assert [row["Profile"] for row in rows] == ["Zero opener", "Save effect", "Aura"]
     assert [row["Order"] for row in rows] == [1, 2, 3]
     assert rows[2]["Resolution type"] == "Automatic Damage"
-
-
-def test_key_comparison_metric_chart_data() -> None:
-    from dnd_combat_simulator.app import _comparison_metric_chart_data
-    from dnd_combat_simulator.simulation import (
-        BuildConfig,
-        ScenarioConfig,
-        compare_builds,
-    )
-
-    comparison = compare_builds(
-        first_build=BuildConfig("A", 20, "1d4", 1),
-        second_build=BuildConfig("B", 20, "1d4+1", 1),
-        scenario=ScenarioConfig(target_armor_class=1, rounds=2, simulations=1),
-        seed=2,
-    )
-
-    rows = _comparison_metric_chart_data(comparison)
-
-    assert [row["Metric"] for row in rows[:3]] == [
-        "Average damage per round",
-        "Round 1 burst damage",
-        "Average damage after round 1",
-    ]
-    assert [row["Build"] for row in rows] == ["A", "A", "A", "B", "B", "B"]
 
 
 def test_single_build_and_comparison_chart_render_paths_are_separate(
@@ -736,3 +711,98 @@ def test_profile_breakdown_rows_include_formatted_features() -> None:
     rows = _profile_breakdown_rows(result)
     assert rows[0]["Feats and Features"] == "None"
     assert rows[1]["Feats and Features"] == "Great Weapon Fighting, Tavern Brawler"
+
+
+def test_profile_contribution_chart_data_sums_and_preserves_order() -> None:
+    import pytest
+
+    from dnd_combat_simulator.app import _profile_contribution_chart_data
+
+    build, result = _mixed_profile_result()
+
+    rows = _profile_contribution_chart_data(result, build.name)
+
+    assert [row["Profile"] for row in rows] == ["Zero opener", "Save effect", "Aura"]
+    assert sum(row["Damage per Round contribution"] for row in rows) == pytest.approx(
+        result.average_damage_per_round
+    )
+    assert sum(row["Contribution percentage"] for row in rows) == pytest.approx(100)
+
+
+def test_profile_contribution_percentages_zero_when_dpr_is_zero() -> None:
+    from dnd_combat_simulator.app import _profile_contribution_chart_data
+    from dnd_combat_simulator.simulation import (
+        BuildConfig,
+        ScenarioConfig,
+        simulate_build,
+    )
+
+    result = simulate_build(
+        BuildConfig("Zero", 0, "1d4", 1),
+        ScenarioConfig(target_armor_class=99, rounds=2, simulations=1),
+        seed=1,
+    )
+
+    rows = _profile_contribution_chart_data(result, "Zero")
+
+    assert rows[0]["Damage per Round contribution"] == 0
+    assert rows[0]["Contribution percentage"] == 0
+
+
+def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
+    from dnd_combat_simulator.app import _profile_damage_per_use_chart_data
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        simulate_build,
+    )
+
+    build = BuildConfig(
+        "Limited",
+        0,
+        "1d4",
+        0,
+        attack_profiles=(
+            AttackProfile(
+                "Once",
+                None,
+                "1d4",
+                1,
+                active_rounds="1",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+    )
+    result = simulate_build(build, ScenarioConfig(10, rounds=2, simulations=1), seed=4)
+
+    row = _profile_damage_per_use_chart_data(result, build.name)[0]
+
+    assert (
+        row["Average damage per use"]
+        == result.attack_profile_results[0].average_damage_per_use
+    )
+    assert (
+        row["Average damage per use"]
+        != result.attack_profile_results[0].average_damage_per_round
+    )
+
+
+def test_attack_roll_saving_throw_and_automatic_profiles_appear_in_chart_data() -> None:
+    from dnd_combat_simulator.app import (
+        _profile_contribution_chart_data,
+        _profile_damage_per_use_chart_data,
+    )
+
+    build, result = _mixed_profile_result()
+
+    contribution_rows = _profile_contribution_chart_data(result, build.name)
+    use_rows = _profile_damage_per_use_chart_data(result, build.name)
+
+    assert {row["Resolution type"] for row in contribution_rows} == {
+        "Attack Roll",
+        "Saving Throw",
+        "Automatic Damage",
+    }
+    assert [row["Build"] for row in use_rows] == [build.name, build.name, build.name]
