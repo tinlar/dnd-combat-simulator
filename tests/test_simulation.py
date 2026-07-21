@@ -3,15 +3,12 @@ import pytest
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.simulation import (
     AttackProfile,
-    AttackUse,
     BuildConfig,
     ComparisonDifference,
-    RoundPlan,
-    RoundSchedule,
     ScenarioConfig,
     SimulationResult,
-    UndefinedRoundBehavior,
     compare_builds,
+    parse_active_rounds,
     run_damage_simulations,
 )
 
@@ -360,7 +357,40 @@ def test_simulation_accepts_more_than_two_attack_profiles() -> None:
     assert result.attacks_per_round == 4
 
 
-def test_round_schedule_uses_different_attack_profile_each_round() -> None:
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("", None),
+        ("1", frozenset({1})),
+        ("1-5", frozenset({1, 2, 3, 4, 5})),
+        ("1,3,8", frozenset({1, 3, 8})),
+        ("1, 3-5, 8", frozenset({1, 3, 4, 5, 8})),
+        (" 1 , 3 - 5 , 8 ", frozenset({1, 3, 4, 5, 8})),
+        ("1-3, 2-4", frozenset({1, 2, 3, 4})),
+    ],
+)
+def test_parse_active_rounds_valid_inputs(
+    text: str, expected: frozenset[int] | None
+) -> None:
+    assert parse_active_rounds(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("0", "positive integers"),
+        ("-1", "positive integers or ranges"),
+        ("5-3", "must not be reversed"),
+        ("1,,3", "empty comma group"),
+        ("first round", "positive integers or ranges"),
+    ],
+)
+def test_parse_active_rounds_invalid_inputs(text: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_active_rounds(text)
+
+
+def test_active_rounds_use_different_attack_profile_each_round() -> None:
     result = run_damage_simulations(
         attack_bonus=0,
         target_armor_class=1,
@@ -369,11 +399,8 @@ def test_round_schedule_uses_different_attack_profile_each_round() -> None:
         rounds=2,
         simulations=1,
         attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1),
-            AttackProfile("B", 20, "1d6", 0, 1),
-        ),
-        round_schedule=RoundSchedule(
-            (RoundPlan(1, (AttackUse("A", 1),)), RoundPlan(2, (AttackUse("B", 1),)))
+            AttackProfile("A", 20, "1d4", 0, 1, active_rounds="1"),
+            AttackProfile("B", 20, "1d6", 0, 1, active_rounds="2"),
         ),
         rng=PredictableRng([10, 2, 10, 6]),
     )
@@ -381,7 +408,7 @@ def test_round_schedule_uses_different_attack_profile_each_round() -> None:
     assert [p.total_attacks_made for p in result.attack_profile_results] == [1, 1]
 
 
-def test_round_schedule_multiple_profiles_in_one_round_and_metrics() -> None:
+def test_active_rounds_allow_round_with_no_attacks_and_preserve_metrics() -> None:
     result = run_damage_simulations(
         attack_bonus=0,
         target_armor_class=1,
@@ -390,84 +417,37 @@ def test_round_schedule_multiple_profiles_in_one_round_and_metrics() -> None:
         rounds=2,
         simulations=1,
         attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1),
-            AttackProfile("B", 20, "1d6", 0, 1),
-        ),
-        round_schedule=RoundSchedule(
-            (RoundPlan(1, (AttackUse("A", 1), AttackUse("B", 1))), RoundPlan(2, ()))
+            AttackProfile("A", 20, "1d4", 0, 1, active_rounds="1"),
+            AttackProfile("B", 20, "1d6", 0, 1, active_rounds="1"),
         ),
         rng=PredictableRng([10, 2, 10, 6]),
     )
     assert result.round_results[0].average_damage == 8
     assert result.round_results[0].average_attacks == 2
     assert result.round_results[1].average_damage == 0
+    assert result.round_results[1].average_attacks == 0
     assert result.first_round_burst_damage == 8
     assert result.average_damage_after_round_1 == 0
     assert result.highest_damage_round == 1
     assert result.highest_round_average_damage == 8
 
 
-def test_round_schedule_repeat_final_round() -> None:
+def test_active_rounds_beyond_scenario_length_are_ignored() -> None:
     result = run_damage_simulations(
         attack_bonus=0,
         target_armor_class=1,
         damage_dice="1d4",
         damage_modifier=0,
-        rounds=3,
+        rounds=1,
         simulations=1,
-        attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1),
-            AttackProfile("B", 20, "1d6", 0, 1),
-        ),
-        round_schedule=RoundSchedule(
-            (RoundPlan(1, (AttackUse("A", 1),)), RoundPlan(2, (AttackUse("B", 1),)))
-        ),
-        rng=PredictableRng([10, 1, 10, 2, 10, 3]),
+        attack_profiles=(AttackProfile("A", 20, "1d4", 0, 1, active_rounds="2"),),
+        rng=PredictableRng([]),
     )
-    assert [p.total_attacks_made for p in result.attack_profile_results] == [1, 2]
-    assert [r.average_damage for r in result.round_results] == [1, 2, 3]
+    assert result.total_attacks_made == 0
+    assert result.round_results[0].average_attacks == 0
 
 
-def test_round_schedule_repeat_entire_schedule() -> None:
-    result = run_damage_simulations(
-        attack_bonus=0,
-        target_armor_class=1,
-        damage_dice="1d4",
-        damage_modifier=0,
-        rounds=3,
-        simulations=1,
-        attack_profiles=(
-            AttackProfile("A", 20, "1d4", 0, 1),
-            AttackProfile("B", 20, "1d6", 0, 1),
-        ),
-        round_schedule=RoundSchedule(
-            (RoundPlan(1, (AttackUse("A", 1),)), RoundPlan(2, (AttackUse("B", 1),))),
-            UndefinedRoundBehavior.REPEAT_ENTIRE_SCHEDULE,
-        ),
-        rng=PredictableRng([10, 1, 10, 2, 10, 3]),
-    )
-    assert [p.total_attacks_made for p in result.attack_profile_results] == [2, 1]
-
-
-def test_round_schedule_no_attacks_after_schedule_ends() -> None:
-    result = run_damage_simulations(
-        attack_bonus=0,
-        target_armor_class=1,
-        damage_dice="1d4",
-        damage_modifier=0,
-        rounds=2,
-        simulations=1,
-        attack_profiles=(AttackProfile("A", 20, "1d4", 0, 1),),
-        round_schedule=RoundSchedule(
-            (RoundPlan(1, (AttackUse("A", 1),)),), UndefinedRoundBehavior.NO_ATTACKS
-        ),
-        rng=PredictableRng([10, 4]),
-    )
-    assert [r.average_attacks for r in result.round_results] == [1, 0]
-    assert result.total_attacks_made == 1
-
-
-def test_legacy_build_without_schedule_repeats_attacks_per_round() -> None:
+def test_existing_profile_without_active_rounds_repeats_attacks_per_round() -> None:
     result = run_damage_simulations(
         attack_bonus=20,
         target_armor_class=1,
@@ -480,61 +460,3 @@ def test_legacy_build_without_schedule_repeats_attacks_per_round() -> None:
     )
     assert result.total_attacks_made == 4
     assert [r.average_attacks for r in result.round_results] == [2, 2]
-
-
-def test_compare_builds_allows_different_schedules_for_each_build() -> None:
-    comparison = compare_builds(
-        first_build=BuildConfig(
-            "A",
-            0,
-            "1d4",
-            0,
-            1,
-            attack_profiles=(AttackProfile("Small", 20, "1d4", 0, 1),),
-            round_schedule=RoundSchedule((RoundPlan(1, (AttackUse("Small", 1),)),)),
-        ),
-        second_build=BuildConfig(
-            "B",
-            0,
-            "1d4",
-            0,
-            1,
-            attack_profiles=(AttackProfile("Big", 20, "1d8", 0, 1),),
-            round_schedule=RoundSchedule((RoundPlan(1, (AttackUse("Big", 1),)),)),
-        ),
-        scenario=ScenarioConfig(1, 1, 1),
-        seed=2,
-    )
-    assert (
-        comparison.first_result.round_results[0].average_damage
-        != comparison.second_result.round_results[0].average_damage
-    )
-
-
-def test_invalid_schedule_duplicate_and_unknown_profiles_error() -> None:
-    with pytest.raises(ValueError, match="duplicate uses"):
-        run_damage_simulations(
-            attack_bonus=0,
-            target_armor_class=1,
-            damage_dice="1d4",
-            damage_modifier=0,
-            rounds=1,
-            simulations=1,
-            attack_profiles=(AttackProfile("A", 20, "1d4", 0, 1),),
-            round_schedule=RoundSchedule(
-                (RoundPlan(1, (AttackUse("A", 1), AttackUse("A", 1))),)
-            ),
-            rng=PredictableRng([]),
-        )
-    with pytest.raises(ValueError, match="unknown attack profile"):
-        run_damage_simulations(
-            attack_bonus=0,
-            target_armor_class=1,
-            damage_dice="1d4",
-            damage_modifier=0,
-            rounds=1,
-            simulations=1,
-            attack_profiles=(AttackProfile("A", 20, "1d4", 0, 1),),
-            round_schedule=RoundSchedule((RoundPlan(1, (AttackUse("B", 1),)),)),
-            rng=PredictableRng([]),
-        )

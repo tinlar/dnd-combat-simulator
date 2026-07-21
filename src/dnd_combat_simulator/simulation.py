@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from enum import StrEnum
 from random import Random
 
 from dnd_combat_simulator.combat import AttackRollMode, resolve_weapon_attack
@@ -20,40 +20,7 @@ class AttackProfile:
     damage_modifier: int
     attacks_per_round: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
-
-
-class UndefinedRoundBehavior(StrEnum):
-    """How schedules resolve rounds after the final explicitly scheduled round."""
-
-    REPEAT_FINAL_ROUND = "repeat_final_round"
-    REPEAT_ENTIRE_SCHEDULE = "repeat_entire_schedule"
-    NO_ATTACKS = "no_attacks"
-
-
-@dataclass(frozen=True)
-class AttackUse:
-    """A scheduled use count for a reusable attack profile."""
-
-    attack_profile_id: str
-    number_of_attacks: int
-
-
-@dataclass(frozen=True)
-class RoundPlan:
-    """Attack uses for one explicit round number."""
-
-    round_number: int
-    attack_uses: tuple[AttackUse, ...] = field(default_factory=tuple)
-
-
-@dataclass(frozen=True)
-class RoundSchedule:
-    """Ordered set of round plans for a build."""
-
-    round_plans: tuple[RoundPlan, ...] = field(default_factory=tuple)
-    undefined_round_behavior: UndefinedRoundBehavior = (
-        UndefinedRoundBehavior.REPEAT_FINAL_ROUND
-    )
+    active_rounds: str = ""
 
 
 @dataclass(frozen=True)
@@ -116,7 +83,6 @@ class BuildConfig:
     attacks_per_round: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
     attack_profiles: tuple[AttackProfile, ...] = field(default_factory=tuple)
-    round_schedule: RoundSchedule | None = None
 
     def resolved_attack_profiles(self) -> tuple[AttackProfile, ...]:
         """Return explicit profiles or a compatibility profile from legacy fields."""
@@ -166,79 +132,53 @@ class BuildComparisonResult:
     higher_average_damage_build_name: str | None
 
 
-def _profile_id(profile: AttackProfile) -> str:
-    return profile.name.strip()
+_ACTIVE_ROUNDS_GROUP_PATTERN = re.compile(r"\d+(?:\s*-\s*\d+)?")
 
 
-def _legacy_round_schedule(profiles: tuple[AttackProfile, ...]) -> RoundSchedule:
-    return RoundSchedule(
-        (
-            RoundPlan(
-                1,
-                tuple(
-                    AttackUse(_profile_id(profile), profile.attacks_per_round)
-                    for profile in profiles
-                ),
-            ),
-        ),
-        UndefinedRoundBehavior.REPEAT_FINAL_ROUND,
-    )
+def parse_active_rounds(active_rounds: str | None) -> frozenset[int] | None:
+    """Parse an Active Rounds expression into sorted unique round numbers.
 
+    Returns ``None`` when the expression is blank, meaning every scenario round.
+    """
+    text = (active_rounds or "").strip()
+    if not text:
+        return None
 
-def _resolve_round_plan(schedule: RoundSchedule, round_number: int) -> RoundPlan:
-    plans = schedule.round_plans
-    if not plans:
-        return RoundPlan(round_number, ())
-    if round_number <= len(plans):
-        return plans[round_number - 1]
-    if schedule.undefined_round_behavior is UndefinedRoundBehavior.NO_ATTACKS:
-        return RoundPlan(round_number, ())
-    if (
-        schedule.undefined_round_behavior
-        is UndefinedRoundBehavior.REPEAT_ENTIRE_SCHEDULE
-    ):
-        return plans[(round_number - 1) % len(plans)]
-    return plans[-1]
-
-
-def _validate_round_schedule(
-    schedule: RoundSchedule, profiles: tuple[AttackProfile, ...], *, label: str
-) -> None:
-    profile_ids = {_profile_id(profile) for profile in profiles}
-    seen_rounds: set[int] = set()
-    expected_round = 1
-    for plan in schedule.round_plans:
-        if plan.round_number in seen_rounds:
-            msg = f"{label} round schedule has duplicate round {plan.round_number}."
+    rounds: set[int] = set()
+    for group in text.split(","):
+        group = group.strip()
+        if not group:
+            msg = "Active Rounds contains an empty comma group."
             raise ValueError(msg)
-        if plan.round_number != expected_round:
+        if not _ACTIVE_ROUNDS_GROUP_PATTERN.fullmatch(group):
             msg = (
-                f"{label} round schedule round numbers must be ordered and start at 1."
+                "Active Rounds must contain positive integers or ranges such "
+                "as 1-5, separated by commas."
             )
             raise ValueError(msg)
-        seen_rounds.add(plan.round_number)
-        expected_round += 1
-        seen_profiles: set[str] = set()
-        for attack_use in plan.attack_uses:
-            if attack_use.number_of_attacks < 0:
-                msg = (
-                    f"{label} round {plan.round_number} attack counts cannot "
-                    "be negative."
-                )
+        if "-" in group:
+            start_text, end_text = re.split(r"\s*-\s*", group, maxsplit=1)
+            start = int(start_text)
+            end = int(end_text)
+            if start <= 0 or end <= 0:
+                msg = "Active Rounds round numbers must be positive integers."
                 raise ValueError(msg)
-            if attack_use.attack_profile_id not in profile_ids:
-                msg = (
-                    f"{label} round {plan.round_number} references unknown attack "
-                    f"profile '{attack_use.attack_profile_id}'."
-                )
+            if start > end:
+                msg = "Active Rounds ranges must not be reversed."
                 raise ValueError(msg)
-            if attack_use.attack_profile_id in seen_profiles:
-                msg = (
-                    f"{label} round {plan.round_number} contains duplicate uses of "
-                    f"'{attack_use.attack_profile_id}'. Combine them into one row."
-                )
+            rounds.update(range(start, end + 1))
+        else:
+            round_number = int(group)
+            if round_number <= 0:
+                msg = "Active Rounds round numbers must be positive integers."
                 raise ValueError(msg)
-            seen_profiles.add(attack_use.attack_profile_id)
+            rounds.add(round_number)
+
+    return frozenset(sorted(rounds))
+
+
+def _profile_id(profile: AttackProfile) -> str:
+    return profile.name.strip()
 
 
 def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
@@ -266,11 +206,8 @@ def _validate_build(build: BuildConfig, *, label: str) -> None:
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"{label} profile {index}")
     if len({_profile_id(profile) for profile in profiles}) != len(profiles):
-        msg = f"{label} attack profile names must be unique for scheduling."
+        msg = f"{label} attack profile names must be unique."
         raise ValueError(msg)
-    _validate_round_schedule(
-        build.round_schedule or _legacy_round_schedule(profiles), profiles, label=label
-    )
 
 
 def _validate_scenario(scenario: ScenarioConfig) -> None:
@@ -296,10 +233,9 @@ def run_damage_simulations(
     attacks_per_round: int = 1,
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     attack_profiles: tuple[AttackProfile, ...] | None = None,
-    round_schedule: RoundSchedule | None = None,
     rng: RandomNumberGenerator | None = None,
 ) -> SimulationResult:
-    """Run repeated damage simulations with one or more scheduled attack profiles."""
+    """Run repeated damage simulations with one or more active attack profiles."""
     if rounds < 1:
         msg = "Number of rounds must be at least 1."
         raise ValueError(msg)
@@ -327,14 +263,11 @@ def run_damage_simulations(
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"Attack profile {index}")
     if len({_profile_id(profile) for profile in profiles}) != len(profiles):
-        msg = "Attack profile names must be unique for scheduling."
+        msg = "Attack profile names must be unique."
         raise ValueError(msg)
-
-    schedule = round_schedule or _legacy_round_schedule(profiles)
-    _validate_round_schedule(schedule, profiles, label="Build")
-    profile_by_id = {
-        _profile_id(profile): index for index, profile in enumerate(profiles)
-    }
+    active_round_sets = tuple(
+        parse_active_rounds(profile.active_rounds) for profile in profiles
+    )
 
     random_number_generator = rng if rng is not None else Random()
     total_rounds = rounds * simulations
@@ -356,11 +289,14 @@ def run_damage_simulations(
     for _ in range(simulations):
         simulation_damage = 0
         for round_number in range(1, rounds + 1):
-            plan = _resolve_round_plan(schedule, round_number)
-            for attack_use in plan.attack_uses:
-                profile_index = profile_by_id[attack_use.attack_profile_id]
-                profile = profiles[profile_index]
-                for _ in range(attack_use.number_of_attacks):
+            for profile_index, profile in enumerate(profiles):
+                active_round_set = active_round_sets[profile_index]
+                if (
+                    active_round_set is not None
+                    and round_number not in active_round_set
+                ):
+                    continue
+                for _ in range(profile.attacks_per_round):
                     attack = resolve_weapon_attack(
                         attack_bonus=profile.attack_bonus,
                         target_armor_class=target_armor_class,
@@ -488,7 +424,6 @@ def compare_builds(
         attacks_per_round=first_build.attacks_per_round,
         attack_roll_mode=first_build.attack_roll_mode,
         attack_profiles=first_build.resolved_attack_profiles(),
-        round_schedule=first_build.round_schedule,
         rng=Random(seed),
     )
     second_result = run_damage_simulations(
@@ -501,7 +436,6 @@ def compare_builds(
         attacks_per_round=second_build.attacks_per_round,
         attack_roll_mode=second_build.attack_roll_mode,
         attack_profiles=second_build.resolved_attack_profiles(),
-        round_schedule=second_build.round_schedule,
         rng=Random(seed),
     )
 
