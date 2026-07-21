@@ -14,6 +14,7 @@ from dnd_combat_simulator.combat import (
     SuccessfulSaveDamage,
     available_features,
     is_feature_available,
+    validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.sharing import (
     SharedBuildConfiguration,
@@ -135,6 +136,171 @@ SCENARIO_WIDGET_KEYS = {
 COMPARE_WIDGET_KEY = "compare-builds-enabled"
 LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
+INVALID_SHARED_CONFIG_MESSAGE_KEY = "_invalid_shared_config_message"
+
+
+@dataclass(frozen=True)
+class FieldValidationError:
+    """A validation message associated with one editable Streamlit field."""
+
+    key: str
+    message: str
+
+
+def _friendly_validation_message(error: ValueError) -> str:
+    text = str(error)
+    lower_prefix = "invalid damage expression: "
+    if text.lower().startswith(lower_prefix):
+        text = text[len(lower_prefix) :]
+    elif ": invalid damage expression: " in text.lower():
+        text = text.split(": ", 1)[1]
+    if text.startswith("damage expression "):
+        text = "Damage expression " + text[len("damage expression ") :]
+    elif text and text[0].islower():
+        text = text[0].upper() + text[1:]
+    return text
+
+
+def _add_error(errors: list[FieldValidationError], key: str, message: str) -> None:
+    errors.append(FieldValidationError(key, message))
+
+
+def _validate_profile_fields(
+    profile: AttackProfile, *, prefix: str
+) -> list[FieldValidationError]:
+    from dnd_combat_simulator.dice import parse_damage_expression
+    from dnd_combat_simulator.simulation import parse_active_rounds
+
+    errors: list[FieldValidationError] = []
+    if not profile.name.strip():
+        _add_error(
+            errors, profile_widget_key(prefix, "name"), "Attack name is required."
+        )
+    if not profile.damage_dice.strip():
+        _add_error(
+            errors,
+            profile_widget_key(prefix, "damage_formula"),
+            "Damage expression is required.",
+        )
+    else:
+        try:
+            parse_damage_expression(profile.damage_dice)
+        except ValueError as error:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "damage_formula"),
+                _friendly_validation_message(error),
+            )
+    if profile.attacks_per_round < 1:
+        _add_error(
+            errors,
+            profile_widget_key(prefix, "attacks_per_round"),
+            "Attacks per round must be at least 1.",
+        )
+    if profile.affected_targets < 1:
+        _add_error(
+            errors,
+            profile_widget_key(prefix, "affected_targets"),
+            "Affected Targets must be at least 1.",
+        )
+    if (
+        profile.resolution_type is ResolutionType.ATTACK_ROLL
+        and profile.attack_bonus is None
+    ):
+        _add_error(
+            errors,
+            profile_widget_key(prefix, "attack_bonus"),
+            "Attack bonus is required.",
+        )
+    if profile.resolution_type is ResolutionType.SAVING_THROW:
+        if profile.save_dc is None:
+            _add_error(
+                errors, profile_widget_key(prefix, "save_dc"), "Save DC is required."
+            )
+        elif profile.save_dc < 1:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "save_dc"),
+                "Save DC must be a positive integer.",
+            )
+    try:
+        parse_active_rounds(profile.active_rounds)
+    except ValueError as error:
+        _add_error(errors, profile_widget_key(prefix, "active_rounds"), str(error))
+    try:
+        validate_feature_resolution_combination(
+            profile.features,
+            profile.resolution_type,
+            label=profile.name or "Attack profile",
+            affected_targets=profile.affected_targets,
+        )
+    except ValueError as error:
+        _add_error(errors, profile_widget_key(prefix, "resolution_type"), str(error))
+    return errors
+
+
+def validate_build_fields(
+    build: BuildConfig, *, prefix: str
+) -> list[FieldValidationError]:
+    errors: list[FieldValidationError] = []
+    if not build.name.strip():
+        _add_error(errors, f"{prefix}-build-name", "Build name is required.")
+    profiles = build.resolved_attack_profiles()
+    names = [profile.name.strip() for profile in profiles]
+    duplicate_names = {name for name in names if name and names.count(name) > 1}
+    for index, profile in enumerate(profiles):
+        widget_prefix = profile_prefix(prefix, index)
+        errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
+        if profile.name.strip() in duplicate_names:
+            _add_error(
+                errors,
+                profile_widget_key(widget_prefix, "name"),
+                "Attack profile names must be unique within a build.",
+            )
+    return errors
+
+
+def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationError]:
+    errors: list[FieldValidationError] = []
+    if scenario.target_armor_class < 1:
+        _add_error(
+            errors,
+            SCENARIO_WIDGET_KEYS["target_armor_class"],
+            "Target Armor Class must be at least 1.",
+        )
+    if scenario.rounds < 1:
+        _add_error(
+            errors,
+            SCENARIO_WIDGET_KEYS["rounds"],
+            "Number of rounds must be at least 1.",
+        )
+    if scenario.simulations < 1:
+        _add_error(
+            errors,
+            SCENARIO_WIDGET_KEYS["simulations"],
+            "Number of simulations must be at least 1.",
+        )
+    return errors
+
+
+def validation_errors_by_key(errors: list[FieldValidationError]) -> dict[str, str]:
+    return {error.key: error.message for error in errors}
+
+
+def _render_error(message: str) -> None:
+    import streamlit as st
+
+    error = getattr(st, "error", None)
+    if error is not None:
+        error(message, icon="⚠️")
+
+
+def _field_error(errors_by_key: dict[str, str], key: str) -> bool:
+    if message := errors_by_key.get(key):
+        _render_error(message)
+        return True
+    return False
+
 
 SHARE_TOOLBAR_HTML = """
 <div class="share-toolbar" role="group" aria-label="Share configuration">
@@ -1203,13 +1369,17 @@ def _feature_inputs(
     return frozenset(selected)
 
 
-def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
+def _attack_profile_inputs(
+    prefix: str, default_name: str, errors_by_key: dict[str, str] | None = None
+) -> AttackProfile:
     """Render and collect one attack profile's input controls."""
     import streamlit as st
 
+    errors_by_key = errors_by_key or {}
     attack_name = st.text_input(
         "Attack name", value=default_name, key=profile_widget_key(prefix, "name")
     )
+    _field_error(errors_by_key, profile_widget_key(prefix, "name"))
     resolution_type_label = st.selectbox(
         "Resolution Type",
         options=["Attack Roll", "Saving Throw", "Automatic Damage"],
@@ -1221,6 +1391,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         "Saving Throw": ResolutionType.SAVING_THROW,
         "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
     }[resolution_type_label]
+    _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
     row_one = st.columns(2)
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus = row_one[0].number_input(
@@ -1229,6 +1400,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
             step=1,
             key=profile_widget_key(prefix, "attack_bonus"),
         )
+        _field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
@@ -1239,6 +1411,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
             step=1,
             key=profile_widget_key(prefix, "save_dc"),
         )
+        _field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
     else:
         attack_bonus = None
         save_dc = None
@@ -1249,6 +1422,14 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         help=DAMAGE_FORMULA_HELP,
         key=profile_widget_key(prefix, "damage_formula"),
     )
+    if not _field_error(errors_by_key, profile_widget_key(prefix, "damage_formula")):
+        current_damage_errors = _validate_profile_fields(
+            AttackProfile(default_name, 0, damage_dice, 1), prefix=prefix
+        )
+        for error in current_damage_errors:
+            if error.key == profile_widget_key(prefix, "damage_formula"):
+                _render_error(error.message)
+                break
     row_two = st.columns(3)
     attacks_per_round = row_two[0].number_input(
         "Attacks per round",
@@ -1257,6 +1438,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         step=1,
         key=profile_widget_key(prefix, "attacks_per_round"),
     )
+    _field_error(errors_by_key, profile_widget_key(prefix, "attacks_per_round"))
     affected_targets = row_two[1].number_input(
         "Affected Targets",
         min_value=1,
@@ -1264,6 +1446,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         step=1,
         key=profile_widget_key(prefix, "affected_targets"),
     )
+    _field_error(errors_by_key, profile_widget_key(prefix, "affected_targets"))
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_roll_mode_label = row_two[2].selectbox(
             "Attack roll mode",
@@ -1295,6 +1478,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
         key=profile_widget_key(prefix, "active_rounds"),
     )
+    _field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,
@@ -1351,15 +1535,19 @@ def _build_config_from_profiles(
     )
 
 
-def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
+def _build_inputs(
+    prefix: str, default_name: str, errors_by_key: dict[str, str] | None = None
+) -> BuildConfig:
     """Render and collect one build's input controls."""
     import streamlit as st
 
+    errors_by_key = errors_by_key or {}
     with _render_section_container():
         st.markdown(f"#### {default_name}")
         name = st.text_input(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )
+        _field_error(errors_by_key, f"{prefix}-build-name")
         additional_attack_count = st.number_input(
             "Additional Distinct Attacks",
             min_value=0,
@@ -1379,7 +1567,11 @@ def _build_inputs(prefix: str, default_name: str) -> BuildConfig:
             else:
                 divider()
             st.markdown(f"##### {heading}")
-            profiles.append(_attack_profile_inputs(profile_prefix, default_attack_name))
+            profiles.append(
+                _attack_profile_inputs(
+                    profile_prefix, default_attack_name, errors_by_key
+                )
+            )
 
     return _build_config_from_profiles(name, tuple(profiles))
 
@@ -1468,11 +1660,23 @@ def load_shared_configuration_from_query() -> None:
     ):
         return
     try:
-        configuration = deserialize_shared_configuration(token)
+        configuration = deserialize_shared_configuration(token, validate=False)
     except SharedConfigurationError as error:
         st.error(f"Invalid shared configuration link: {error}")
         return
     hydrate_session_state_from_shared_configuration(st.session_state, configuration)
+    validation_errors = [
+        *validate_scenario_fields(configuration.scenario.to_scenario_config()),
+        *validate_build_fields(configuration.build_a.to_build_config(), prefix="first"),
+        *validate_build_fields(
+            configuration.build_b.to_build_config(), prefix="second"
+        ),
+    ]
+    if validation_errors:
+        st.session_state[INVALID_SHARED_CONFIG_MESSAGE_KEY] = (
+            "Shared configuration loaded with invalid fields. Fix the highlighted "
+            "fields before running calculations."
+        )
     st.session_state[LOADED_SHARED_CONFIG_TOKEN_KEY] = token
     st.session_state[LOADED_SHARED_CONFIG_MESSAGE_KEY] = True
 
@@ -1608,6 +1812,10 @@ def main() -> None:
     load_shared_configuration_from_query()
     if getattr(st, "session_state", {}).pop(LOADED_SHARED_CONFIG_MESSAGE_KEY, False):
         st.success("Shared configuration loaded.")
+    if message := getattr(st, "session_state", {}).pop(
+        INVALID_SHARED_CONFIG_MESSAGE_KEY, None
+    ):
+        st.warning(message)
     st.title(APP_TITLE)
     st.write(
         "Compare two named DnD combat builds against the same target Armor "
@@ -1663,13 +1871,30 @@ def main() -> None:
     )
 
     if compare_enabled:
+        pre_render_errors = validation_errors_by_key(
+            [
+                *validate_build_fields(
+                    _build_from_state("first", "Build A"), prefix="first"
+                ),
+                *validate_build_fields(
+                    _build_from_state("second", "Build B"), prefix="second"
+                ),
+            ]
+        )
         build_columns = st.columns(2)
         with build_columns[0]:
-            first_build = _build_inputs("first", "Build A")
+            first_build = _build_inputs("first", "Build A", pre_render_errors)
         with build_columns[1]:
-            second_build = _build_inputs("second", "Build B")
+            second_build = _build_inputs("second", "Build B", pre_render_errors)
 
-        if st.button("Compare Builds"):
+        current_errors = [
+            *validate_scenario_fields(scenario),
+            *validate_build_fields(first_build, prefix="first"),
+            *validate_build_fields(second_build, prefix="second"),
+        ]
+        if current_errors:
+            st.warning("Fix the highlighted fields before comparing builds.")
+        if st.button("Compare Builds", disabled=bool(current_errors)):
             inputs = ComparisonInputs(
                 first_build=first_build,
                 second_build=second_build,
@@ -1683,9 +1908,18 @@ def main() -> None:
             else:
                 _render_comparison_results(comparison)
     else:
-        first_build = _build_inputs("first", "Build A")
+        pre_render_errors = validation_errors_by_key(
+            validate_build_fields(_build_from_state("first", "Build A"), prefix="first")
+        )
+        first_build = _build_inputs("first", "Build A", pre_render_errors)
 
-        if st.button("Run Simulation"):
+        current_errors = [
+            *validate_scenario_fields(scenario),
+            *validate_build_fields(first_build, prefix="first"),
+        ]
+        if current_errors:
+            st.warning("Fix the highlighted fields before running the simulation.")
+        if st.button("Run Simulation", disabled=bool(current_errors)):
             inputs = SingleBuildInputs(
                 build=first_build,
                 scenario=scenario,

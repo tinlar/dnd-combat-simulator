@@ -218,7 +218,9 @@ def serialize_shared_configuration(configuration: SharedConfiguration) -> str:
     return base64.urlsafe_b64encode(zlib.compress(payload)).decode().rstrip("=")
 
 
-def deserialize_shared_configuration(token: str) -> SharedConfiguration:
+def deserialize_shared_configuration(
+    token: str, *, validate: bool = True
+) -> SharedConfiguration:
     if not isinstance(token, str) or not token:
         raise SharedConfigurationError("Shared configuration token is required.")
     if len(token) > MAX_ENCODED_TOKEN_LENGTH:
@@ -256,7 +258,8 @@ def deserialize_shared_configuration(token: str) -> SharedConfiguration:
             "Shared configuration is not valid JSON."
         ) from error
     config = _configuration_from_json(raw)
-    _validate_shared_configuration(config)
+    if validate:
+        _validate_shared_configuration(config)
     return config
 
 

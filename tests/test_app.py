@@ -1171,3 +1171,61 @@ def test_current_shared_configuration_url_ignores_stale_unavailable_features(
     url = _current_shared_configuration_url()
 
     assert url.startswith("https://example.test/app?")
+
+
+def test_validate_build_fields_marks_invalid_damage_field_and_message() -> None:
+    from dnd_combat_simulator.app import profile_widget_key, validate_build_fields
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig
+
+    build = BuildConfig(
+        "Build A",
+        5,
+        "1d6+",
+        1,
+        attack_profiles=(AttackProfile("Primary", 5, "1d6+", 1),),
+    )
+
+    errors = validate_build_fields(build, prefix="first")
+
+    assert errors == [errors[0]]
+    assert errors[0].key == profile_widget_key("first-primary", "damage_formula")
+    assert errors[0].message == "Damage expression cannot end with an operator."
+
+
+def test_correcting_invalid_damage_clears_field_error_and_valid_build_runs() -> None:
+    from dnd_combat_simulator.app import (
+        SingleBuildInputs,
+        profile_widget_key,
+        run_single_build_from_inputs,
+        validate_build_fields,
+    )
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    invalid = BuildConfig(
+        "Build A",
+        5,
+        "1d6+",
+        1,
+        attack_profiles=(AttackProfile("Primary", 5, "1d6+", 1),),
+    )
+    valid = BuildConfig(
+        "Build A",
+        5,
+        "1d6+1",
+        1,
+        attack_profiles=(AttackProfile("Primary", 5, "1d6+1", 1),),
+    )
+
+    assert any(
+        error.key == profile_widget_key("first-primary", "damage_formula")
+        for error in validate_build_fields(invalid, prefix="first")
+    )
+    assert validate_build_fields(valid, prefix="first") == []
+    result = run_single_build_from_inputs(
+        SingleBuildInputs(valid, ScenarioConfig(1, 1, 1), seed=1)
+    )
+    assert result.simulations_run == 1
