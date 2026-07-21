@@ -126,16 +126,15 @@ class ShortenedUrlResult:
     rate_limited: bool = False
 
 
-def _is_valid_isgd_short_url(url: object) -> bool:
+def _is_valid_cleanuri_short_url(url: object) -> bool:
     return (
         isinstance(url, str)
-        and url.startswith("https://is.gd/")
+        and url.startswith("https://cleanuri.com/")
         and not any(character.isspace() for character in url)
-        and ("/preview/" + "deprecated/") not in url
     )
 
 
-def _isgd_error_result(
+def _cleanuri_error_result(
     url: str, message: str, *, rate_limited: bool = False
 ) -> ShortenedUrlResult:
     return ShortenedUrlResult(
@@ -143,57 +142,55 @@ def _isgd_error_result(
     )
 
 
-def _isgd_error_message(error_code: object) -> tuple[str, bool]:
-    if error_code == 3:
-        return "The is.gd rate limit was reached.", True
-    if error_code in {1, 2}:
-        return "is.gd rejected the configuration URL.", False
-    if error_code == 4:
-        return "is.gd is temporarily unavailable.", False
-    return "is.gd returned an invalid response.", False
+def _sanitize_cleanuri_error_body(body: bytes | None) -> str | None:
+    if not body:
+        return None
+    try:
+        text = body[:1024].decode("utf-8", errors="replace")
+    except (OSError, UnicodeDecodeError):
+        return None
+    sanitized = " ".join(text.split())[:240]
+    return sanitized or None
 
 
-def _isgd_http_error_message(status_code: int) -> tuple[str, bool]:
-    if status_code == 502:
-        return "The is.gd rate limit was reached.", True
-    if status_code in {400, 406}:
-        return "is.gd rejected the configuration URL.", False
-    if status_code == 503 or 500 <= status_code <= 599:
-        return "is.gd is temporarily unavailable.", False
-    return "is.gd returned an invalid response.", False
+def _cleanuri_http_error_message(error: HTTPError) -> tuple[str, bool]:
+    body_message = _sanitize_cleanuri_error_body(error.read())
+    if body_message:
+        return f"CleanURI returned HTTP {error.code}: {body_message}", False
+    if error.code in {400, 422}:
+        return "CleanURI rejected the configuration URL.", False
+    if error.code == 429:
+        return "The CleanURI rate limit was reached.", True
+    if error.code == 503 or 500 <= error.code <= 599:
+        return "CleanURI is temporarily unavailable.", False
+    return f"CleanURI returned HTTP {error.code}.", False
 
 
-def _isgd_result_from_payload(url: str, payload: object) -> ShortenedUrlResult:
+def _cleanuri_result_from_payload(url: str, payload: object) -> ShortenedUrlResult:
     if not isinstance(payload, dict):
-        return _isgd_error_result(url, "is.gd returned an invalid response.")
-    if "errorcode" in payload:
-        message, rate_limited = _isgd_error_message(payload.get("errorcode"))
-        return _isgd_error_result(url, message, rate_limited=rate_limited)
-    short_url = payload.get("shorturl")
-    if not _is_valid_isgd_short_url(short_url):
-        return _isgd_error_result(url, "is.gd returned an invalid response.")
+        return _cleanuri_error_result(url, "CleanURI returned an invalid response.")
+    short_url = payload.get("result_url")
+    if not _is_valid_cleanuri_short_url(short_url):
+        return _cleanuri_error_result(url, "CleanURI returned an invalid response.")
     return ShortenedUrlResult(url=short_url, shortened=True)
 
 
-def shorten_share_url_with_isgd(
+def shorten_share_url_with_cleanuri(
     url: str,
     *,
     timeout: float = 4.0,
 ) -> ShortenedUrlResult:
-    """Return an is.gd-shortened URL result using the official API."""
+    """Return a CleanURI-shortened URL result using the official API."""
     if not url:
-        return _isgd_error_result(url, "A share URL is required.")
-    body = urlencode({"format": "json", "url": url}).encode("utf-8")
+        return _cleanuri_error_result(url, "A share URL is required.")
+    body = urlencode({"url": url}).encode("utf-8")
     request = Request(
-        ISGD_CREATE_API_URL,
+        CLEANURI_CREATE_API_URL,
         data=body,
         headers={
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": (
-                "Mozilla/5.0 (compatible; DnDCombatSimulator/1.0; "
-                "+https://github.com/tinlar/dnd-combat-simulator)"
-            ),
+            "User-Agent": "DnDCombatSimulator/1.0",
         },
         method="POST",
     )
@@ -201,32 +198,34 @@ def shorten_share_url_with_isgd(
         with urlopen(request, timeout=timeout) as response:
             payload_text = response.read(8192).decode("utf-8")
         if not payload_text:
-            return _isgd_error_result(url, "is.gd returned an invalid response.")
-        return _isgd_result_from_payload(url, json.loads(payload_text))
+            return _cleanuri_error_result(url, "CleanURI returned an invalid response.")
+        return _cleanuri_result_from_payload(url, json.loads(payload_text))
     except HTTPError as error:
-        message, rate_limited = _isgd_http_error_message(error.code)
-        return _isgd_error_result(url, message, rate_limited=rate_limited)
+        message, rate_limited = _cleanuri_http_error_message(error)
+        return _cleanuri_error_result(url, message, rate_limited=rate_limited)
     except TimeoutError:
-        return _isgd_error_result(url, "The is.gd request timed out.")
+        return _cleanuri_error_result(url, "The CleanURI request timed out.")
     except URLError:
-        return _isgd_error_result(url, "is.gd is temporarily unavailable.")
+        return _cleanuri_error_result(url, "CleanURI is temporarily unavailable.")
     except (OSError, UnicodeDecodeError, JSONDecodeError):
-        return _isgd_error_result(url, "is.gd returned an invalid response.")
+        return _cleanuri_error_result(url, "CleanURI returned an invalid response.")
 
 
 def resolve_share_url_to_copy(
     long_url: str,
     session_state: dict[str, object],
 ) -> ShortenedUrlResult:
-    """Return the share URL to copy while reusing matching session is.gd links."""
+    """Return the share URL to copy while reusing matching session CleanURI links."""
     previous_long_url = session_state.get(GENERATED_LONG_SHARE_URL_SESSION_KEY)
     previous_short_url = session_state.get(GENERATED_SHORT_SHARE_URL_SESSION_KEY)
-    if long_url == previous_long_url and _is_valid_isgd_short_url(previous_short_url):
+    if long_url == previous_long_url and _is_valid_cleanuri_short_url(
+        previous_short_url
+    ):
         result = ShortenedUrlResult(url=previous_short_url, shortened=True)
     else:
         session_state[GENERATED_LONG_SHARE_URL_SESSION_KEY] = long_url
         session_state.pop(GENERATED_SHORT_SHARE_URL_SESSION_KEY, None)
-        result = shorten_share_url_with_isgd(long_url)
+        result = shorten_share_url_with_cleanuri(long_url)
         if result.shortened:
             session_state[GENERATED_SHORT_SHARE_URL_SESSION_KEY] = result.url
     session_state[GENERATED_SHARE_URL_TO_COPY_SESSION_KEY] = result.url
@@ -281,7 +280,7 @@ LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 GENERATED_LONG_SHARE_URL_SESSION_KEY = "_generated_long_share_url"
 GENERATED_SHORT_SHARE_URL_SESSION_KEY = "_generated_short_share_url"
 GENERATED_SHARE_URL_TO_COPY_SESSION_KEY = "_generated_share_url_to_copy"
-ISGD_CREATE_API_URL = "https://is.gd/create.php"
+CLEANURI_CREATE_API_URL = "https://cleanuri.com/api/v1/shorten"
 
 
 def profile_prefix(build_prefix: str, index: int) -> str:
@@ -1569,17 +1568,17 @@ def _render_share_configuration_button() -> None:
             url_to_copy = shortening_result.url
             _copy_share_url_to_clipboard(url_to_copy)
             if shortening_result.shortened:
-                st.success("Copied is.gd share link.")
+                st.success("Copied CleanURI share link.")
             elif shortening_result.rate_limited:
                 st.warning(
-                    "Copied the full share link because the is.gd rate limit "
+                    "Copied the full share link because the CleanURI rate limit "
                     "was reached."
                 )
                 if shortening_result.error_message:
                     st.caption(shortening_result.error_message)
             else:
                 st.warning(
-                    "Copied the full share link because is.gd shortening failed."
+                    "Copied the full share link because CleanURI shortening failed."
                 )
                 if shortening_result.error_message:
                     st.caption(shortening_result.error_message)
