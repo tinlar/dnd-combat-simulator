@@ -145,7 +145,6 @@ LOADED_SHARED_CONFIG_TOKEN_KEY = "_loaded_shared_config_token"
 LOADED_SHARE_ID_KEY = "_loaded_share_id"
 GENERATED_SHARE_URL_KEY = "_generated_share_url"
 GENERATED_SHARE_FINGERPRINT_KEY = "_generated_share_fingerprint"
-GENERATED_SHARE_COPY_NONCE_KEY = "_generated_share_copy_nonce"
 PROCESSED_SHARE_TRIGGER_KEY = "_processed_share_trigger"
 SHARE_ERROR_MESSAGE_KEY = "_share_error_message"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
@@ -492,8 +491,8 @@ export default function(component) {
     const label = parentElement.querySelector('.share-label');
     const status = parentElement.querySelector('.share-status');
     const fallbackInput = parentElement.querySelector('.share-fallback');
+    let latestData = {};
     let statusTimer = null;
-    let lastCopyNonce = null;
     let mode = 'create';
 
     function setStatus(message, temporary = false) {
@@ -504,84 +503,94 @@ export default function(component) {
             statusTimer = null;
         }
         if (temporary && message) {
-            statusTimer = window.setTimeout(() => setStatus(''), 1500);
+            statusTimer = window.setTimeout(() => {
+                setStatus('');
+                if (mode === 'copy') {
+                    label.textContent = 'Copy Link';
+                }
+            }, 1500);
         }
     }
 
-    function render(nextData) {
-        button.disabled = Boolean(nextData.disabled || nextData.creating);
+    function revealFallback(message) {
+        fallbackInput.value = latestData.url || '';
+        fallbackInput.hidden = false;
+        fallbackInput.focus();
+        fallbackInput.select();
+        label.textContent = 'Copy Link';
+        setStatus(message);
+    }
+
+    function showCopied() {
         fallbackInput.hidden = true;
-        fallbackInput.value = data['url'];
-        if (!fallbackInput.value) {
-            fallbackInput.value = nextData.url || '';
-        }
-        button.title = nextData.url ? 'Copy share link' : 'Share configuration';
+        label.textContent = 'Link copied';
+        setStatus('Link copied', true);
+    }
+
+    function render(nextData) {
+        latestData = nextData || {};
+        button.disabled = Boolean(latestData.disabled || latestData.creating);
+        fallbackInput.hidden = true;
+        fallbackInput.value = latestData.url || '';
+        button.title = latestData.url ? 'Copy share link' : 'Share configuration';
         button.setAttribute('aria-label', button.title);
 
-        if (nextData.disabled) {
+        if (latestData.disabled) {
             label.textContent = 'Temporarily unavailable';
-            setStatus(nextData.message || '');
+            setStatus(latestData.message || '');
             mode = 'disabled';
-        } else if (nextData.creating) {
+        } else if (latestData.creating) {
             label.textContent = 'Creating...';
             setStatus('');
             mode = 'creating';
-        } else if (nextData.url) {
-            label.textContent = nextData.copy_blocked ? 'Copy Link' : 'Link copied';
+        } else if (latestData.url) {
+            label.textContent = 'Copy Link';
+            setStatus('');
             mode = 'copy';
-            if (nextData.copy_blocked) {
-                fallbackInput.hidden = false;
-            }
         } else {
             label.textContent = 'Share Configuration';
-            setStatus(nextData.message || '');
+            setStatus(latestData.message || '');
             mode = 'create';
         }
     }
 
-    async function copyUrl(url, automatic = false) {
-        try {
-            const targetUrl = data.url || url;
-            await navigator.clipboard.writeText(targetUrl);
-            fallbackInput.hidden = true;
-            label.textContent = 'Link copied';
-            setStatus('Link copied', true);
-            return true;
-        } catch (error) {
-            if (!automatic) {
-                fallbackInput.hidden = false;
-                fallbackInput.focus();
-                fallbackInput.select();
-                try {
-                    if (document.execCommand("copy")) {
-                        label.textContent = 'Link copied';
-                        setStatus('Link copied', true);
-                        return true;
-                    }
-                } catch (fallbackError) {
-                    // Keep the selectable fallback visible.
-                }
-            }
-            label.textContent = 'Copy Link';
-            fallbackInput.hidden = false;
-            setStatus('Copy blocked. Use Copy Link or the selected URL.');
+    async function copyUrl() {
+        const targetUrl = latestData.url || '';
+        if (!targetUrl) {
             return false;
         }
+        if (navigator.clipboard && window.isSecureContext) {
+            try {
+                await navigator.clipboard.writeText(targetUrl);
+                showCopied();
+                return true;
+            } catch (error) {
+                // Fall through to the selectable-input fallback below.
+            }
+        }
+
+        revealFallback('Copy blocked. Press Ctrl+C.');
+        try {
+            if (document.execCommand("copy")) {
+                showCopied();
+                return true;
+            }
+        } catch (fallbackError) {
+            // Keep the selectable fallback visible.
+        }
+        revealFallback('Copy blocked. Press Ctrl+C.');
+        return false;
     }
 
     render(data || {});
-    if (data && data.url && data.copy_nonce && data.copy_nonce !== lastCopyNonce) {
-        lastCopyNonce = data.copy_nonce;
-        copyUrl(data.url, true);
-    }
 
     button.onclick = async () => {
         if (mode === 'create') {
             label.textContent = 'Creating...';
             button.disabled = true;
             setTriggerValue('create_share', `${Date.now()}-${Math.random()}`);
-        } else if (mode === 'copy' && data.url) {
-            await copyUrl(data.url, false);
+        } else if (mode === 'copy') {
+            await copyUrl();
         }
     };
 
@@ -2065,18 +2074,23 @@ def _share_configuration_fingerprint(configuration: SharedConfiguration) -> str:
 
 
 def _share_component_requested_creation(result: object) -> str | None:
+    value = getattr(result, "create_share", None)
+    if value is not None:
+        return str(value)
     if isinstance(result, dict):
-        value = result.get("create_share") or result.get("trigger_value")
+        value = result.get("create_share")
         if value is not None:
             return str(value)
-    if isinstance(result, str):
-        return result
     return None
 
 
 def _mount_unified_share_component(data: dict[str, object]) -> object:
     share_toolbar = _get_share_toolbar_component()
-    return share_toolbar(data=data, key="unified-share-configuration")
+    return share_toolbar(
+        data=data,
+        key="unified-share-configuration",
+        on_create_share_change=lambda: None,
+    )
 
 
 def _render_share_configuration_button() -> None:
@@ -2085,7 +2099,6 @@ def _render_share_configuration_button() -> None:
     state = getattr(st, "session_state", {})
     base_data: dict[str, object] = {
         "url": "",
-        "copy_nonce": state.get(GENERATED_SHARE_COPY_NONCE_KEY, 0),
         "creating": False,
         "disabled": False,
         "message": state.pop(SHARE_ERROR_MESSAGE_KEY, ""),
@@ -2152,9 +2165,6 @@ def _render_share_configuration_button() -> None:
             getattr(getattr(st, "context", None), "url", ""), share_id
         )
         state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
-        state[GENERATED_SHARE_COPY_NONCE_KEY] = (
-            int(state.get(GENERATED_SHARE_COPY_NONCE_KEY, 0)) + 1
-        )
         rerun = getattr(st, "rerun", None)
         if rerun is not None:
             rerun()

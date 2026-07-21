@@ -955,8 +955,9 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
 
     mounts = [call[1] for call in calls if call[0] == "component_mount"]
     assert len(mounts) == 1
-    assert list(mounts[0]) == ["data", "key"]
+    assert list(mounts[0]) == ["data", "key", "on_create_share_change"]
     assert mounts[0]["key"] == "unified-share-configuration"
+    assert callable(mounts[0]["on_create_share_change"])
     share_url = mounts[0]["data"]["url"]
     assert share_url == "https://first-party.example/sim?share=yiEwgVR97pGY"
 
@@ -984,6 +985,7 @@ def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
     assert "Open Shared Configuration" not in source
     assert "setTriggerValue" in app.SHARE_TOOLBAR_JS
     assert "setStateValue" not in app.SHARE_TOOLBAR_JS
+    assert "on_create_share_change=lambda: None" in source
 
 
 def test_render_share_configuration_button_invalid_damage_does_not_raise_or_serialize(
@@ -1152,8 +1154,19 @@ def test_share_component_copies_inside_button_click_with_fallback() -> None:
     fallback_index = js.index('document.execCommand("copy")')
     assert write_index < fallback_index
     assert onclick_index < trigger_index
-    assert "setStatus('Link copied'" in js
-    assert "Copy blocked" in js
+    show_copied_index = js.index("function showCopied()")
+    render_index = js.index("function render(nextData)")
+    assert "latestData = nextData || {}" in js
+    assert "const targetUrl = latestData.url || ''" in js
+    assert "window.isSecureContext" in js
+    assert "copy_nonce" not in js
+    assert "lastCopyNonce" not in js
+    assert "copyUrl(data.url" not in js
+    assert "copyUrl();" in js[onclick_index:]
+    assert show_copied_index < render_index
+    assert "showCopied();" in js[write_index:fallback_index]
+    assert "showCopied();" in js[fallback_index:]
+    assert "Copy blocked. Press Ctrl+C." in js
     assert "setTriggerValue" in js
     assert "setStateValue" not in js[:write_index]
 
@@ -1607,8 +1620,8 @@ def test_unified_share_trigger_saves_once_and_rerun_does_not_repeat(monkeypatch)
         state[app.GENERATED_SHARE_URL_KEY]
         == "https://example.test/sim?share=yiEwgVR97pGY"
     )
-    assert state[app.GENERATED_SHARE_COPY_NONCE_KEY] == 1
     assert len(mounts) == 2
+    assert mounts[1]["data"]["url"] == "https://example.test/sim?share=yiEwgVR97pGY"
 
 
 def test_unified_share_existing_url_copy_causes_no_insert(monkeypatch):

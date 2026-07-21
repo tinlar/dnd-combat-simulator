@@ -229,9 +229,10 @@ ruff format .
 ## Sharing Configurations
 
 1. Configure the simulation, including the shared Scenario inputs and Build A/Build B inputs you want to send.
-2. Click the single **Share Configuration** control near the top of the app. The app creates the link and attempts to copy it automatically; if browser clipboard permissions block that automatic copy, the same control changes to **Copy Link** so you can copy the generated URL without creating another share record.
-3. New share links are short first-party URLs in the form `?share=<short-id>`, such as `?share=yiEwgVR97pGY`. The configuration inputs are stored in the application database and the URL contains only the short record ID.
-4. A brief **Link copied** message confirms the link was copied.
-5. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
+2. Click the single **Share Configuration** control near the top of the app. The app creates the link and then changes the same control to **Copy Link** without attempting an automatic clipboard copy after the rerun.
+3. Click **Copy Link** to copy the generated URL without creating another share record. If browser clipboard permissions block the copy, the app displays and selects the URL so you can press Ctrl+C manually.
+4. New share links are short first-party URLs in the form `?share=<short-id>`, such as `?share=yiEwgVR97pGY`. The configuration inputs are stored in the application database and the URL contains only the short record ID.
+5. A brief **Link copied** message confirms the link was copied.
+6. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
 Share links contain configuration inputs only, not saved simulation results. Existing legacy `?config=<compressed-token>` links remain supported indefinitely. If a database record for a short `?share=` link is missing or deleted, that short link cannot be restored.
