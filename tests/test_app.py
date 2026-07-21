@@ -628,3 +628,111 @@ def test_single_build_and_comparison_chart_render_paths_are_separate(
     app._render_comparison_results(comparison)
 
     assert calls == ["single", "comparison"]
+
+
+def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import FEATURE_HELP, _attack_profile_inputs
+    from dnd_combat_simulator.combat import AttackFeature
+
+    calls: list[tuple[str, object]] = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+    col = Column()
+
+    def expander(label, **kwargs):
+        calls.append(("expander", {"label": label, **kwargs}))
+        return Context()
+
+    def checkbox(label, **kwargs):
+        calls.append(("checkbox", {"label": label, **kwargs}))
+        return label == "Great Weapon Fighting"
+
+    fake_streamlit = SimpleNamespace(
+        selectbox=col.selectbox,
+        text_input=col.text_input,
+        number_input=col.number_input,
+        columns=lambda spec: [col for _ in range(spec)],
+        expander=expander,
+        checkbox=checkbox,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    profile = _attack_profile_inputs("first-primary", "Attack")
+
+    assert profile.features == frozenset({AttackFeature.GREAT_WEAPON_FIGHTING})
+    assert ("expander", {"label": "Feats and Features", "expanded": False}) in calls
+    checkbox_calls = [call for kind, call in calls if kind == "checkbox"]
+    assert [call["label"] for call in checkbox_calls] == [
+        "Elven Accuracy",
+        "Great Weapon Fighting",
+        "Tavern Brawler",
+    ]
+    assert checkbox_calls[0]["key"] == "first-primary-feature-elven_accuracy"
+    assert checkbox_calls[0]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
+
+
+def test_profile_breakdown_rows_include_formatted_features() -> None:
+    from dnd_combat_simulator.app import (
+        SingleBuildInputs,
+        _profile_breakdown_rows,
+        run_single_build_from_inputs,
+    )
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    result = run_single_build_from_inputs(
+        SingleBuildInputs(
+            build=BuildConfig(
+                "Features",
+                20,
+                "1d4",
+                1,
+                attack_profiles=(
+                    AttackProfile("Plain", 20, "1d4", 1),
+                    AttackProfile(
+                        "Featured",
+                        20,
+                        "1d4",
+                        1,
+                        features=frozenset(
+                            {
+                                AttackFeature.TAVERN_BRAWLER,
+                                AttackFeature.GREAT_WEAPON_FIGHTING,
+                            }
+                        ),
+                    ),
+                ),
+            ),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+            seed=1,
+        )
+    )
+
+    rows = _profile_breakdown_rows(result)
+    assert rows[0]["Feats and Features"] == "None"
+    assert rows[1]["Feats and Features"] == "Great Weapon Fighting, Tavern Brawler"

@@ -167,3 +167,68 @@ def test_reroll_forms(formula: str, rolls: list[int], expected: int) -> None:
 def test_complex_formula_validation(formula: str) -> None:
     with pytest.raises(ValueError):
         parse_dice_notation(formula)
+
+
+def test_great_weapon_fighting_adjusts_low_damage_faces_only() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "4d6+2",
+            rng=SequenceRng([1, 2, 3, 6]),
+            features=frozenset({"great_weapon_fighting"}),
+        )
+        == 17
+    )
+
+
+def test_great_weapon_fighting_does_not_alter_explosion_triggering() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "1d6!3",
+            rng=SequenceRng([2]),
+            features=frozenset({"great_weapon_fighting"}),
+        )
+        == 3
+    )
+
+
+def test_tavern_brawler_rerolls_one_accepted_natural_one_once() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "1d6",
+            rng=SequenceRng([1, 1]),
+            features=frozenset({"tavern_brawler"}),
+        )
+        == 1
+    )
+
+
+def test_formula_rerolls_tavern_brawler_then_gwf_order() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "1d6r2!",
+            rng=SequenceRng([2, 1, 2]),
+            features=frozenset({"tavern_brawler", "great_weapon_fighting"}),
+        )
+        == 3
+    )
+
+
+def test_keep_drop_operates_on_adjusted_chain_totals() -> None:
+    from dnd_combat_simulator.dice import roll_damage_formula
+
+    assert (
+        roll_damage_formula(
+            "2d6kh1",
+            rng=SequenceRng([1, 2]),
+            features=frozenset({"great_weapon_fighting"}),
+        )
+        == 3
+    )

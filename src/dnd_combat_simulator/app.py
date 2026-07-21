@@ -8,6 +8,7 @@ from textwrap import dedent
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import (
+    AttackFeature,
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
@@ -21,6 +22,36 @@ from dnd_combat_simulator.simulation import (
     compare_builds,
     run_damage_simulations,
     simulate_build,
+)
+
+FEATURE_LABELS = {
+    AttackFeature.ELVEN_ACCURACY: "Elven Accuracy",
+    AttackFeature.GREAT_WEAPON_FIGHTING: "Great Weapon Fighting",
+    AttackFeature.TAVERN_BRAWLER: "Tavern Brawler",
+}
+
+FEATURE_HELP = {
+    AttackFeature.ELVEN_ACCURACY: (
+        "When this profile makes an eligible Dexterity, Intelligence, Wisdom, or "
+        "Charisma attack with Advantage, reroll one of the two d20s once. The "
+        "lower die is rerolled and the highest remaining result is used."
+    ),
+    AttackFeature.GREAT_WEAPON_FIGHTING: (
+        "Whenever this profile rolls a damage die, treat a result of 1 or 2 as a "
+        "3. This changes the die's damage contribution but does not change its "
+        "natural face for exploding-die checks."
+    ),
+    AttackFeature.TAVERN_BRAWLER: (
+        "Whenever this profile rolls a damage die and the accepted result is 1, "
+        "reroll that die once. The replacement result must be used, even if it "
+        "is another 1."
+    ),
+}
+
+FEATURE_ORDER = (
+    AttackFeature.ELVEN_ACCURACY,
+    AttackFeature.GREAT_WEAPON_FIGHTING,
+    AttackFeature.TAVERN_BRAWLER,
 )
 
 DAMAGE_FORMULA_HELP = dedent(
@@ -56,7 +87,8 @@ DAMAGE_FORMULA_HELP = dedent(
 
     **Processing order**
 
-    Reroll, explode, keep/drop, then apply the modifier.
+    Formula rerolls, Tavern Brawler, explosion checks, Great Weapon Fighting
+    damage contribution, keep/drop, then apply the modifier.
     """
 ).strip()
 
@@ -593,6 +625,7 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Attacks per active round": str(profile.attacks_per_round),
             "Affected targets": str(profile.affected_targets),
             "Active Rounds": profile.active_rounds or "Every round",
+            "Feats and Features": format_features(profile.features),
             "Average total damage per round": format_damage(
                 profile_result.average_damage_per_round
             ),
@@ -807,6 +840,43 @@ def _render_comparison_results(comparison: BuildComparisonResult) -> None:
             )
 
 
+def format_features(features: frozenset[AttackFeature]) -> str:
+    """Format selected profile features in stable interface order."""
+    selected = [
+        FEATURE_LABELS[feature] for feature in FEATURE_ORDER if feature in features
+    ]
+    return ", ".join(selected) if selected else "None"
+
+
+def _feature_inputs(
+    prefix: str, resolution_type: ResolutionType
+) -> frozenset[AttackFeature]:
+    """Render feats and features controls for one attack profile."""
+    import streamlit as st
+
+    selected = set()
+    expander = getattr(st, "expander", None)
+    checkbox = getattr(st, "checkbox", None)
+    if expander is None or checkbox is None:
+        return frozenset()
+    with expander("Feats and Features", expanded=False):
+        for feature in FEATURE_ORDER:
+            disabled = (
+                feature is AttackFeature.ELVEN_ACCURACY
+                and resolution_type is not ResolutionType.ATTACK_ROLL
+            )
+            checked = checkbox(
+                FEATURE_LABELS[feature],
+                value=False,
+                key=f"{prefix}-feature-{feature.value}",
+                help=FEATURE_HELP[feature],
+                disabled=disabled,
+            )
+            if checked and not disabled:
+                selected.add(feature)
+    return frozenset(selected)
+
+
 def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
     """Render and collect one attack profile's input controls."""
     import streamlit as st
@@ -886,6 +956,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
         key=f"{prefix}-active-rounds",
     )
+    features = _feature_inputs(prefix, resolution_type)
     return AttackProfile(
         name=attack_name,
         attack_bonus=None if attack_bonus is None else int(attack_bonus),
@@ -897,6 +968,7 @@ def _attack_profile_inputs(prefix: str, default_name: str) -> AttackProfile:
         resolution_type=resolution_type,
         save_dc=None if save_dc is None else int(save_dc),
         successful_save_damage=successful_save_damage,
+        features=features,
     )
 
 

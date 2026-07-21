@@ -331,3 +331,83 @@ def test_automatic_damage_cannot_be_below_zero() -> None:
     )
 
     assert result.damage_dealt == 0
+
+
+def test_elven_accuracy_rerolls_lower_advantage_die_and_uses_replacement() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    rng = PredictableRng([14, 6, 17, 3])
+
+    result = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=15,
+        damage_dice="1d6",
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+        rng=rng,
+    )
+
+    assert result.d20_rolls == (14, 6, 17)
+    assert result.natural_d20_roll == 17
+    assert result.hit is True
+    assert rng.calls[:3] == [(1, 20), (1, 20), (1, 20)]
+
+
+def test_elven_accuracy_tied_advantage_rerolls_second_die() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    result = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=20,
+        damage_dice="1d6",
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+        rng=PredictableRng([10, 10, 20, 4, 5]),
+    )
+
+    assert result.d20_rolls == (10, 10, 20)
+    assert result.natural_d20_roll == 20
+    assert result.critical_hit is True
+
+
+def test_elven_accuracy_discarded_natural_20_does_not_crit() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    result = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d6",
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+        rng=PredictableRng([20, 20, 7, 3, 4]),
+    )
+
+    assert result.natural_d20_roll == 20
+    assert result.critical_hit is True
+    # tie behavior rerolls the second die, leaving the original first natural 20.
+    assert result.d20_rolls == (20, 20, 7)
+
+
+def test_elven_accuracy_has_no_effect_for_normal_or_disadvantage() -> None:
+    from dnd_combat_simulator.combat import AttackFeature
+
+    normal = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=99,
+        damage_dice="1d6",
+        attack_roll_mode=AttackRollMode.NORMAL,
+        features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+        rng=PredictableRng([12]),
+    )
+    disadvantage = resolve_weapon_attack(
+        attack_bonus=0,
+        target_armor_class=99,
+        damage_dice="1d6",
+        attack_roll_mode=AttackRollMode.DISADVANTAGE,
+        features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+        rng=PredictableRng([18, 4]),
+    )
+
+    assert normal.d20_rolls == (12,)
+    assert disadvantage.d20_rolls == (18, 4)
+    assert disadvantage.natural_d20_roll == 4

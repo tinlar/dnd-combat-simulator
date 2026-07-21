@@ -895,3 +895,77 @@ def test_simulate_build_does_not_validate_unrelated_second_build() -> None:
     )
 
     assert result.simulations_run == 1
+
+
+def test_elven_accuracy_rejected_for_non_attack_profiles() -> None:
+    import pytest
+
+    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
+    from dnd_combat_simulator.simulation import AttackProfile, run_damage_simulations
+
+    with pytest.raises(ValueError, match="Elven Accuracy requires an Attack Roll"):
+        run_damage_simulations(
+            attack_bonus=0,
+            target_armor_class=10,
+            damage_dice="1d6",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "Save",
+                    None,
+                    "1d6",
+                    1,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=10,
+                    features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+                ),
+            ),
+        )
+
+
+def test_saving_throw_shared_damage_applies_features_once_for_multiple_targets() -> (
+    None
+):
+    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
+    from dnd_combat_simulator.simulation import AttackProfile, run_damage_simulations
+
+    class Rng:
+        def __init__(self):
+            self.rolls = [1, 2, 1, 1]
+            self.calls = []
+
+        def randint(self, a, b):
+            self.calls.append((a, b))
+            return self.rolls.pop(0)
+
+    rng = Rng()
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1d6",
+        rounds=1,
+        simulations=1,
+        enemy_save_bonus=0,
+        attack_profiles=(
+            AttackProfile(
+                "Shared save",
+                None,
+                "1d6",
+                1,
+                affected_targets=2,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+                features=frozenset(
+                    {
+                        AttackFeature.TAVERN_BRAWLER,
+                        AttackFeature.GREAT_WEAPON_FIGHTING,
+                    }
+                ),
+            ),
+        ),
+        rng=rng,
+    )
+
+    assert result.average_total_damage == 6
+    assert rng.calls == [(1, 6), (1, 6), (1, 20), (1, 20)]

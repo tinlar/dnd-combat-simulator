@@ -255,12 +255,32 @@ def _roll_accepted_face(dice: DiceNotation, rng: RandomNumberGenerator) -> int:
             )
 
 
-def roll_dice_pool(dice: DiceNotation, rng: RandomNumberGenerator) -> int:
+def _damage_contribution(face: int, features: frozenset[str]) -> int:
+    if "great_weapon_fighting" in features and face in {1, 2}:
+        return 3
+    return face
+
+
+def _roll_feature_adjusted_face(
+    dice: DiceNotation, rng: RandomNumberGenerator, features: frozenset[str]
+) -> tuple[int, int]:
+    face = _roll_accepted_face(dice, rng)
+    if "tavern_brawler" in features and face == 1:
+        face = rng.randint(1, dice.sides)
+    return face, _damage_contribution(face, features)
+
+
+def roll_dice_pool(
+    dice: DiceNotation,
+    rng: RandomNumberGenerator,
+    *,
+    features: frozenset[str] = frozenset(),
+) -> int:
     """Evaluate one dice-pool portion before applying the flat modifier."""
     chains: list[int] = []
     for _ in range(dice.count):
-        face = _roll_accepted_face(dice, rng)
-        chain_total = face
+        face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+        chain_total = contribution
         additional = 0
         while _matches_explosion(face, dice):
             additional += 1
@@ -269,8 +289,8 @@ def roll_dice_pool(dice: DiceNotation, rng: RandomNumberGenerator) -> int:
                     "Maximum explosion chain limit "
                     f"({MAX_EXPLOSION_CHAIN_ROLLS}) exceeded."
                 )
-            face = _roll_accepted_face(dice, rng)
-            chain_total += face
+            face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+            chain_total += contribution
         chains.append(chain_total)
 
     values = sorted(chains)
@@ -286,14 +306,18 @@ def roll_dice_pool(dice: DiceNotation, rng: RandomNumberGenerator) -> int:
 
 
 def roll_damage_formula(
-    notation: str, *, critical: bool = False, rng: RandomNumberGenerator | None = None
+    notation: str,
+    *,
+    critical: bool = False,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[str] = frozenset(),
 ) -> int:
     """Roll a full damage formula, applying the modifier once after pool rolls."""
     dice = parse_dice_notation(notation)
     random_number_generator = rng if rng is not None else Random()
-    total = roll_dice_pool(dice, random_number_generator)
+    total = roll_dice_pool(dice, random_number_generator, features=features)
     if critical:
-        total += roll_dice_pool(dice, random_number_generator)
+        total += roll_dice_pool(dice, random_number_generator, features=features)
     return max(0, total + dice.modifier)
 
 
