@@ -257,6 +257,16 @@ def parse_damage_expression(notation: str) -> DamageExpression:
         raise ValueError("Invalid damage expression: expression is required.")
     if any(character.isspace() for character in text):
         raise ValueError("Invalid dice notation: spaces are not supported.")
+    if re.search(r"[^0-9d+\-!<>rkhld]", text):
+        raise ValueError(
+            "Invalid damage expression: invalid characters are not supported."
+        )
+    if re.search(r"[+\-]{2,}", text):
+        raise ValueError(
+            "Invalid damage expression: consecutive operators are not supported."
+        )
+    if re.search(r"(?:^|[+\-])d\d+", text):
+        raise ValueError("Invalid damage expression: missing dice count.")
 
     terms: list[DamageTerm] = []
     position = 0
@@ -278,7 +288,8 @@ def parse_damage_expression(notation: str) -> DamageExpression:
             expecting_term = True
             if position == len(text):
                 raise ValueError(
-                    "Invalid damage expression: expression cannot end with an operator."
+                    "Invalid damage expression: damage expression cannot end "
+                    "with an operator."
                 )
             continue
 
@@ -293,8 +304,13 @@ def parse_damage_expression(notation: str) -> DamageExpression:
         elif _INT_PATTERN.fullmatch(token):
             terms.append(ConstantTerm(sign * int(token)))
         else:
+            if "d" in token.lower() and "d" not in token:
+                raise ValueError(
+                    "Invalid damage expression: dice separator must be lowercase 'd'."
+                )
             raise ValueError(
-                f"Invalid damage expression {notation!r}: unsupported term {token!r}."
+                f"Invalid damage expression {notation!r}: unsupported dice "
+                f"modifiers or malformed modifier syntax in {token!r}."
             )
         expecting_term = False
 

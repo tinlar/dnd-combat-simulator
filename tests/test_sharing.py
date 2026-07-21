@@ -317,3 +317,29 @@ def test_loaded_configuration_can_be_simulated_single_and_comparison_results_mat
         scenario=scenario,
         seed=config.scenario.seed,
     )
+
+
+def test_invalid_shared_configuration_can_decode_without_validation_for_field_marking():
+    config = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 4, 10),
+        seed=1,
+        build_a=BuildConfig(
+            "Build A",
+            5,
+            "1d6+",
+            1,
+            attack_profiles=(profile("Bad", damage_dice="1d6+"),),
+        ),
+        build_b=BuildConfig("Build B", 5, "1d8", 1),
+    )
+    payload = json.dumps(
+        config.to_json_dict(), sort_keys=True, separators=(",", ":")
+    ).encode()
+    token = base64.urlsafe_b64encode(zlib.compress(payload)).decode().rstrip("=")
+
+    with pytest.raises(SharedConfigurationError):
+        deserialize_shared_configuration(token)
+
+    decoded = deserialize_shared_configuration(token, validate=False)
+    assert decoded.build_a.attack_profiles[0].damage_formula == "1d6+"
