@@ -400,12 +400,10 @@ def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> 
         raise SharedConfigurationError(f"{label} requires a positive Save DC.")
     try:
         validate_feature_resolution_combination(
-            profile.features, profile.resolution_type, label=label
+            profile.features,
+            profile.resolution_type,
+            label=label,
+            affected_targets=profile.affected_targets,
         )
     except ValueError as error:
         raise SharedConfigurationError(str(error)) from error
-    if AttackFeature.STOP_ON_MISS in profile.features and (
-        profile.resolution_type is not ResolutionType.ATTACK_ROLL
-        or profile.affected_targets != 1
-    ):
-        raise SharedConfigurationError(f"{label} has invalid Stop on Miss.")

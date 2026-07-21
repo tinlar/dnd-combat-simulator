@@ -231,16 +231,12 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
         raise ValueError(msg)
     resolution_type = ResolutionType(profile.resolution_type)
     features = frozenset(AttackFeature(feature) for feature in profile.features)
-    validate_feature_resolution_combination(features, resolution_type, label=label)
-    if AttackFeature.STOP_ON_MISS in features and (
-        resolution_type is not ResolutionType.ATTACK_ROLL
-        or profile.affected_targets != 1
-    ):
-        msg = (
-            f"{label} Stop on Miss requires an Attack Roll profile with "
-            "exactly 1 Affected Target."
-        )
-        raise ValueError(msg)
+    validate_feature_resolution_combination(
+        features,
+        resolution_type,
+        label=label,
+        affected_targets=profile.affected_targets,
+    )
     if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
         msg = f"{label} Attack Bonus is required for attack-roll profiles."
         raise ValueError(msg)

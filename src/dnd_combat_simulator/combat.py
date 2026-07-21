@@ -44,28 +44,83 @@ ATTACK_ROLL_ONLY_FEATURES = frozenset(
 )
 
 
+def is_feature_available(
+    feature: AttackFeature | str,
+    resolution_type: ResolutionType | str,
+    *,
+    affected_targets: int = 1,
+) -> bool:
+    """Return whether a feature can be used by a profile shape."""
+    selected_feature = AttackFeature(feature)
+    selected_resolution_type = ResolutionType(resolution_type)
+    if (
+        selected_feature in ATTACK_ROLL_ONLY_FEATURES
+        and selected_resolution_type is not ResolutionType.ATTACK_ROLL
+    ):
+        return False
+    if (
+        selected_feature is AttackFeature.POTENT_CANTRIP
+        and selected_resolution_type is ResolutionType.AUTOMATIC_DAMAGE
+    ):
+        return False
+    return not (
+        selected_feature is AttackFeature.STOP_ON_MISS
+        and (
+            selected_resolution_type is not ResolutionType.ATTACK_ROLL
+            or affected_targets != 1
+        )
+    )
+
+
+def available_features(
+    features: frozenset[AttackFeature] | tuple[AttackFeature, ...],
+    resolution_type: ResolutionType | str,
+    *,
+    affected_targets: int = 1,
+) -> frozenset[AttackFeature]:
+    """Filter features to those available for a profile shape."""
+    return frozenset(
+        AttackFeature(feature)
+        for feature in features
+        if is_feature_available(
+            feature, resolution_type, affected_targets=affected_targets
+        )
+    )
+
+
 def validate_feature_resolution_combination(
     features: frozenset[AttackFeature],
     resolution_type: ResolutionType | str,
     *,
     label: str = "Profile",
+    affected_targets: int = 1,
 ) -> None:
-    """Raise a readable error for features that cannot use a resolution type."""
+    """Raise a readable error for features unavailable for a profile shape."""
     selected_features = frozenset(AttackFeature(feature) for feature in features)
     selected_resolution_type = ResolutionType(resolution_type)
     for feature in ATTACK_ROLL_ONLY_FEATURES:
-        if (
-            feature in selected_features
-            and selected_resolution_type is not ResolutionType.ATTACK_ROLL
-        ):
+        if not is_feature_available(
+            feature, selected_resolution_type, affected_targets=affected_targets
+        ) and feature in selected_features:
             feature_label = feature.value.replace("_", " ").title()
             msg = f"{label} {feature_label} requires an Attack Roll resolution type."
             raise ValueError(msg)
-    if (
-        AttackFeature.POTENT_CANTRIP in selected_features
-        and selected_resolution_type is ResolutionType.AUTOMATIC_DAMAGE
+    if AttackFeature.POTENT_CANTRIP in selected_features and not is_feature_available(
+        AttackFeature.POTENT_CANTRIP,
+        selected_resolution_type,
+        affected_targets=affected_targets,
     ):
         msg = f"{label} Potent Cantrip cannot be used with Automatic Damage."
+        raise ValueError(msg)
+    if AttackFeature.STOP_ON_MISS in selected_features and not is_feature_available(
+        AttackFeature.STOP_ON_MISS,
+        selected_resolution_type,
+        affected_targets=affected_targets,
+    ):
+        msg = (
+            f"{label} Stop on Miss requires an Attack Roll profile with "
+            "exactly 1 Affected Target."
+        )
         raise ValueError(msg)
 
 
