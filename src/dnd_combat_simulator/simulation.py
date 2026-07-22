@@ -374,24 +374,18 @@ def run_damage_simulations(
         *,
         profile_index: int,
         round_number: int,
-        target_index: int,
         damage: int,
-        round_target_damage: dict[int, int],
-        profile_round_target_damage: dict[int, dict[int, int]],
     ) -> None:
         if damage <= 0:
             return
-        round_target_damage[target_index] = (
-            round_target_damage.get(target_index, 0) + damage
-        )
-        profile_targets = profile_round_target_damage.setdefault(profile_index, {})
-        profile_targets[target_index] = profile_targets.get(target_index, 0) + damage
+        round_targets_affected_totals[round_number] += 1
+        round_individual_damage_totals[round_number] += damage
+        profile_targets_affected_total[profile_index] += 1
+        profile_individual_damage_total[profile_index] += damage
 
     for _ in range(simulations):
         simulation_damage = 0
         for round_number in range(1, rounds + 1):
-            round_target_damage: dict[int, int] = {}
-            profile_round_target_damage: dict[int, dict[int, int]] = {}
             for profile_index, profile in enumerate(profiles):
                 active_round_set = active_round_sets[profile_index]
                 if (
@@ -429,10 +423,7 @@ def run_damage_simulations(
                             record_target_damage(
                                 profile_index=profile_index,
                                 round_number=round_number,
-                                target_index=target_index,
                                 damage=damage,
-                                round_target_damage=round_target_damage,
-                                profile_round_target_damage=profile_round_target_damage,
                             )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
@@ -475,10 +466,7 @@ def run_damage_simulations(
                             record_target_damage(
                                 profile_index=profile_index,
                                 round_number=round_number,
-                                target_index=0,
                                 damage=damage,
-                                round_target_damage=round_target_damage,
-                                profile_round_target_damage=profile_round_target_damage,
                             )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
@@ -526,10 +514,7 @@ def run_damage_simulations(
                             record_target_damage(
                                 profile_index=profile_index,
                                 round_number=round_number,
-                                target_index=target_index,
                                 damage=damage,
-                                round_target_damage=round_target_damage,
-                                profile_round_target_damage=profile_round_target_damage,
                             )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
@@ -560,32 +545,13 @@ def run_damage_simulations(
                             record_target_damage(
                                 profile_index=profile_index,
                                 round_number=round_number,
-                                target_index=target_index,
                                 damage=damage,
-                                round_target_damage=round_target_damage,
-                                profile_round_target_damage=profile_round_target_damage,
                             )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
                             total_automatic_damage_applications += 1
                             profile_automatic_damage_applications[profile_index] += 1
-
-            affected_targets = len(round_target_damage)
-            round_targets_affected_totals[round_number] += affected_targets
-            if affected_targets:
-                round_individual_damage_totals[round_number] += (
-                    sum(round_target_damage.values()) / affected_targets
-                )
-            for profile_index, target_damage in profile_round_target_damage.items():
-                affected_profile_targets = len(target_damage)
-                profile_targets_affected_total[profile_index] += (
-                    affected_profile_targets
-                )
-                if affected_profile_targets:
-                    profile_individual_damage_total[profile_index] += (
-                        sum(target_damage.values()) / affected_profile_targets
-                    )
 
         total_damage_all_simulations += simulation_damage
         minimum_total_damage = (
@@ -634,7 +600,10 @@ def run_damage_simulations(
             ),
             total_target_resolutions=profile_target_resolutions[index],
             average_damage_per_target_per_round=(
-                profile_individual_damage_total[index] / total_rounds
+                profile_individual_damage_total[index]
+                / profile_targets_affected_total[index]
+                if profile_targets_affected_total[index]
+                else 0
             ),
             automatic_damage_applications=profile_automatic_damage_applications[index],
             total_skipped_profile_uses=profile_skipped_attacks[index],
@@ -659,7 +628,10 @@ def run_damage_simulations(
                 round_targets_affected_totals[round_number] / simulations
             ),
             average_individual_damage=(
-                round_individual_damage_totals[round_number] / simulations
+                round_individual_damage_totals[round_number]
+                / round_targets_affected_totals[round_number]
+                if round_targets_affected_totals[round_number]
+                else 0
             ),
             hit_rate=(
                 round_hits[round_number] / round_attack_roll_resolutions[round_number]
