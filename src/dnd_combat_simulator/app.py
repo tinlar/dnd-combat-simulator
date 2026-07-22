@@ -926,6 +926,11 @@ def format_damage(value: float) -> str:
     return f"{value:.2f}"
 
 
+def format_compact_decimal(value: float) -> str:
+    """Format a decimal with up to two places and no unnecessary trailing zeros."""
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
 def format_rate(value: float) -> str:
     """Format a fractional rate as a percentage for display."""
     return f"{value:.2%}"
@@ -1396,9 +1401,9 @@ def _render_results(result: SimulationResult) -> None:
         "Maximum total damage",
         format_damage(result.maximum_total_damage_in_simulation),
     )
-    second_row[2].metric("Total attacks simulated", f"{result.total_attacks_made:,}")
+    second_row[2].metric("Total attack uses", f"{result.total_attacks_made:,}")
     second_row[3].metric(
-        "Target resolutions simulated", f"{result.total_target_resolutions:,}"
+        "Target instances damaged", f"{result.total_targets_affected:,}"
     )
 
     st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
@@ -1428,9 +1433,12 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Average total damage across all affected targets": format_damage(
                 profile_result.average_total_damage_per_simulation
             ),
-            "Configured uses": f"{profile_result.configured_profile_uses:,}",
-            "Triggered executions": f"{profile_result.triggered_profile_uses:,}",
-            "Total actual executions": f"{profile_result.total_profile_uses:,}",
+            "Average executions per combat": format_compact_decimal(
+                profile_result.average_executions_per_combat
+            ),
+            "Average executions per round": format_compact_decimal(
+                profile_result.average_executions_per_round
+            ),
         }
         if profile.trigger_type is not TriggerType.ALWAYS:
             source = next(
@@ -1445,7 +1453,8 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
                 profile_result.average_triggered_profile_uses_per_simulation
             )
             row["Trigger"] = (
-                f"Triggered {average_triggered:.2f} times per simulation "
+                "Triggered "
+                f"{format_compact_decimal(average_triggered)} times per combat "
                 f"after {source} succeeds"
             )
         if profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
@@ -1506,8 +1515,8 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
         },
         {"Metric": "Total attack uses", "Value": f"{result.total_attacks_made:,}"},
         {
-            "Metric": "Total target resolutions",
-            "Value": f"{result.total_target_resolutions:,}",
+            "Metric": "Target instances damaged",
+            "Value": f"{result.total_targets_affected:,}",
         },
     ]
 

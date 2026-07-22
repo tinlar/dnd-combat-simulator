@@ -315,9 +315,15 @@ def test_single_build_rows_include_required_complete_results() -> None:
     assert "Minimum total damage" in metric_names
     assert "Maximum total damage" in metric_names
     assert "Total attack uses" in metric_names
-    assert "Total target resolutions" in metric_names
+    assert "Target instances damaged" in metric_names
     assert len(_single_round_breakdown_rows(result)) == 2
-    assert _profile_breakdown_rows(result)[0]["Attack profile"] == "Attack"
+    profile_row = _profile_breakdown_rows(result)[0]
+    assert profile_row["Attack profile"] == "Attack"
+    assert "Average executions per combat" in profile_row
+    assert "Average executions per round" in profile_row
+    assert "Configured uses" not in profile_row
+    assert "Triggered executions" not in profile_row
+    assert "Total actual executions" not in profile_row
 
 
 def test_comparison_toggle_default_off_and_single_mode_uses_only_first_build(

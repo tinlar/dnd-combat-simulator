@@ -703,7 +703,7 @@ def test_multiple_uses_active_rounds_and_multi_target_totals() -> None:
     ]
     assert result.total_attacks_made == 2
     assert result.total_target_resolutions == 4
-    assert result.average_damage_per_target_per_round == 1.25
+    assert result.average_damage_per_target_per_round == 2.5
 
 
 def test_affected_targets_must_be_positive_integer() -> None:
@@ -1883,11 +1883,11 @@ def test_new_trigger_frequencies_success_failure_and_critical_validation() -> No
     )
 
     profiles = (
-        AttackProfile("Source", 99, "1d1", 3, attack_id="src"),
+        AttackProfile("Source", 99, "1", 3, attack_id="src"),
         AttackProfile(
             "Every",
             None,
-            "1d1",
+            "1",
             1,
             attack_id="every",
             resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
@@ -1898,7 +1898,7 @@ def test_new_trigger_frequencies_success_failure_and_critical_validation() -> No
         AttackProfile(
             "Round",
             None,
-            "1d1",
+            "1",
             1,
             attack_id="round",
             resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
@@ -1909,7 +1909,7 @@ def test_new_trigger_frequencies_success_failure_and_critical_validation() -> No
         AttackProfile(
             "Combat",
             None,
-            "1d1",
+            "1",
             1,
             attack_id="combat",
             resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
@@ -1921,10 +1921,11 @@ def test_new_trigger_frequencies_success_failure_and_critical_validation() -> No
     result = run_damage_simulations(
         attack_bonus=1,
         target_armor_class=-100,
-        damage_dice="1d1",
+        damage_dice="1",
         rounds=2,
         simulations=1,
         attack_profiles=profiles,
+        rng=PredictableRng([10, 10, 10, 10, 10, 10]),
     )
     by_id = {
         r.attack_profile.attack_id: r.triggered_profile_uses
@@ -1965,3 +1966,128 @@ def test_new_trigger_frequencies_success_failure_and_critical_validation() -> No
             ScenarioConfig(1, 1, 1),
             seed=1,
         )
+
+
+def test_chromatic_orb_five_attacks_round_one_reports_individual_damage() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=1,
+        damage_dice="1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Chromatic Orb",
+                None,
+                "6",
+                5,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+    )
+
+    round_one = result.round_results[0]
+    assert round_one.average_targets_affected == pytest.approx(5)
+    assert round_one.average_damage == 30
+    assert round_one.average_individual_damage == pytest.approx(6)
+    assert result.average_damage_per_target_per_round == pytest.approx(6)
+
+
+def test_profile_average_executions_include_triggered_and_normal_uses() -> None:
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=1,
+        damage_dice="1",
+        rounds=2,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Strike", 20, "1", 1, attack_id="a"),
+            AttackProfile(
+                "Rider",
+                None,
+                "1",
+                1,
+                attack_id="b",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+                trigger_frequency="per_success",
+            ),
+        ),
+        rng=PredictableRng([10, 10]),
+    )
+
+    strike, rider = result.attack_profile_results
+    assert strike.average_executions_per_combat == 2
+    assert strike.average_executions_per_round == 1
+    assert rider.average_executions_per_combat == 2
+    assert rider.average_executions_per_round == 1
+
+
+def test_configured_profile_that_never_executes_has_zero_execution_averages() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=1,
+        damage_dice="1",
+        rounds=2,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Inactive",
+                None,
+                "1",
+                1,
+                active_rounds="3",
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+    )
+
+    profile_result = result.attack_profile_results[0]
+    assert profile_result.total_profile_uses == 0
+    assert profile_result.average_executions_per_combat == 0
+    assert profile_result.average_executions_per_round == 0
+    assert result.average_damage_per_target_per_round == 0
+
+
+def test_build_comparison_keeps_target_damage_averages_independent() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            "Build A",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Wide",
+                    None,
+                    "4",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        second_build=BuildConfig(
+            "Build B",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Focused",
+                    None,
+                    "9",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert comparison.first_result.average_damage_per_target_per_round == 4
+    assert comparison.first_result.round_results[0].average_targets_affected == 2
+    assert comparison.second_result.average_damage_per_target_per_round == 9
+    assert comparison.second_result.round_results[0].average_targets_affected == 1
