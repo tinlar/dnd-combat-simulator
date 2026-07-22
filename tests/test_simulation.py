@@ -901,7 +901,6 @@ def test_simulate_build_does_not_validate_unrelated_second_build() -> None:
 
 
 def test_elven_accuracy_rejected_for_non_attack_profiles() -> None:
-    from random import Random
 
     from dnd_combat_simulator.combat import AttackFeature, ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, run_damage_simulations
