@@ -574,7 +574,7 @@ def test_attack_roll_profile_resolves_each_target_independently() -> None:
     assert result.total_attacks_made == 1
     assert result.total_target_resolutions == 3
     assert result.average_total_damage_per_simulation == 6
-    assert result.average_damage_per_target_per_round == 2
+    assert result.average_damage_per_target_per_round == 3
     assert result.hit_rate == 2 / 3
     assert result.critical_hit_rate == 1 / 3
     assert rng.calls == [(1, 20), (1, 4), (1, 20), (1, 4), (1, 4), (1, 20)]
@@ -1360,3 +1360,126 @@ def test_attack_roll_only_features_rejected_for_saving_throw(feature: str) -> No
                 ),
             ),
         )
+
+
+def test_multiple_attacks_against_one_target_combined_before_average() -> None:
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=1,
+        damage_dice="1d1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(AttackProfile("Focused", 20, "1d1", 3),),
+        rng=PredictableRng([10, 1, 10, 1, 10, 1]),
+    )
+
+    assert result.average_damage_per_round == 3
+    assert result.round_results[0].average_damage == 3
+    assert result.round_results[0].average_targets_affected == 1
+    assert result.round_results[0].average_individual_damage == 3
+    assert result.average_damage_per_target_per_round == 3
+
+
+def test_multiple_attacks_split_across_several_targets_are_combined_per_target() -> (
+    None
+):
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=1,
+        damage_dice="1d1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(AttackProfile("Split", 20, "1d1", 3, affected_targets=2),),
+        rng=PredictableRng([10, 1, 10, 1, 10, 1, 10, 1, 10, 1, 10, 1]),
+    )
+
+    assert result.average_damage_per_round == 6
+    assert result.round_results[0].average_targets_affected == 2
+    assert result.round_results[0].average_individual_damage == 3
+    assert result.average_damage_per_target_per_round == 3
+
+
+def test_area_attack_targets_individual_damage_and_target_count() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=0,
+        damage_dice="1d8",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Blast",
+                None,
+                "1d8+2",
+                1,
+                affected_targets=4,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=12,
+            ),
+        ),
+        rng=PredictableRng([5, 7, 10, 12, 20]),
+    )
+
+    assert result.average_damage_per_round == 14
+    assert result.round_results[0].average_targets_affected == 2
+    assert result.round_results[0].average_individual_damage == 7
+    assert result.average_damage_per_target_per_round == 7
+
+
+def test_rounds_with_no_affected_targets_contribute_zero_individual_damage() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=99,
+        damage_dice="1d1",
+        rounds=2,
+        simulations=1,
+        attack_profiles=(AttackProfile("Misses", 0, "1d1", 1),),
+        rng=PredictableRng([2, 2]),
+    )
+
+    assert [round.average_damage for round in result.round_results] == [0, 0]
+    assert [round.average_targets_affected for round in result.round_results] == [0, 0]
+    assert [round.average_individual_damage for round in result.round_results] == [0, 0]
+    assert result.average_damage_per_target_per_round == 0
+
+
+def test_total_damage_damage_per_target_and_target_count_are_distinct() -> None:
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=1,
+        damage_dice="1d1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Target A 10",
+                None,
+                "1d1+9",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+            AttackProfile(
+                "Target A 15",
+                None,
+                "1d1+14",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+            AttackProfile(
+                "Targets A and B",
+                None,
+                "1d1+3",
+                1,
+                affected_targets=2,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([1, 1, 1, 1]),
+    )
+
+    assert result.average_damage_per_round == 33
+    assert result.round_results[0].average_damage == 33
+    assert result.round_results[0].average_targets_affected == 2
+    assert result.round_results[0].average_individual_damage == 16.5
+    assert result.average_damage_per_target_per_round == 16.5
