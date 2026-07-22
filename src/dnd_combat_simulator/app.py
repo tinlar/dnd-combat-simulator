@@ -1271,17 +1271,23 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
         rows.append(
             {
                 "Round": str(first_round.round_number),
-                f"{comparison.first_build.name} avg damage": format_damage(
+                f"{comparison.first_build.name} avg total damage": format_damage(
                     first_round.average_damage
                 ),
-                f"{comparison.second_build.name} avg damage": format_damage(
+                f"{comparison.second_build.name} avg total damage": format_damage(
                     second_round.average_damage
                 ),
-                f"{comparison.first_build.name} avg attacks": format_damage(
-                    first_round.average_attacks
+                f"{comparison.first_build.name} avg targets affected": format_damage(
+                    first_round.average_targets_affected
                 ),
-                f"{comparison.second_build.name} avg attacks": format_damage(
-                    second_round.average_attacks
+                f"{comparison.first_build.name} avg individual damage": format_damage(
+                    first_round.average_individual_damage
+                ),
+                f"{comparison.second_build.name} avg targets affected": format_damage(
+                    second_round.average_targets_affected
+                ),
+                f"{comparison.second_build.name} avg individual damage": format_damage(
+                    second_round.average_individual_damage
                 ),
                 f"{comparison.first_build.name} crit %": format_rate(
                     first_round.critical_hit_rate
@@ -1343,12 +1349,6 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Affected targets": str(profile.affected_targets),
             "Active Rounds": profile.active_rounds or "Every round",
             "Feats and Features": format_features(profile.features),
-            "Actual profile uses": f"{profile_result.total_profile_uses:,}",
-            "Skipped profile uses": f"{profile_result.total_skipped_profile_uses:,}",
-            "Average skipped uses per simulation": format_damage(
-                profile_result.average_skipped_profile_uses_per_simulation
-            ),
-            "Target resolutions": f"{profile_result.total_target_resolutions:,}",
             "Average damage per use": format_damage(
                 profile_result.average_damage_per_use
             ),
@@ -1431,8 +1431,13 @@ def _single_round_breakdown_rows(result: SimulationResult) -> list[dict[str, str
     return [
         {
             "Round": str(round_result.round_number),
-            "Average damage": format_damage(round_result.average_damage),
-            "Average attack uses": format_damage(round_result.average_attacks),
+            "Avg Total Damage": format_damage(round_result.average_damage),
+            "Avg Targets Affected": format_damage(
+                round_result.average_targets_affected
+            ),
+            "Avg Individual Damage": format_damage(
+                round_result.average_individual_damage
+            ),
             "Hit percentage": format_rate(round_result.hit_rate),
             "Critical hit percentage": format_rate(round_result.critical_hit_rate),
             "Failed save percentage": format_rate(round_result.failed_save_rate),

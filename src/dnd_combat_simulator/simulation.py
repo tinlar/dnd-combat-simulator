@@ -45,6 +45,8 @@ class RoundResult:
     average_attacks: float
     hit_rate: float
     critical_hit_rate: float
+    average_targets_affected: float = field(default=0, compare=False)
+    average_individual_damage: float = field(default=0, compare=False)
     failed_save_rate: float = 0
     successful_save_rate: float = 0
 
@@ -352,8 +354,12 @@ def run_damage_simulations(
     profile_critical_hits = dict.fromkeys(range(len(profiles)), 0)
     profile_failed_saves = dict.fromkeys(range(len(profiles)), 0)
     profile_successful_saves = dict.fromkeys(range(len(profiles)), 0)
+    profile_targets_affected_total = dict.fromkeys(range(len(profiles)), 0)
+    profile_individual_damage_total = dict.fromkeys(range(len(profiles)), 0.0)
     round_damage_totals = dict.fromkeys(range(1, rounds + 1), 0)
     round_attacks = dict.fromkeys(range(1, rounds + 1), 0)
+    round_targets_affected_totals = dict.fromkeys(range(1, rounds + 1), 0)
+    round_individual_damage_totals = dict.fromkeys(range(1, rounds + 1), 0.0)
     round_target_resolutions = dict.fromkeys(range(1, rounds + 1), 0)
     round_attack_roll_resolutions = dict.fromkeys(range(1, rounds + 1), 0)
     round_saving_throw_resolutions = dict.fromkeys(range(1, rounds + 1), 0)
@@ -364,9 +370,28 @@ def run_damage_simulations(
     minimum_total_damage: int | None = None
     maximum_total_damage: int | None = None
 
+    def record_target_damage(
+        *,
+        profile_index: int,
+        round_number: int,
+        target_index: int,
+        damage: int,
+        round_target_damage: dict[int, int],
+        profile_round_target_damage: dict[int, dict[int, int]],
+    ) -> None:
+        if damage <= 0:
+            return
+        round_target_damage[target_index] = (
+            round_target_damage.get(target_index, 0) + damage
+        )
+        profile_targets = profile_round_target_damage.setdefault(profile_index, {})
+        profile_targets[target_index] = profile_targets.get(target_index, 0) + damage
+
     for _ in range(simulations):
         simulation_damage = 0
         for round_number in range(1, rounds + 1):
+            round_target_damage: dict[int, int] = {}
+            profile_round_target_damage: dict[int, dict[int, int]] = {}
             for profile_index, profile in enumerate(profiles):
                 active_round_set = active_round_sets[profile_index]
                 if (
@@ -388,7 +413,7 @@ def run_damage_simulations(
                         ResolutionType(profile.resolution_type)
                         is ResolutionType.ATTACK_ROLL
                     ):
-                        for _ in range(profile.affected_targets):
+                        for target_index in range(profile.affected_targets):
                             attack = resolve_weapon_attack(
                                 attack_bonus=profile.attack_bonus or 0,
                                 target_armor_class=target_armor_class,
@@ -401,6 +426,14 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_damage_totals[round_number] += damage
                             profile_damage_totals[profile_index] += damage
+                            record_target_damage(
+                                profile_index=profile_index,
+                                round_number=round_number,
+                                target_index=target_index,
+                                damage=damage,
+                                round_target_damage=round_target_damage,
+                                profile_round_target_damage=profile_round_target_damage,
+                            )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
@@ -439,6 +472,14 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_damage_totals[round_number] += damage
                             profile_damage_totals[profile_index] += damage
+                            record_target_damage(
+                                profile_index=profile_index,
+                                round_number=round_number,
+                                target_index=0,
+                                damage=damage,
+                                round_target_damage=round_target_damage,
+                                profile_round_target_damage=profile_round_target_damage,
+                            )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
@@ -463,7 +504,7 @@ def run_damage_simulations(
                                 feature.value for feature in profile.features
                             ),
                         )
-                        for _ in range(profile.affected_targets):
+                        for target_index in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
                             successful_save = natural_save + enemy_save_bonus >= (
                                 profile.save_dc or 0
@@ -482,6 +523,14 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_damage_totals[round_number] += damage
                             profile_damage_totals[profile_index] += damage
+                            record_target_damage(
+                                profile_index=profile_index,
+                                round_number=round_number,
+                                target_index=target_index,
+                                damage=damage,
+                                round_target_damage=round_target_damage,
+                                profile_round_target_damage=profile_round_target_damage,
+                            )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
@@ -498,7 +547,7 @@ def run_damage_simulations(
                             )
 
                     else:
-                        for _ in range(profile.affected_targets):
+                        for target_index in range(profile.affected_targets):
                             automatic = resolve_automatic_damage(
                                 damage_dice=profile.damage_dice.strip(),
                                 rng=random_number_generator,
@@ -508,11 +557,35 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_damage_totals[round_number] += damage
                             profile_damage_totals[profile_index] += damage
+                            record_target_damage(
+                                profile_index=profile_index,
+                                round_number=round_number,
+                                target_index=target_index,
+                                damage=damage,
+                                round_target_damage=round_target_damage,
+                                profile_round_target_damage=profile_round_target_damage,
+                            )
                             total_target_resolutions += 1
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
                             total_automatic_damage_applications += 1
                             profile_automatic_damage_applications[profile_index] += 1
+
+            affected_targets = len(round_target_damage)
+            round_targets_affected_totals[round_number] += affected_targets
+            if affected_targets:
+                round_individual_damage_totals[round_number] += (
+                    sum(round_target_damage.values()) / affected_targets
+                )
+            for profile_index, target_damage in profile_round_target_damage.items():
+                affected_profile_targets = len(target_damage)
+                profile_targets_affected_total[profile_index] += (
+                    affected_profile_targets
+                )
+                if affected_profile_targets:
+                    profile_individual_damage_total[profile_index] += (
+                        sum(target_damage.values()) / affected_profile_targets
+                    )
 
         total_damage_all_simulations += simulation_damage
         minimum_total_damage = (
@@ -561,7 +634,7 @@ def run_damage_simulations(
             ),
             total_target_resolutions=profile_target_resolutions[index],
             average_damage_per_target_per_round=(
-                profile_damage_totals[index] / total_rounds / profile.affected_targets
+                profile_individual_damage_total[index] / total_rounds
             ),
             automatic_damage_applications=profile_automatic_damage_applications[index],
             total_skipped_profile_uses=profile_skipped_attacks[index],
@@ -582,6 +655,12 @@ def run_damage_simulations(
             round_number=round_number,
             average_damage=round_damage_totals[round_number] / simulations,
             average_attacks=round_attacks[round_number] / simulations,
+            average_targets_affected=(
+                round_targets_affected_totals[round_number] / simulations
+            ),
+            average_individual_damage=(
+                round_individual_damage_totals[round_number] / simulations
+            ),
             hit_rate=(
                 round_hits[round_number] / round_attack_roll_resolutions[round_number]
             )
@@ -644,10 +723,7 @@ def run_damage_simulations(
         else 0,
         total_target_resolutions=total_target_resolutions,
         average_damage_per_target_per_round=(
-            sum(
-                profile_result.average_damage_per_target_per_round
-                for profile_result in profile_results
-            )
+            sum(result.average_individual_damage for result in round_results) / rounds
         ),
         automatic_damage_applications=total_automatic_damage_applications,
         average_automatic_damage_per_application=(
