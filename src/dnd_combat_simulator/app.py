@@ -41,6 +41,8 @@ from dnd_combat_simulator.simulation import (
     AttackProfileResult,
     BuildComparisonResult,
     BuildConfig,
+    ManagedResource,
+    ResourceCost,
     ScenarioConfig,
     SimulationResult,
     TriggerFrequency,
@@ -160,6 +162,8 @@ SIMULATION_RUNNING_KEY = "_simulation_running"
 SIMULATION_PENDING_KEY = "_simulation_pending"
 SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
 TRIGGER_EXPANDED_KEY_SUFFIX = "trigger-expanded"
+MANAGED_RESOURCE_COUNT_KEY = "scenario-managed-resource-count"
+MANAGED_RESOURCE_EXPANDED_KEY = "scenario-managed-resources-expanded"
 
 
 def _generate_default_seed() -> int:
@@ -263,6 +267,19 @@ def _validate_profile_fields(
         parse_active_rounds(profile.active_rounds)
     except ValueError as error:
         _add_error(errors, profile_widget_key(prefix, "active_rounds"), str(error))
+    for cost in profile.resource_costs:
+        if not cost.resource_id:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "resource_id"),
+                "Select a resource or choose None.",
+            )
+        if not isinstance(cost.amount, int) or cost.amount < 1:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "resource_amount"),
+                "Resource cost must be a whole number greater than 0.",
+            )
     try:
         validate_feature_resolution_combination(
             profile.features,
@@ -386,6 +403,21 @@ def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationEr
             SCENARIO_WIDGET_KEYS["simulations"],
             "Number of simulations must be at least 1.",
         )
+    names = [
+        resource.name.strip().casefold() for resource in scenario.managed_resources
+    ]
+    for index, resource in enumerate(scenario.managed_resources):
+        prefix = f"scenario-managed-resource-{index}"
+        if not resource.name.strip():
+            _add_error(errors, f"{prefix}-name", "Resource name is required.")
+        elif names.count(resource.name.strip().casefold()) > 1:
+            _add_error(errors, f"{prefix}-name", "Resource names must be unique.")
+        if not isinstance(resource.starting_value, int) or resource.starting_value < 0:
+            _add_error(
+                errors,
+                f"{prefix}-starting-value",
+                "Starting value must be a whole number of at least 0.",
+            )
     return errors
 
 
@@ -440,6 +472,7 @@ def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str
         ),
         rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
         simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
+        managed_resources=_managed_resources_from_state(),
     )
     configuration = shared_configuration_from_configs(
         compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
@@ -833,6 +866,9 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "trigger_source_attack_id": "trigger-source-attack-id",
         "trigger_frequency": "trigger-frequency",
         "trigger_chance_percent": "trigger-chance-percent",
+        "resource_enabled": "resource-enabled",
+        "resource_id": "resource-id",
+        "resource_amount": "resource-amount",
     }
     return f"{prefix}-{suffixes[field]}"
 
@@ -1750,6 +1786,35 @@ def _single_round_breakdown_rows(result: SimulationResult) -> list[dict[str, str
     ]
 
 
+def _resource_usage_rows(result: SimulationResult) -> list[dict[str, str]]:
+    return [
+        {
+            "Resource": usage.resource.name,
+            "Starting amount": str(usage.resource.starting_value),
+            "Avg consumed / combat": format_compact_decimal(
+                usage.average_consumed_per_combat
+            ),
+            "Avg remaining / combat": format_compact_decimal(
+                usage.average_remaining_per_combat
+            ),
+            "Exhausted combats": format_rate(usage.exhausted_combat_rate),
+            "Avg skipped executions / combat": format_compact_decimal(
+                usage.average_skipped_executions_per_combat
+            ),
+        }
+        for usage in result.resource_usage_results
+    ]
+
+
+def _render_resource_usage(result: SimulationResult) -> None:
+    import streamlit as st
+
+    rows = _resource_usage_rows(result)
+    if rows:
+        st.markdown("##### Resource Usage")
+        st.table(rows)
+
+
 def _render_single_build_results(build: BuildConfig, result: SimulationResult) -> None:
     """Render complete results for one build without comparison labels or deltas."""
     import streamlit as st
@@ -1780,6 +1845,7 @@ def _render_single_build_results(build: BuildConfig, result: SimulationResult) -
             ),
         )
         _render_single_build_charts(build, result)
+        _render_resource_usage(result)
         with st.expander("Detailed Results", expanded=False):
             st.table(_single_result_rows(result))
             st.markdown("##### Per-round breakdown")
@@ -1863,8 +1929,10 @@ def _render_comparison_results(comparison: BuildComparisonResult) -> None:
             st.table(_round_breakdown_rows(comparison))
             st.markdown(f"##### {comparison.first_build.name} attack breakdown")
             st.table(_profile_breakdown_rows(comparison.first_result))
+            _render_resource_usage(comparison.first_result)
             st.markdown(f"##### {comparison.second_build.name} attack breakdown")
             st.table(_profile_breakdown_rows(comparison.second_result))
+            _render_resource_usage(comparison.second_result)
             st.caption(
                 f"Difference uses {_result_difference_column_label(comparison)} for "
                 "every metric row. Both builds used separate random-number-generator "
@@ -1992,6 +2060,155 @@ def _trigger_settings_expander(prefix: str):
         )
     except TypeError:
         return expander("Trigger Settings", expanded=False)
+
+
+def managed_resource_widget_key(index: int, field: str) -> str:
+    return f"scenario-managed-resource-{index}-{field}"
+
+
+def _managed_resources_from_state() -> tuple[ManagedResource, ...]:
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+    return tuple(
+        ManagedResource(
+            resource_id=str(
+                state.get(
+                    managed_resource_widget_key(index, "id"), f"resource-{index + 1}"
+                )
+            ),
+            name=str(
+                state.get(
+                    managed_resource_widget_key(index, "name"), f"Resource {index + 1}"
+                )
+            ),
+            starting_value=int(
+                state.get(managed_resource_widget_key(index, "starting-value"), 0)
+            ),
+        )
+        for index in range(count)
+    )
+
+
+def _resource_usage_profile_keys(resource_id: str) -> list[str]:
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    used_by: list[str] = []
+    for build_prefix in ("first", "second"):
+        count = int(state.get(f"{build_prefix}-additional-attack-count", 0))
+        for index, (_, heading, default_name) in enumerate(
+            _profile_definitions(build_prefix, count)
+        ):
+            profile_id = profile_prefix(build_prefix, index)
+            if (
+                state.get(profile_widget_key(profile_id, "resource_enabled"), False)
+                and state.get(profile_widget_key(profile_id, "resource_id"))
+                == resource_id
+            ):
+                used_by.append(
+                    str(
+                        state.get(profile_widget_key(profile_id, "name"), default_name)
+                    ).strip()
+                    or heading
+                )
+    return used_by
+
+
+def _clear_resource_from_profiles(resource_id: str) -> None:
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    for build_prefix in ("first", "second"):
+        count = int(state.get(f"{build_prefix}-additional-attack-count", 0))
+        for index, _definition in enumerate(_profile_definitions(build_prefix, count)):
+            profile_id = profile_prefix(build_prefix, index)
+            if state.get(profile_widget_key(profile_id, "resource_id")) == resource_id:
+                state[profile_widget_key(profile_id, "resource_enabled")] = False
+                state[profile_widget_key(profile_id, "resource_id")] = ""
+
+
+def _render_managed_resources(
+    errors_by_key: dict[str, str] | None = None,
+) -> tuple[ManagedResource, ...]:
+    import streamlit as st
+
+    errors_by_key = errors_by_key or {}
+    state = getattr(st, "session_state", {})
+    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+    expander = getattr(st, "expander", None)
+    with (
+        expander(
+            "Managed Resources",
+            expanded=bool(state.get(MANAGED_RESOURCE_EXPANDED_KEY, False)),
+        )
+        if expander is not None
+        else nullcontext()
+    ):
+        state[MANAGED_RESOURCE_EXPANDED_KEY] = True
+        resources: list[ManagedResource] = []
+        for index in range(count):
+            id_key = managed_resource_widget_key(index, "id")
+            if id_key not in state:
+                state[id_key] = f"resource-{int(time.time() * 1000)}-{index}"
+            cols = st.columns([3, 2, 1])
+            name = cols[0].text_input(
+                "Resource name",
+                key=managed_resource_widget_key(index, "name"),
+                value=f"Resource {index + 1}",
+            )
+            _field_error(errors_by_key, managed_resource_widget_key(index, "name"))
+            starting = cols[1].number_input(
+                "Starting value",
+                min_value=0,
+                step=1,
+                key=managed_resource_widget_key(index, "starting-value"),
+                value=0,
+            )
+            _field_error(
+                errors_by_key, managed_resource_widget_key(index, "starting-value")
+            )
+            resource_id = str(state[id_key])
+            used_by = _resource_usage_profile_keys(resource_id)
+            if used_by:
+                st.warning(
+                    "Resource is used by: "
+                    + ", ".join(used_by)
+                    + (
+                        ". Confirm deletion to reset those profiles to no "
+                        "resource required."
+                    )
+                )
+                confirmed = cols[2].checkbox(
+                    "Confirm delete",
+                    key=managed_resource_widget_key(index, "confirm-delete"),
+                )
+            else:
+                confirmed = True
+            if (
+                cols[2].button(
+                    "Delete", key=managed_resource_widget_key(index, "delete")
+                )
+                and confirmed
+            ):
+                _clear_resource_from_profiles(resource_id)
+                state[MANAGED_RESOURCE_COUNT_KEY] = max(0, count - 1)
+                rerun = getattr(st, "rerun", None)
+                if rerun is not None:
+                    rerun()
+            resources.append(ManagedResource(resource_id, str(name), int(starting)))
+        if getattr(st, "button", lambda *args, **kwargs: False)(
+            "Add Resource", key="scenario-add-managed-resource"
+        ):
+            state[MANAGED_RESOURCE_COUNT_KEY] = count + 1
+            state[managed_resource_widget_key(count, "id")] = (
+                f"resource-{int(time.time() * 1000)}-{count}"
+            )
+            rerun = getattr(st, "rerun", None)
+            if rerun is not None:
+                rerun()
+    return tuple(resources)
 
 
 def _attack_profile_inputs(
@@ -2228,6 +2445,47 @@ def _attack_profile_inputs(
                     frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
                     frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
                 }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
+    resources = _managed_resources_from_state()
+    resource_costs: tuple[ResourceCost, ...] = ()
+    if resources:
+        resource_expander = getattr(st, "expander", None)
+        with (
+            resource_expander("Resource Required: None", expanded=False)
+            if resource_expander is not None
+            else nullcontext()
+        ):
+            checkbox = getattr(st, "checkbox", lambda *args, **kwargs: False)
+            use_resource = checkbox(
+                "Requires managed resource",
+                key=profile_widget_key(prefix, "resource_enabled"),
+            )
+            if use_resource:
+                options = [resource.resource_id for resource in resources]
+                resource_labels = {
+                    resource.resource_id: resource.name for resource in resources
+                }
+                selected = st.selectbox(
+                    "Resource",
+                    options=["", *options],
+                    format_func=lambda resource_id: (
+                        "Select a resource..."
+                        if not resource_id
+                        else resource_labels.get(resource_id, resource_id)
+                    ),
+                    key=profile_widget_key(prefix, "resource_id"),
+                )
+                _field_error(errors_by_key, profile_widget_key(prefix, "resource_id"))
+                amount = st.number_input(
+                    "Amount consumed",
+                    min_value=1,
+                    value=1,
+                    step=1,
+                    key=profile_widget_key(prefix, "resource_amount"),
+                )
+                _field_error(
+                    errors_by_key, profile_widget_key(prefix, "resource_amount")
+                )
+                resource_costs = (ResourceCost(str(selected), int(amount)),)
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,
@@ -2246,6 +2504,7 @@ def _attack_profile_inputs(
         trigger_source_attack_id=trigger_source_attack_id,
         trigger_frequency=trigger_frequency,
         trigger_chance_percent=trigger_chance_percent,
+        resource_costs=resource_costs,
     )
 
 
@@ -2396,6 +2655,16 @@ def _hydrate_build_session_state(
             TriggerFrequency.ONCE_PER_COMBAT: "Once per combat",
             TriggerFrequency.ONCE_IF_ANY: "Once per round",
         }.get(profile.trigger_frequency, "Every successful resolution")
+        if profile.resource_costs:
+            session_state[profile_widget_key(widget_prefix, "resource_enabled")] = True
+            session_state[profile_widget_key(widget_prefix, "resource_id")] = (
+                profile.resource_costs[0].resource_id
+            )
+            session_state[profile_widget_key(widget_prefix, "resource_amount")] = (
+                profile.resource_costs[0].amount
+            )
+        else:
+            session_state[profile_widget_key(widget_prefix, "resource_enabled")] = False
         for feature in FEATURE_ORDER:
             session_state[feature_widget_key(widget_prefix, feature)] = (
                 feature in profile.features
@@ -2415,6 +2684,15 @@ def hydrate_session_state_from_shared_configuration(
     session_state[SCENARIO_WIDGET_KEYS["simulations"]] = scenario.simulations
     session_state[SCENARIO_WIDGET_KEYS["seed"]] = scenario.seed
     session_state[COMPARE_WIDGET_KEY] = configuration.compare_enabled
+    session_state[MANAGED_RESOURCE_COUNT_KEY] = len(
+        configuration.scenario.managed_resources
+    )
+    for index, resource in enumerate(configuration.scenario.managed_resources):
+        session_state[managed_resource_widget_key(index, "id")] = resource.resource_id
+        session_state[managed_resource_widget_key(index, "name")] = resource.name
+        session_state[managed_resource_widget_key(index, "starting-value")] = (
+            resource.starting_value
+        )
     _hydrate_build_session_state(session_state, "first", configuration.build_a)
     _hydrate_build_session_state(session_state, "second", configuration.build_b)
 
@@ -2570,6 +2848,7 @@ def _current_shared_configuration() -> SharedConfiguration:
         ),
         rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
         simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
+        managed_resources=_managed_resources_from_state(),
     )
     return shared_configuration_from_configs(
         compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
@@ -2744,6 +3023,29 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         )
                     ).isdigit()
                     else None
+                ),
+                (
+                    (
+                        ResourceCost(
+                            str(
+                                session_state.get(
+                                    profile_widget_key(widget_prefix, "resource_id"), ""
+                                )
+                            ),
+                            int(
+                                session_state.get(
+                                    profile_widget_key(
+                                        widget_prefix, "resource_amount"
+                                    ),
+                                    1,
+                                )
+                            ),
+                        ),
+                    )
+                    if session_state.get(
+                        profile_widget_key(widget_prefix, "resource_enabled"), False
+                    )
+                    else ()
                 ),
             )
         )
@@ -3040,6 +3342,7 @@ def main() -> None:
             SCENARIO_WIDGET_KEYS["simulations"],
         ):
             _field_error(scenario_pre_errors, key)
+        managed_resources = _render_managed_resources(scenario_pre_errors)
 
         compare_container = scenario_row[3]
         compare_toggle = getattr(compare_container, "toggle", st.toggle)
@@ -3054,6 +3357,7 @@ def main() -> None:
         enemy_save_bonus=int(enemy_save_bonus),
         rounds=int(rounds),
         simulations=int(simulations),
+        managed_resources=managed_resources,
     )
 
     if compare_enabled:
