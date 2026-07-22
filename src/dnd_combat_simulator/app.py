@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import nullcontext
 from dataclasses import dataclass
 from secrets import randbelow
+import time
 from textwrap import dedent
 
 from dnd_combat_simulator import APP_TITLE
@@ -155,6 +156,9 @@ GENERATED_SHARE_FINGERPRINT_KEY = "_generated_share_fingerprint"
 SHARE_ERROR_MESSAGE_KEY = "_share_error_message"
 LOADED_SHARED_CONFIG_MESSAGE_KEY = "_shared_config_loaded_message_pending"
 INVALID_SHARED_CONFIG_MESSAGE_KEY = "_invalid_shared_config_message"
+SIMULATION_RUNNING_KEY = "_simulation_running"
+SIMULATION_PENDING_KEY = "_simulation_pending"
+SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
 
 
 def _generate_default_seed() -> int:
@@ -2626,6 +2630,40 @@ def _render_share_configuration_button() -> None:
     _mount_unified_share_component(base_data, create_share)
 
 
+def _mark_simulation_pending() -> None:
+    """Request one simulation run unless another run is already active."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    if state.get(SIMULATION_RUNNING_KEY):
+        return
+    state[SIMULATION_PENDING_KEY] = True
+
+
+def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResult:
+    """Run a single-build simulation with Streamlit-visible loading feedback."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    state[SIMULATION_RUNNING_KEY] = True
+    start = time.perf_counter()
+    try:
+        with st.spinner("Calculating simulation results..."):
+            result = run_single_build_from_inputs(inputs)
+    except (ValueError, SharedConfigurationError):
+        state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
+        raise
+    else:
+        elapsed = time.perf_counter() - start
+        state[SIMULATION_DURATION_MESSAGE_KEY] = (
+            f"Simulation complete in {elapsed:.1f} seconds."
+        )
+        return result
+    finally:
+        state[SIMULATION_RUNNING_KEY] = False
+        state[SIMULATION_PENDING_KEY] = False
+
+
 def main() -> None:
     """Render the Streamlit simulation page."""
     import streamlit as st
@@ -2750,17 +2788,34 @@ def main() -> None:
         ]
         if current_errors:
             st.warning("Fix the highlighted fields before running the simulation.")
-        if st.button("Run Simulation", disabled=bool(current_errors)):
+            getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
+        if message := getattr(st, "session_state", {}).pop(
+            SIMULATION_DURATION_MESSAGE_KEY, None
+        ):
+            st.success(message)
+
+        state = getattr(st, "session_state", {})
+        simulation_running = bool(state.get(SIMULATION_RUNNING_KEY))
+        clicked = st.button(
+            "Run Simulation",
+            disabled=bool(current_errors) or simulation_running,
+            on_click=_mark_simulation_pending,
+        )
+        if clicked and not simulation_running:
+            state[SIMULATION_PENDING_KEY] = True
+
+        if state.get(SIMULATION_PENDING_KEY) and not current_errors:
             inputs = SingleBuildInputs(
                 build=first_build,
                 scenario=scenario,
                 seed=int(seed),
             )
             try:
-                result = run_single_build_from_inputs(inputs)
+                result = _run_single_build_with_feedback(inputs)
             except (ValueError, SharedConfigurationError) as error:
                 st.error(_friendly_validation_message(error))
             else:
+                st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
                 _render_single_build_results(first_build, result)
 
 

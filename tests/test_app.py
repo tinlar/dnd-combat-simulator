@@ -1150,7 +1150,61 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
 
     app.main()
 
-    assert ("Run Simulation", {"disabled": True}) in calls
+    assert any(
+        label == "Run Simulation" and kwargs["disabled"] is True
+        for label, kwargs in calls
+    )
+
+
+def test_run_single_build_with_feedback_sets_running_state_and_duration(
+    monkeypatch,
+) -> None:
+    import sys
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    state = {}
+    events: list[str] = []
+
+    @contextmanager
+    def spinner(message):
+        events.append(message)
+        assert state[app.SIMULATION_RUNNING_KEY] is True
+        yield
+
+    result = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(session_state=state, spinner=spinner),
+    )
+    monkeypatch.setattr(app.time, "perf_counter", iter([10.0, 17.24]).__next__)
+    monkeypatch.setattr(app, "run_single_build_from_inputs", lambda inputs: result)
+
+    assert app._run_single_build_with_feedback(object()) is result
+
+    assert events == ["Calculating simulation results..."]
+    assert state[app.SIMULATION_RUNNING_KEY] is False
+    assert state[app.SIMULATION_PENDING_KEY] is False
+    assert state[app.SIMULATION_DURATION_MESSAGE_KEY] == (
+        "Simulation complete in 7.2 seconds."
+    )
+
+
+def test_mark_simulation_pending_ignores_active_run(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    state = {app.SIMULATION_RUNNING_KEY: True}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    app._mark_simulation_pending()
+
+    assert app.SIMULATION_PENDING_KEY not in state
 
 
 def test_share_component_copies_inside_button_click_with_fallback() -> None:
