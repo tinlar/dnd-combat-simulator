@@ -2635,3 +2635,128 @@ def test_result_rows_build_a_higher_dpr_uses_build_a_baseline() -> None:
 
     rows = _result_rows(comparison)
     assert rows[0]["Difference (Build A − Build B)"] == "1.00"
+
+
+@pytest.mark.parametrize(
+    ("first_profile", "second_profile", "expected_label"),
+    [
+        # Build A has higher DPR but lower expected damage per target resolution.
+        (
+            {"damage_dice": "1", "affected_targets": 2},
+            {"damage_dice": "1d2", "affected_targets": 1},
+            "Difference (Build A − Build B)",
+        ),
+        # Build B has higher DPR but lower expected damage per target resolution.
+        (
+            {"damage_dice": "1d2", "affected_targets": 1},
+            {"damage_dice": "1", "affected_targets": 2},
+            "Difference (Build B − Build A)",
+        ),
+    ],
+)
+def test_result_rows_use_nonnegative_comparison_difference_for_target_resolution(
+    first_profile: dict[str, int | str],
+    second_profile: dict[str, int | str],
+    expected_label: str,
+) -> None:
+    from dnd_combat_simulator.app import _result_rows
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        compare_builds,
+    )
+
+    first = AttackProfile(
+        "Build A profile",
+        None,
+        str(first_profile["damage_dice"]),
+        1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        affected_targets=int(first_profile["affected_targets"]),
+    )
+    second = AttackProfile(
+        "Build B profile",
+        None,
+        str(second_profile["damage_dice"]),
+        1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        affected_targets=int(second_profile["affected_targets"]),
+    )
+    comparison = compare_builds(
+        first_build=BuildConfig("Build A", 0, "1", 1, attack_profiles=(first,)),
+        second_build=BuildConfig("Build B", 0, "1", 1, attack_profiles=(second,)),
+        scenario=ScenarioConfig(target_armor_class=10, rounds=1, simulations=2),
+        seed=7,
+    )
+
+    rows = _result_rows(comparison)
+    target_row = next(
+        row for row in rows if row["Metric"] == "Expected damage per target resolution"
+    )
+
+    assert expected_label in target_row
+    assert target_row[expected_label] == "0.50"
+    assert "-" not in target_row[expected_label]
+
+
+def test_result_rows_tied_dpr_keeps_build_a_first_and_nonnegative_differences() -> None:
+    from dnd_combat_simulator.app import _result_rows
+    from dnd_combat_simulator.simulation import (
+        BuildConfig,
+        ScenarioConfig,
+        compare_builds,
+    )
+
+    comparison = compare_builds(
+        first_build=BuildConfig("Build A", 20, "1d4", 1),
+        second_build=BuildConfig("Build B", 20, "1d4", 1),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
+        seed=7,
+    )
+
+    rows = _result_rows(comparison)
+    label = "Difference (Build A − Build B)"
+
+    assert label in rows[0]
+    assert all("-" not in row[label] for row in rows if row[label] != "—")
+
+
+def test_result_rows_all_numeric_differences_are_nonnegative() -> None:
+    from dnd_combat_simulator.app import _result_rows
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        compare_builds,
+    )
+
+    first = AttackProfile(
+        "Build A profile",
+        None,
+        "1",
+        1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        affected_targets=2,
+    )
+    second = AttackProfile(
+        "Build B profile",
+        None,
+        "1d2",
+        1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        affected_targets=1,
+    )
+    comparison = compare_builds(
+        first_build=BuildConfig("Build A", 0, "1", 1, attack_profiles=(first,)),
+        second_build=BuildConfig("Build B", 0, "1", 1, attack_profiles=(second,)),
+        scenario=ScenarioConfig(target_armor_class=10, rounds=2, simulations=2),
+        seed=7,
+    )
+
+    rows = _result_rows(comparison)
+    label = "Difference (Build A − Build B)"
+
+    assert all("-" not in row[label] for row in rows if row[label] != "—")
