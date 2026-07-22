@@ -134,7 +134,7 @@ DAMAGE_FORMULA_HELP = dedent("""
     """).strip()
 
 NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE = (
-    "Add or move an attack before this one before configuring a trigger."
+    "Add another attack to this build before configuring an attack trigger."
 )
 
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
@@ -277,17 +277,9 @@ def validate_build_fields(
     if not build.name.strip():
         _add_error(errors, f"{prefix}-build-name", "Build name is required.")
     profiles = build.resolved_attack_profiles()
-    names = [profile.name.strip() for profile in profiles]
-    duplicate_names = {name for name in names if name and names.count(name) > 1}
     for index, profile in enumerate(profiles):
         widget_prefix = profile_prefix(prefix, index)
         errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
-        if profile.name.strip() in duplicate_names:
-            _add_error(
-                errors,
-                profile_widget_key(widget_prefix, "name"),
-                "Attack profile names must be unique within a build.",
-            )
     profile_ids = [profile.attack_id for profile in profiles]
     trigger_source_error_keys: set[str] = set()
 
@@ -295,7 +287,7 @@ def validate_build_fields(
         dependencies = {
             profile.attack_id: profile.trigger_source_attack_id
             for profile in profiles
-            if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS
+            if TriggerType(profile.trigger_type) is not TriggerType.ALWAYS
         }
         seen: set[str] = set()
         cursor = source_id
@@ -309,12 +301,15 @@ def validate_build_fields(
     for index, profile in enumerate(profiles):
         widget_prefix = profile_prefix(prefix, index)
         source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
-        if TriggerType(profile.trigger_type) is TriggerType.ALWAYS:
+        trigger_type = TriggerType(profile.trigger_type)
+        if trigger_type is TriggerType.ALWAYS:
             continue
-        earlier_ids = profile_ids[:index]
+        other_ids = [
+            attack_id for attack_id in profile_ids if attack_id != profile.attack_id
+        ]
         eligible_ids = [
             attack_id
-            for attack_id in earlier_ids
+            for attack_id in other_ids
             if not has_path_to_current(attack_id, profile.attack_id)
         ]
         source_id = profile.trigger_source_attack_id
@@ -333,7 +328,10 @@ def validate_build_fields(
             _add_error(
                 errors,
                 source_key,
-                "The selected trigger source is not eligible.",
+                (
+                    "The selected trigger source is missing, self-referential, "
+                    "or circular."
+                ),
             )
             trigger_source_error_keys.add(source_key)
     if not trigger_source_error_keys:
@@ -1434,7 +1432,7 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Triggered executions": f"{profile_result.triggered_profile_uses:,}",
             "Total actual executions": f"{profile_result.total_profile_uses:,}",
         }
-        if profile.trigger_type is TriggerType.AFTER_SUCCESS:
+        if profile.trigger_type is not TriggerType.ALWAYS:
             source = next(
                 (
                     item.attack_profile.name
@@ -1716,16 +1714,6 @@ def _trigger_source_options(prefix: str) -> list[tuple[str, str]]:
         )
     )
     definitions = _profile_definitions(build_prefix, count)
-    current_index = next(
-        (
-            index
-            for index, _definition in enumerate(definitions)
-            if profile_prefix(build_prefix, index) == prefix
-        ),
-        None,
-    )
-    if current_index is None:
-        return []
 
     def would_create_cycle(candidate_id: str) -> bool:
         seen: set[str] = set()
@@ -1739,26 +1727,34 @@ def _trigger_source_options(prefix: str) -> list[tuple[str, str]]:
             )
         return False
 
-    options: list[tuple[str, str]] = []
-    for index, (_, _, default_name) in enumerate(definitions[:current_index]):
+    raw_names: list[tuple[str, str, int]] = []
+    for index, (_, _, default_name) in enumerate(definitions):
         source_prefix = profile_prefix(build_prefix, index)
-        if would_create_cycle(source_prefix):
-            continue
-        name = st.session_state.get(
-            profile_widget_key(source_prefix, "name"), default_name
+        name = (
+            str(
+                st.session_state.get(
+                    profile_widget_key(source_prefix, "name"), default_name
+                )
+            ).strip()
+            or default_name
         )
-        options.append((source_prefix, str(name).strip() or default_name))
+        raw_names.append((source_prefix, name, index + 1))
+    names = [name for _, name, _ in raw_names]
+    duplicate_names = {name for name in names if names.count(name) > 1}
+    options: list[tuple[str, str]] = []
+    for source_prefix, name, ordinal in raw_names:
+        if source_prefix == prefix or would_create_cycle(source_prefix):
+            continue
+        label = f"{name} - Attack {ordinal}" if name in duplicate_names else name
+        options.append((source_prefix, label))
     return options
 
 
 def _trigger_frequency_labels(
     source_resolution_type: ResolutionType,
-) -> tuple[str, str]:
-    if source_resolution_type is ResolutionType.ATTACK_ROLL:
-        return ("Once per successful hit", "Once if any hit succeeds")
-    if source_resolution_type is ResolutionType.SAVING_THROW:
-        return ("Once per failed save", "Once if any save fails")
-    return ("Once per affected target", "Once if any target is affected")
+) -> tuple[str, str, str]:
+    del source_resolution_type
+    return ("Every successful resolution", "Once per round", "Once per combat")
 
 
 def _attack_profile_inputs(
@@ -1888,51 +1884,60 @@ def _attack_profile_inputs(
     )
     with trigger_container:
         trigger_type_label = st.selectbox(
-            "Trigger",
-            options=["Always", "After another attack succeeds"],
+            "When",
+            options=[
+                "Always",
+                "Another attack succeeds",
+                "Another attack fails",
+                "Another attack critically hits",
+            ],
             index=0,
             key=profile_widget_key(prefix, "trigger_type"),
+            help=(
+                "Succeeds means an attack roll hits or a target fails "
+                "its saving throw. Fails means an attack roll misses "
+                "or a target succeeds on its saving throw. "
+                "Critically hits only applies to attack-roll attacks."
+            ),
         )
         _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
-        trigger_type = (
-            TriggerType.AFTER_SUCCESS
-            if trigger_type_label == "After another attack succeeds"
-            else TriggerType.ALWAYS
-        )
+        trigger_type = {
+            "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+            "Another attack fails": TriggerType.AFTER_FAILURE,
+            "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+        }.get(trigger_type_label, TriggerType.ALWAYS)
         trigger_source_attack_id = None
         trigger_frequency = TriggerFrequency.PER_SUCCESS
-        if trigger_type is TriggerType.AFTER_SUCCESS:
+        if trigger_type is not TriggerType.ALWAYS:
             source_options = _trigger_source_options(prefix)
             option_ids = [attack_id for attack_id, _ in source_options]
             source_key = profile_widget_key(prefix, "trigger_source_attack_id")
             stored_source = st.session_state.get(source_key)
+            options_with_placeholder = [None, *option_ids]
+            selected_index = (
+                options_with_placeholder.index(stored_source)
+                if stored_source in option_ids
+                else 0
+            )
+            selected_source = st.selectbox(
+                "What",
+                options=options_with_placeholder,
+                format_func=lambda attack_id: (
+                    "Select an attack..."
+                    if attack_id is None
+                    else dict(source_options).get(attack_id, attack_id)
+                ),
+                index=selected_index,
+                key=source_key,
+            )
+            trigger_source_attack_id = (
+                selected_source if selected_source in option_ids else stored_source
+            )
             if not option_ids:
                 st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
-                st.session_state[source_key] = None
-            else:
-                options_with_placeholder = [None, *option_ids]
-                selected_index = (
-                    options_with_placeholder.index(stored_source)
-                    if stored_source in option_ids
-                    else 0
-                )
-                selected_source = st.selectbox(
-                    "Trigger after",
-                    options=options_with_placeholder,
-                    format_func=lambda attack_id: (
-                        "Select an earlier attack..."
-                        if attack_id is None
-                        else dict(source_options).get(attack_id, attack_id)
-                    ),
-                    index=selected_index,
-                    key=source_key,
-                )
-                trigger_source_attack_id = (
-                    selected_source if selected_source in option_ids else None
-                )
             _field_error(errors_by_key, source_key)
             source_resolution = ResolutionType.ATTACK_ROLL
-            if trigger_source_attack_id:
+            if trigger_source_attack_id in option_ids:
                 source_resolution_label = st.session_state.get(
                     profile_widget_key(trigger_source_attack_id, "resolution_type"),
                     "Attack Roll",
@@ -1942,17 +1947,23 @@ def _attack_profile_inputs(
                     "Saving Throw": ResolutionType.SAVING_THROW,
                     "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
                 }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
-            per_label, once_label = _trigger_frequency_labels(source_resolution)
-            frequency_label = st.radio(
-                "Frequency",
-                options=[per_label, once_label],
-                key=profile_widget_key(prefix, "trigger_frequency"),
-            )
-            trigger_frequency = (
-                TriggerFrequency.ONCE_IF_ANY
-                if frequency_label == once_label
-                else TriggerFrequency.PER_SUCCESS
-            )
+            frequency_labels = _trigger_frequency_labels(source_resolution)
+            if trigger_source_attack_id in option_ids:
+                frequency_label = st.radio(
+                    "Frequency",
+                    options=list(frequency_labels),
+                    key=profile_widget_key(prefix, "trigger_frequency"),
+                    help=(
+                        "Every successful resolution triggers once per "
+                        "qualifying target. "
+                        "Once per round caps the trigger to one use in each round. "
+                        "Once per combat caps it to one use in the simulated combat."
+                    ),
+                )
+                trigger_frequency = {
+                    frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
+                    frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
+                }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
 
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
@@ -2102,19 +2113,19 @@ def _hydrate_build_session_state(
         session_state[profile_widget_key(widget_prefix, "active_rounds")] = (
             profile.active_rounds
         )
-        session_state[profile_widget_key(widget_prefix, "trigger_type")] = (
-            "After another attack succeeds"
-            if profile.trigger_type is TriggerType.AFTER_SUCCESS
-            else "Always"
-        )
+        session_state[profile_widget_key(widget_prefix, "trigger_type")] = {
+            TriggerType.AFTER_SUCCESS: "Another attack succeeds",
+            TriggerType.AFTER_FAILURE: "Another attack fails",
+            TriggerType.AFTER_CRITICAL: "Another attack critically hits",
+        }.get(profile.trigger_type, "Always")
         session_state[profile_widget_key(widget_prefix, "trigger_source_attack_id")] = (
             profile.trigger_source_attack_id
         )
-        session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = (
-            "Once if any resolution succeeds"
-            if profile.trigger_frequency is TriggerFrequency.ONCE_IF_ANY
-            else "Once per successful resolution"
-        )
+        session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = {
+            TriggerFrequency.ONCE_PER_ROUND: "Once per round",
+            TriggerFrequency.ONCE_PER_COMBAT: "Once per combat",
+            TriggerFrequency.ONCE_IF_ANY: "Once per round",
+        }.get(profile.trigger_frequency, "Every successful resolution")
         for feature in FEATURE_ORDER:
             session_state[feature_widget_key(widget_prefix, feature)] = (
                 feature in profile.features
@@ -2411,24 +2422,38 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                 features,
                 widget_prefix,
                 (
-                    TriggerType.AFTER_SUCCESS
-                    if session_state.get(
-                        profile_widget_key(widget_prefix, "trigger_type"), "Always"
+                    {
+                        "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+                        "After another attack succeeds": TriggerType.AFTER_SUCCESS,
+                        "Another attack fails": TriggerType.AFTER_FAILURE,
+                        "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+                    }.get(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "trigger_type"),
+                            "Always",
+                        ),
+                        TriggerType.ALWAYS,
                     )
-                    == "After another attack succeeds"
-                    else TriggerType.ALWAYS
                 ),
                 session_state.get(
                     profile_widget_key(widget_prefix, "trigger_source_attack_id")
                 ),
                 (
-                    TriggerFrequency.ONCE_IF_ANY
-                    if str(
-                        session_state.get(
-                            profile_widget_key(widget_prefix, "trigger_frequency"), ""
-                        )
-                    ).startswith("Once if")
-                    else TriggerFrequency.PER_SUCCESS
+                    {
+                        "Once per round": TriggerFrequency.ONCE_PER_ROUND,
+                        "Once per combat": TriggerFrequency.ONCE_PER_COMBAT,
+                        "Once if any resolution succeeds": (
+                            TriggerFrequency.ONCE_PER_ROUND
+                        ),
+                    }.get(
+                        str(
+                            session_state.get(
+                                profile_widget_key(widget_prefix, "trigger_frequency"),
+                                "",
+                            )
+                        ),
+                        TriggerFrequency.PER_SUCCESS,
+                    )
                 ),
             )
         )

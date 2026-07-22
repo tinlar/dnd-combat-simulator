@@ -1994,8 +1994,8 @@ def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
 
         def selectbox(self, label, **kwargs):
             calls.append((label, kwargs))
-            if label == "Trigger":
-                return "After another attack succeeds"
+            if label == "When":
+                return "Another attack succeeds"
             return kwargs["options"][kwargs.get("index", 0)]
 
         def radio(self, label, **kwargs):
@@ -2005,7 +2005,7 @@ def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
         "first-additional-attack-count": 1,
         profile_widget_key(
             "first-additional-1", "trigger_type"
-        ): "After another attack succeeds",
+        ): "Another attack succeeds",
         profile_widget_key("first-additional-1", "trigger_source_attack_id"): None,
     }
     col = Column()
@@ -2026,9 +2026,9 @@ def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
 
     profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
 
-    trigger_after = next(kwargs for label, kwargs in calls if label == "Trigger after")
+    trigger_after = next(kwargs for label, kwargs in calls if label == "What")
     assert trigger_after["options"][0] is None
-    assert trigger_after["format_func"](None) == "Select an earlier attack..."
+    assert trigger_after["format_func"](None) == "Select an attack..."
     assert trigger_after["index"] == 0
     assert profile.trigger_source_attack_id is None
 
@@ -2088,9 +2088,9 @@ def test_selecting_trigger_source_stores_stable_id_and_clears_error(
             return kwargs.get("value", "")
 
         def selectbox(self, label, **kwargs):
-            if label == "Trigger":
-                return "After another attack succeeds"
-            if label == "Trigger after":
+            if label == "When":
+                return "Another attack succeeds"
+            if label == "What":
                 value = "first-primary"
                 kwargs["key"] and state.__setitem__(kwargs["key"], value)
                 return value
@@ -2173,8 +2173,8 @@ def test_saved_trigger_source_remains_selected_after_rerun_and_rename(
 
         def selectbox(self, label, **kwargs):
             calls.append((label, kwargs))
-            if label == "Trigger":
-                return "After another attack succeeds"
+            if label == "When":
+                return "Another attack succeeds"
             return kwargs["options"][kwargs.get("index", 0)]
 
         def radio(self, label, **kwargs):
@@ -2208,7 +2208,7 @@ def test_saved_trigger_source_remains_selected_after_rerun_and_rename(
 
     profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
 
-    trigger_after = next(kwargs for label, kwargs in calls if label == "Trigger after")
+    trigger_after = next(kwargs for label, kwargs in calls if label == "What")
     assert trigger_after["index"] == 1
     assert trigger_after["format_func"]("first-primary") == "Renamed source"
     assert profile.trigger_source_attack_id == "first-primary"
@@ -2227,7 +2227,8 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
 
     assert app._trigger_source_options("first-additional-1") == [
-        ("first-primary", "Primary attack")
+        ("first-primary", "Primary attack"),
+        ("first-additional-2", "Additional attack 2"),
     ]
 
     warnings = []
@@ -2247,10 +2248,9 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
             return kwargs.get("value", "")
 
         def selectbox(self, label, **kwargs):
-            assert label != "Trigger after"
             return (
-                "After another attack succeeds"
-                if label == "Trigger"
+                "Another attack succeeds"
+                if label == "When"
                 else kwargs["options"][kwargs.get("index", 0)]
             )
 
@@ -2279,5 +2279,5 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     profile = _attack_profile_inputs("first-primary", "Primary attack")
     assert profile.trigger_source_attack_id is None
     assert warnings == [
-        "Add or move an attack before this one before configuring a trigger."
+        "Add another attack to this build before configuring an attack trigger."
     ]

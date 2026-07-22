@@ -1767,26 +1767,25 @@ def test_trigger_validation_rejects_deleted_reordered_self_and_cycles() -> None:
                 ),
             ),
         )
-    with pytest.raises(ValueError, match="must occur earlier"):
-        run_damage_simulations(
-            attack_bonus=1,
-            target_armor_class=10,
-            damage_dice="1d4",
-            rounds=1,
-            simulations=1,
-            attack_profiles=(
-                AttackProfile(
-                    "B",
-                    1,
-                    "1d4",
-                    1,
-                    attack_id="b",
-                    trigger_type="after_success",
-                    trigger_source_attack_id="a",
-                ),
-                AttackProfile("A", 1, "1d4", 1, attack_id="a"),
+    run_damage_simulations(
+        attack_bonus=1,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "B",
+                1,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
             ),
-        )
+            AttackProfile("A", 1, "1d4", 1, attack_id="a"),
+        ),
+    )
     with pytest.raises(ValueError, match="cannot trigger itself"):
         run_damage_simulations(
             attack_bonus=1,
@@ -1869,3 +1868,100 @@ def test_triggered_attack_can_trigger_later_attack_without_double_counting() -> 
     )
     assert [r.total_profile_uses for r in result.attack_profile_results] == [1, 1, 1]
     assert result.total_attacks_made == 3
+
+
+def test_new_trigger_frequencies_success_failure_and_critical_validation() -> None:
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        TriggerFrequency,
+        TriggerType,
+        run_damage_simulations,
+        simulate_build,
+    )
+
+    profiles = (
+        AttackProfile("Source", 99, "1d1", 3, attack_id="src"),
+        AttackProfile(
+            "Every",
+            None,
+            "1d1",
+            1,
+            attack_id="every",
+            resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            trigger_type=TriggerType.AFTER_SUCCESS,
+            trigger_source_attack_id="src",
+            trigger_frequency=TriggerFrequency.PER_SUCCESS,
+        ),
+        AttackProfile(
+            "Round",
+            None,
+            "1d1",
+            1,
+            attack_id="round",
+            resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            trigger_type=TriggerType.AFTER_SUCCESS,
+            trigger_source_attack_id="src",
+            trigger_frequency=TriggerFrequency.ONCE_PER_ROUND,
+        ),
+        AttackProfile(
+            "Combat",
+            None,
+            "1d1",
+            1,
+            attack_id="combat",
+            resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            trigger_type=TriggerType.AFTER_SUCCESS,
+            trigger_source_attack_id="src",
+            trigger_frequency=TriggerFrequency.ONCE_PER_COMBAT,
+        ),
+    )
+    result = run_damage_simulations(
+        attack_bonus=1,
+        target_armor_class=-100,
+        damage_dice="1d1",
+        rounds=2,
+        simulations=1,
+        attack_profiles=profiles,
+    )
+    by_id = {
+        r.attack_profile.attack_id: r.triggered_profile_uses
+        for r in result.attack_profile_results
+    }
+    assert by_id == {"src": 0, "every": 6, "round": 2, "combat": 1}
+
+    with pytest.raises(
+        ValueError, match="critical-hit trigger source must use attack rolls"
+    ):
+        simulate_build(
+            BuildConfig(
+                "Bad crit",
+                1,
+                "1d1",
+                1,
+                attack_profiles=(
+                    AttackProfile(
+                        "Save source",
+                        None,
+                        "1d1",
+                        1,
+                        attack_id="save",
+                        resolution_type=ResolutionType.SAVING_THROW,
+                        save_dc=99,
+                    ),
+                    AttackProfile(
+                        "Crit dep",
+                        1,
+                        "1d1",
+                        1,
+                        attack_id="crit",
+                        trigger_type=TriggerType.AFTER_CRITICAL,
+                        trigger_source_attack_id="save",
+                    ),
+                ),
+            ),
+            ScenarioConfig(1, 1, 1),
+            seed=1,
+        )
