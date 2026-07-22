@@ -172,24 +172,24 @@ def test_result_rows_show_side_by_side_comparison() -> None:
 @pytest.mark.parametrize(
     ("additional_count", "expected_headings", "expected_prefixes"),
     [
-        (0, ["Primary Attack"], ["build-primary"]),
+        (0, ["Attack 1"], ["build-primary"]),
         (
             1,
-            ["Primary Attack", "Additional Attack 1"],
+            ["Attack 1", "Attack 2"],
             ["build-primary", "build-additional-1"],
         ),
         (
             2,
-            ["Primary Attack", "Additional Attack 1", "Additional Attack 2"],
+            ["Attack 1", "Attack 2", "Attack 3"],
             ["build-primary", "build-additional-1", "build-additional-2"],
         ),
         (
             3,
             [
-                "Primary Attack",
-                "Additional Attack 1",
-                "Additional Attack 2",
-                "Additional Attack 3",
+                "Attack 1",
+                "Attack 2",
+                "Attack 3",
+                "Attack 4",
             ],
             [
                 "build-primary",
@@ -672,7 +672,14 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
     profile = _attack_profile_inputs("first-primary", "Attack")
 
     assert profile.features == frozenset({AttackFeature.GREAT_WEAPON_FIGHTING})
-    assert ("expander", {"label": "Feats and Features", "expanded": False}) in calls
+    assert (
+        "expander",
+        {
+            "label": "Features: None",
+            "expanded": False,
+            "key": "first-primary-features-expanded",
+        },
+    ) in calls
     assert ("columns", {"spec": 3}) in calls
     checkbox_calls = [call for kind, call in calls if kind == "checkbox"]
     assert [call["label"] for call in checkbox_calls] == [
@@ -2088,7 +2095,7 @@ def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
-    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+    profile = _attack_profile_inputs("first-additional-1", "Attack 2")
 
     trigger_after = next(kwargs for label, kwargs in calls if label == "What")
     assert trigger_after["options"][0] is None
@@ -2183,7 +2190,7 @@ def test_selecting_trigger_source_stores_stable_id_and_clears_error(
         ),
     )
 
-    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+    profile = _attack_profile_inputs("first-additional-1", "Attack 2")
 
     assert profile.trigger_source_attack_id == "first-primary"
     assert (
@@ -2270,7 +2277,7 @@ def test_saved_trigger_source_remains_selected_after_rerun_and_rename(
         ),
     )
 
-    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+    profile = _attack_profile_inputs("first-additional-1", "Attack 2")
 
     trigger_after = next(kwargs for label, kwargs in calls if label == "What")
     assert trigger_after["index"] == 1
@@ -2291,8 +2298,8 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
 
     assert app._trigger_source_options("first-additional-1") == [
-        ("first-primary", "Primary attack"),
-        ("first-additional-2", "Additional attack 2"),
+        ("first-primary", "Attack 1"),
+        ("first-additional-2", "Attack 3"),
     ]
 
     warnings = []
@@ -2340,7 +2347,7 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
         ),
     )
 
-    profile = _attack_profile_inputs("first-primary", "Primary attack")
+    profile = _attack_profile_inputs("first-primary", "Attack 1")
     assert profile.trigger_source_attack_id is None
     assert warnings == [
         "Add another attack to this build before configuring an attack trigger."
@@ -2470,7 +2477,7 @@ def test_sometimes_validation_rejects_invalid_percentage_values(percent):
     errors = validate_build_fields(build, prefix="first")
 
     assert any(
-        error.key == profile_widget_key("first-primary", "trigger_chance_percent")
+        error.key == profile_widget_key("a", "trigger_chance_percent")
         for error in errors
     )
 
@@ -2510,7 +2517,7 @@ def test_trigger_settings_uses_stable_expander_key_without_button(monkeypatch) -
 
     assert calls == [
         (
-            "Trigger Settings",
+            "Trigger: Always",
             {"expanded": False, "key": app.trigger_expanded_state_key("attack-id")},
         )
     ]
