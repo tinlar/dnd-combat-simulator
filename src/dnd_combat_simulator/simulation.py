@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import StrEnum
 from random import Random
 
 from dnd_combat_simulator.combat import (
@@ -17,6 +18,16 @@ from dnd_combat_simulator.combat import (
     validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
+
+
+class TriggerType(StrEnum):
+    ALWAYS = "always"
+    AFTER_SUCCESS = "after_success"
+
+
+class TriggerFrequency(StrEnum):
+    PER_SUCCESS = "per_success"
+    ONCE_IF_ANY = "once_if_any"
 
 
 @dataclass(frozen=True)
@@ -34,6 +45,10 @@ class AttackProfile:
     save_dc: int | None = None
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE
     features: frozenset[AttackFeature] = frozenset()
+    attack_id: str = ""
+    trigger_type: TriggerType = TriggerType.ALWAYS
+    trigger_source_attack_id: str | None = None
+    trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
 
 
 @dataclass(frozen=True)
@@ -71,6 +86,11 @@ class AttackProfileResult:
     average_automatic_damage_per_application: float = field(default=0, compare=False)
     total_skipped_profile_uses: int = field(default=0, compare=False)
     average_skipped_profile_uses_per_simulation: float = field(default=0, compare=False)
+    configured_profile_uses: int = field(default=0, compare=False)
+    triggered_profile_uses: int = field(default=0, compare=False)
+    average_triggered_profile_uses_per_simulation: float = field(
+        default=0, compare=False
+    )
 
 
 @dataclass(frozen=True)
@@ -105,6 +125,11 @@ class SimulationResult:
     round_results: tuple[RoundResult, ...] = field(default_factory=tuple, compare=False)
     total_skipped_profile_uses: int = field(default=0, compare=False)
     average_skipped_profile_uses_per_simulation: float = field(default=0, compare=False)
+    configured_profile_uses: int = field(default=0, compare=False)
+    triggered_profile_uses: int = field(default=0, compare=False)
+    average_triggered_profile_uses_per_simulation: float = field(
+        default=0, compare=False
+    )
 
 
 @dataclass(frozen=True)
@@ -213,7 +238,45 @@ def parse_active_rounds(active_rounds: str | None) -> frozenset[int] | None:
 
 
 def _profile_id(profile: AttackProfile) -> str:
-    return profile.name.strip()
+    return profile.attack_id.strip() or profile.name.strip()
+
+
+def validate_trigger_dependencies(
+    profiles: tuple[AttackProfile, ...], *, label: str = "Build"
+) -> None:
+    ids = [_profile_id(profile) for profile in profiles]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"{label} attack profile IDs must be unique.")
+    id_to_index = {attack_id: index for index, attack_id in enumerate(ids)}
+    edges: dict[str, str] = {}
+    for index, profile in enumerate(profiles):
+        if TriggerType(profile.trigger_type) is TriggerType.ALWAYS:
+            continue
+        source_id = profile.trigger_source_attack_id
+        if not source_id:
+            raise ValueError(f"{label} profile {index + 1} trigger source is required.")
+        own_id = ids[index]
+        if source_id == own_id:
+            raise ValueError(f"{label} profile {index + 1} cannot trigger itself.")
+        if source_id not in id_to_index:
+            raise ValueError(
+                f"{label} profile {index + 1} trigger source no longer exists."
+            )
+        if id_to_index[source_id] > index:
+            raise ValueError(
+                f"{label} profile {index + 1} trigger source must occur earlier."
+            )
+        ResolutionType(profiles[id_to_index[source_id]].resolution_type)
+        TriggerFrequency(profile.trigger_frequency)
+        edges[own_id] = source_id
+    for attack_id in ids:
+        seen: set[str] = set()
+        current = attack_id
+        while current in edges:
+            current = edges[current]
+            if current in seen:
+                raise ValueError(f"{label} trigger dependencies contain a cycle.")
+            seen.add(current)
 
 
 def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
@@ -261,9 +324,7 @@ def _validate_build(build: BuildConfig, *, label: str) -> None:
         raise ValueError(msg)
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"{label} profile {index}")
-    if len({_profile_id(profile) for profile in profiles}) != len(profiles):
-        msg = f"{label} attack profile names must be unique."
-        raise ValueError(msg)
+    validate_trigger_dependencies(profiles, label=label)
 
 
 def _validate_scenario(scenario: ScenarioConfig) -> None:
@@ -323,9 +384,7 @@ def run_damage_simulations(
         raise ValueError(msg)
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"Attack profile {index}")
-    if len({_profile_id(profile) for profile in profiles}) != len(profiles):
-        msg = "Attack profile names must be unique."
-        raise ValueError(msg)
+    validate_trigger_dependencies(profiles, label="Attack profiles")
     active_round_sets = tuple(
         parse_active_rounds(profile.active_rounds) for profile in profiles
     )
@@ -346,6 +405,8 @@ def run_damage_simulations(
     profile_damage_totals = dict.fromkeys(range(len(profiles)), 0)
     profile_attacks = dict.fromkeys(range(len(profiles)), 0)
     profile_skipped_attacks = dict.fromkeys(range(len(profiles)), 0)
+    profile_configured_uses = dict.fromkeys(range(len(profiles)), 0)
+    profile_triggered_uses = dict.fromkeys(range(len(profiles)), 0)
     profile_target_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_attack_roll_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_saving_throw_resolutions = dict.fromkeys(range(len(profiles)), 0)
@@ -386,6 +447,7 @@ def run_damage_simulations(
     for _ in range(simulations):
         simulation_damage = 0
         for round_number in range(1, rounds + 1):
+            successful_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
             for profile_index, profile in enumerate(profiles):
                 active_round_set = active_round_sets[profile_index]
                 if (
@@ -393,10 +455,31 @@ def run_damage_simulations(
                     and round_number not in active_round_set
                 ):
                     continue
+                if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS:
+                    source_index = next(
+                        index
+                        for index, source_profile in enumerate(profiles)
+                        if _profile_id(source_profile)
+                        == profile.trigger_source_attack_id
+                    )
+                    source_successes = successful_resolutions_by_profile[source_index]
+                    execution_count = (
+                        source_successes
+                        if TriggerFrequency(profile.trigger_frequency)
+                        is TriggerFrequency.PER_SUCCESS
+                        else int(source_successes > 0)
+                    )
+                    configured_uses = 0
+                else:
+                    execution_count = profile.attacks_per_round
+                    configured_uses = profile.attacks_per_round
+                profile_configured_uses[profile_index] += configured_uses
+                if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS:
+                    profile_triggered_uses[profile_index] += execution_count
                 stop_profile_after_miss = False
-                for attack_index in range(profile.attacks_per_round):
+                for attack_index in range(execution_count):
                     if stop_profile_after_miss:
-                        skipped = profile.attacks_per_round - attack_index
+                        skipped = execution_count - attack_index
                         total_skipped_attacks += skipped
                         profile_skipped_attacks[profile_index] += skipped
                         break
@@ -407,7 +490,7 @@ def run_damage_simulations(
                         ResolutionType(profile.resolution_type)
                         is ResolutionType.ATTACK_ROLL
                     ):
-                        for target_index in range(profile.affected_targets):
+                        for _target_index in range(profile.affected_targets):
                             attack = resolve_weapon_attack(
                                 attack_bonus=profile.attack_bonus or 0,
                                 target_armor_class=target_armor_class,
@@ -434,6 +517,9 @@ def run_damage_simulations(
                             total_hits += int(attack.hit)
                             round_hits[round_number] += int(attack.hit)
                             profile_hits[profile_index] += int(attack.hit)
+                            successful_resolutions_by_profile[profile_index] += int(
+                                attack.hit
+                            )
                             total_critical_hits += int(attack.critical_hit)
                             round_critical_hits[round_number] += int(
                                 attack.critical_hit
@@ -477,6 +563,9 @@ def run_damage_simulations(
                             total_failed_saves += int(save.failed_save)
                             round_failed_saves[round_number] += int(save.failed_save)
                             profile_failed_saves[profile_index] += int(save.failed_save)
+                            successful_resolutions_by_profile[profile_index] += int(
+                                save.failed_save
+                            )
                             total_successful_saves += int(save.successful_save)
                             round_successful_saves[round_number] += int(
                                 save.successful_save
@@ -492,7 +581,7 @@ def run_damage_simulations(
                                 feature.value for feature in profile.features
                             ),
                         )
-                        for target_index in range(profile.affected_targets):
+                        for _target_index in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
                             successful_save = natural_save + enemy_save_bonus >= (
                                 profile.save_dc or 0
@@ -525,6 +614,9 @@ def run_damage_simulations(
                             total_failed_saves += int(failed_save)
                             round_failed_saves[round_number] += int(failed_save)
                             profile_failed_saves[profile_index] += int(failed_save)
+                            successful_resolutions_by_profile[profile_index] += int(
+                                failed_save
+                            )
                             total_successful_saves += int(successful_save)
                             round_successful_saves[round_number] += int(successful_save)
                             profile_successful_saves[profile_index] += int(
@@ -532,7 +624,7 @@ def run_damage_simulations(
                             )
 
                     else:
-                        for target_index in range(profile.affected_targets):
+                        for _target_index in range(profile.affected_targets):
                             automatic = resolve_automatic_damage(
                                 damage_dice=profile.damage_dice.strip(),
                                 rng=random_number_generator,
@@ -552,6 +644,7 @@ def run_damage_simulations(
                             round_target_resolutions[round_number] += 1
                             total_automatic_damage_applications += 1
                             profile_automatic_damage_applications[profile_index] += 1
+                            successful_resolutions_by_profile[profile_index] += 1
 
         total_damage_all_simulations += simulation_damage
         minimum_total_damage = (
@@ -609,6 +702,11 @@ def run_damage_simulations(
             total_skipped_profile_uses=profile_skipped_attacks[index],
             average_skipped_profile_uses_per_simulation=(
                 profile_skipped_attacks[index] / simulations
+            ),
+            configured_profile_uses=profile_configured_uses[index],
+            triggered_profile_uses=profile_triggered_uses[index],
+            average_triggered_profile_uses_per_simulation=(
+                profile_triggered_uses[index] / simulations
             ),
             average_automatic_damage_per_application=(
                 profile_damage_totals[index]

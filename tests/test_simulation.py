@@ -1380,9 +1380,7 @@ def test_multiple_attacks_against_one_target_counted_per_resolution() -> None:
     assert result.average_damage_per_target_per_round == 1
 
 
-def test_multiple_attacks_split_across_several_targets_count_each_resolution() -> (
-    None
-):
+def test_multiple_attacks_split_across_several_targets_count_each_resolution() -> None:
     result = run_damage_simulations(
         attack_bonus=20,
         target_armor_class=1,
@@ -1611,7 +1609,9 @@ def test_round_damage_counts_successful_saves_that_still_receive_damage() -> Non
     assert round_result.average_individual_damage == 2
 
 
-def test_round_damage_does_not_deduplicate_repeated_attacks_against_same_target() -> None:
+def test_round_damage_does_not_deduplicate_repeated_attacks_against_same_target() -> (
+    None
+):
     round_result = _single_round_result_for_profiles(
         (
             AttackProfile(
@@ -1629,3 +1629,243 @@ def test_round_damage_does_not_deduplicate_repeated_attacks_against_same_target(
     assert round_result.average_targets_affected == 3
     assert round_result.average_damage == 18
     assert round_result.average_individual_damage == 6
+
+
+def test_attack_roll_trigger_miss_executes_zero_times() -> None:
+    rng = PredictableRng([1])
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=20,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Greatsword", 0, "1d4", 1, attack_id="a"),
+            AttackProfile(
+                "Smite",
+                20,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+            ),
+        ),
+        rng=rng,
+    )
+    assert result.attack_profile_results[1].total_profile_uses == 0
+    assert result.average_total_damage_per_simulation == 0
+
+
+def test_attack_roll_trigger_per_success_executes_twice() -> None:
+    rng = PredictableRng([10, 1, 10, 1, 10, 1, 10, 1])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=15,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Greatsword", 20, "1d4", 2, attack_id="a"),
+            AttackProfile(
+                "Smite",
+                20,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+            ),
+        ),
+        rng=rng,
+    )
+    assert result.attack_profile_results[1].total_profile_uses == 2
+    assert result.attack_profile_results[1].triggered_profile_uses == 2
+    assert result.average_total_damage_per_simulation == 4
+
+
+def test_attack_roll_trigger_once_if_any_executes_once() -> None:
+    rng = PredictableRng([10, 1, 10, 1, 10, 1])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=15,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("Greatsword", 20, "1d4", 2, attack_id="a"),
+            AttackProfile(
+                "Smite",
+                20,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+                trigger_frequency="once_if_any",
+            ),
+        ),
+        rng=rng,
+    )
+    assert result.attack_profile_results[1].total_profile_uses == 1
+    assert result.average_total_damage_per_simulation == 3
+
+
+def test_saving_throw_trigger_per_failed_save_executes_three_times() -> None:
+    rng = PredictableRng([1, 1, 1, 1, 20, 20, 10, 1, 10, 1, 10, 1])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=15,
+        damage_dice="1d4",
+        enemy_save_bonus=0,
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Fireball",
+                None,
+                "1d4",
+                1,
+                affected_targets=5,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+                attack_id="a",
+            ),
+            AttackProfile(
+                "Burst",
+                20,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+            ),
+        ),
+        rng=rng,
+    )
+    assert result.attack_profile_results[1].total_profile_uses == 3
+    assert result.attack_profile_results[0].failed_save_rate == pytest.approx(3 / 5)
+
+
+def test_trigger_validation_rejects_deleted_reordered_self_and_cycles() -> None:
+    with pytest.raises(ValueError, match="no longer exists"):
+        run_damage_simulations(
+            attack_bonus=1,
+            target_armor_class=10,
+            damage_dice="1d4",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "B",
+                    1,
+                    "1d4",
+                    1,
+                    attack_id="b",
+                    trigger_type="after_success",
+                    trigger_source_attack_id="missing",
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match="must occur earlier"):
+        run_damage_simulations(
+            attack_bonus=1,
+            target_armor_class=10,
+            damage_dice="1d4",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "B",
+                    1,
+                    "1d4",
+                    1,
+                    attack_id="b",
+                    trigger_type="after_success",
+                    trigger_source_attack_id="a",
+                ),
+                AttackProfile("A", 1, "1d4", 1, attack_id="a"),
+            ),
+        )
+    with pytest.raises(ValueError, match="cannot trigger itself"):
+        run_damage_simulations(
+            attack_bonus=1,
+            target_armor_class=10,
+            damage_dice="1d4",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "A",
+                    1,
+                    "1d4",
+                    1,
+                    attack_id="a",
+                    trigger_type="after_success",
+                    trigger_source_attack_id="a",
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match="cycle|earlier"):
+        run_damage_simulations(
+            attack_bonus=1,
+            target_armor_class=10,
+            damage_dice="1d4",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "A",
+                    1,
+                    "1d4",
+                    1,
+                    attack_id="a",
+                    trigger_type="after_success",
+                    trigger_source_attack_id="b",
+                ),
+                AttackProfile(
+                    "B",
+                    1,
+                    "1d4",
+                    1,
+                    attack_id="b",
+                    trigger_type="after_success",
+                    trigger_source_attack_id="a",
+                ),
+            ),
+        )
+
+
+def test_triggered_attack_can_trigger_later_attack_without_double_counting() -> None:
+    rng = PredictableRng([10, 1, 10, 1, 10, 1])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=15,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile("A", 20, "1d4", 1, attack_id="a"),
+            AttackProfile(
+                "B",
+                20,
+                "1d4",
+                1,
+                attack_id="b",
+                trigger_type="after_success",
+                trigger_source_attack_id="a",
+            ),
+            AttackProfile(
+                "C",
+                20,
+                "1d4",
+                1,
+                attack_id="c",
+                trigger_type="after_success",
+                trigger_source_attack_id="b",
+            ),
+        ),
+        rng=rng,
+    )
+    assert [r.total_profile_uses for r in result.attack_profile_results] == [1, 1, 1]
+    assert result.total_attacks_made == 3
