@@ -22,7 +22,10 @@ from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
     ScenarioConfig,
+    TriggerFrequency,
+    TriggerType,
     parse_active_rounds,
+    validate_trigger_dependencies,
 )
 
 SHARED_CONFIGURATION_VERSION = 1
@@ -55,6 +58,10 @@ class SharedAttackProfileConfiguration:
     affected_targets: int
     active_rounds: str
     features: frozenset[AttackFeature]
+    attack_id: str = ""
+    trigger_type: TriggerType = TriggerType.ALWAYS
+    trigger_source_attack_id: str | None = None
+    trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
 
     @classmethod
     def from_attack_profile(
@@ -72,6 +79,10 @@ class SharedAttackProfileConfiguration:
             affected_targets=profile.affected_targets,
             active_rounds=profile.active_rounds,
             features=frozenset(AttackFeature(feature) for feature in profile.features),
+            attack_id=profile.attack_id,
+            trigger_type=TriggerType(profile.trigger_type),
+            trigger_source_attack_id=profile.trigger_source_attack_id,
+            trigger_frequency=TriggerFrequency(profile.trigger_frequency),
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -87,6 +98,10 @@ class SharedAttackProfileConfiguration:
             save_dc=self.save_dc,
             successful_save_damage=self.successful_save_damage,
             features=self.features,
+            attack_id=self.attack_id,
+            trigger_type=self.trigger_type,
+            trigger_source_attack_id=self.trigger_source_attack_id,
+            trigger_frequency=self.trigger_frequency,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -104,6 +119,10 @@ class SharedAttackProfileConfiguration:
             "features": [
                 f.value for f in FEATURE_SERIALIZATION_ORDER if f in self.features
             ],
+            "attack_id": self.attack_id,
+            "trigger_type": self.trigger_type.value,
+            "trigger_source_attack_id": self.trigger_source_attack_id,
+            "trigger_frequency": self.trigger_frequency.value,
         }
 
 
@@ -358,6 +377,14 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
         _expect(obj, "affected_targets", int, ctx),
         _expect(obj, "active_rounds", str, ctx),
         frozenset(features),
+        obj.get("attack_id", ""),
+        _enum(TriggerType, obj.get("trigger_type", TriggerType.ALWAYS.value), ctx),
+        obj.get("trigger_source_attack_id"),
+        _enum(
+            TriggerFrequency,
+            obj.get("trigger_frequency", TriggerFrequency.PER_SUCCESS.value),
+            ctx,
+        ),
     )
 
 
@@ -382,6 +409,13 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
             raise SharedConfigurationError(f"{label} has too many attack profiles.")
         for i, profile in enumerate(build.attack_profiles, 1):
             _validate_profile(profile, f"{label} profile {i}")
+        try:
+            validate_trigger_dependencies(
+                tuple(profile.to_attack_profile() for profile in build.attack_profiles),
+                label=label,
+            )
+        except ValueError as error:
+            raise SharedConfigurationError(str(error)) from error
 
 
 def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> None:

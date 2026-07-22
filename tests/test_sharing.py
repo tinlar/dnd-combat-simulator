@@ -356,3 +356,69 @@ def test_short_share_url_one_encoded_share_param_and_strips_query():
     assert parsed.fragment == ""
     assert set(qs) == {"share"}
     assert qs["share"] == ["id +/"]
+
+
+def test_shared_urls_preserve_trigger_settings_and_source_rename() -> None:
+    from dnd_combat_simulator.sharing import (
+        deserialize_shared_configuration,
+        serialize_shared_configuration,
+        shared_configuration_from_configs,
+    )
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    build = BuildConfig(
+        "Build",
+        5,
+        "1d4",
+        1,
+        attack_profiles=(
+            AttackProfile("Renamed Greatsword", 5, "1d4", 1, attack_id="src"),
+            AttackProfile(
+                "Followup",
+                5,
+                "1d4",
+                1,
+                attack_id="dep",
+                trigger_type="after_success",
+                trigger_source_attack_id="src",
+                trigger_frequency="once_if_any",
+            ),
+        ),
+    )
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 1, 1),
+        seed=1,
+        build_a=build,
+        build_b=build,
+    )
+    loaded = deserialize_shared_configuration(serialize_shared_configuration(config))
+    dep = loaded.build_a.to_build_config().attack_profiles[1]
+    assert dep.trigger_source_attack_id == "src"
+    assert dep.trigger_frequency == "once_if_any"
+
+
+def test_existing_shared_profile_without_trigger_data_loads_as_always() -> None:
+    from dnd_combat_simulator.sharing import _profile_from_json
+
+    profile = _profile_from_json(
+        {
+            "name": "Attack",
+            "resolution_type": "attack_roll",
+            "attack_bonus": 5,
+            "save_dc": None,
+            "successful_save_damage": "no_damage",
+            "attack_roll_mode": "normal",
+            "damage_formula": "1d4",
+            "attacks_per_round": 1,
+            "affected_targets": 1,
+            "active_rounds": "",
+            "features": [],
+        },
+        "profile",
+    )
+    assert profile.trigger_type == "always"

@@ -42,6 +42,8 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ScenarioConfig,
     SimulationResult,
+    TriggerFrequency,
+    TriggerType,
     compare_builds,
     run_damage_simulations,
     simulate_build,
@@ -281,6 +283,47 @@ def validate_build_fields(
                 errors,
                 profile_widget_key(widget_prefix, "name"),
                 "Attack profile names must be unique within a build.",
+            )
+    profile_ids = [profile.attack_id for profile in profiles]
+    for index, profile in enumerate(profiles):
+        widget_prefix = profile_prefix(prefix, index)
+        if TriggerType(profile.trigger_type) is TriggerType.ALWAYS:
+            continue
+        source_id = profile.trigger_source_attack_id
+        if not source_id:
+            _add_error(
+                errors,
+                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
+                "Select the attack that must succeed first.",
+            )
+        elif source_id == profile.attack_id:
+            _add_error(
+                errors,
+                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
+                "An attack cannot trigger itself.",
+            )
+        elif source_id not in profile_ids:
+            _add_error(
+                errors,
+                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
+                "The selected trigger source no longer exists.",
+            )
+        elif profile_ids.index(source_id) > index:
+            _add_error(
+                errors,
+                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
+                "Trigger source must occur earlier in the attack order.",
+            )
+    try:
+        from dnd_combat_simulator.simulation import validate_trigger_dependencies
+
+        validate_trigger_dependencies(profiles, label=build.name or "Build")
+    except ValueError as error:
+        if profiles:
+            _add_error(
+                errors,
+                profile_widget_key(profile_prefix(prefix, 0), "trigger_type"),
+                str(error),
             )
     return errors
 
@@ -748,6 +791,9 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "attacks_per_round": "attacks",
         "affected_targets": "affected-targets",
         "active_rounds": "active-rounds",
+        "trigger_type": "trigger-type",
+        "trigger_source_attack_id": "trigger-source-attack-id",
+        "trigger_frequency": "trigger-frequency",
     }
     return f"{prefix}-{suffixes[field]}"
 
@@ -1361,7 +1407,26 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Average total damage across all affected targets": format_damage(
                 profile_result.average_total_damage_per_simulation
             ),
+            "Configured uses": f"{profile_result.configured_profile_uses:,}",
+            "Triggered executions": f"{profile_result.triggered_profile_uses:,}",
+            "Total actual executions": f"{profile_result.total_profile_uses:,}",
         }
+        if profile.trigger_type is TriggerType.AFTER_SUCCESS:
+            source = next(
+                (
+                    item.attack_profile.name
+                    for item in result.attack_profile_results
+                    if item.attack_profile.attack_id == profile.trigger_source_attack_id
+                ),
+                "selected attack",
+            )
+            average_triggered = (
+                profile_result.average_triggered_profile_uses_per_simulation
+            )
+            row["Trigger"] = (
+                f"Triggered {average_triggered:.2f} times per simulation "
+                f"after {source} succeeds"
+            )
         if profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
             row["Automatic damage applications"] = (
                 f"{profile_result.automatic_damage_applications:,}"
@@ -1617,6 +1682,41 @@ def _feature_inputs(
     return frozenset(selected)
 
 
+def _trigger_source_options(prefix: str) -> list[tuple[str, str]]:
+    import streamlit as st
+
+    parts = prefix.split("-")
+    build_prefix = parts[0]
+    current_id = prefix
+    count = int(
+        getattr(st, "session_state", {}).get(
+            f"{build_prefix}-additional-attack-count", 0
+        )
+    )
+    options: list[tuple[str, str]] = []
+    for index, (_, _, default_name) in enumerate(
+        _profile_definitions(build_prefix, count)
+    ):
+        source_prefix = profile_prefix(build_prefix, index)
+        if source_prefix == current_id:
+            continue
+        name = st.session_state.get(
+            profile_widget_key(source_prefix, "name"), default_name
+        )
+        options.append((source_prefix, str(name).strip() or default_name))
+    return options
+
+
+def _trigger_frequency_labels(
+    source_resolution_type: ResolutionType,
+) -> tuple[str, str]:
+    if source_resolution_type is ResolutionType.ATTACK_ROLL:
+        return ("Once per successful hit", "Once if any hit succeeds")
+    if source_resolution_type is ResolutionType.SAVING_THROW:
+        return ("Once per failed save", "Once if any save fails")
+    return ("Once per affected target", "Once if any target is affected")
+
+
 def _attack_profile_inputs(
     prefix: str, default_name: str, errors_by_key: dict[str, str] | None = None
 ) -> AttackProfile:
@@ -1727,6 +1827,75 @@ def _attack_profile_inputs(
         key=profile_widget_key(prefix, "active_rounds"),
     )
     _field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
+
+    expander = getattr(st, "expander", None)
+    trigger_container = (
+        expander(
+            "Trigger",
+            expanded=bool(
+                errors_by_key.get(profile_widget_key(prefix, "trigger_type"))
+                or errors_by_key.get(
+                    profile_widget_key(prefix, "trigger_source_attack_id")
+                )
+            ),
+        )
+        if expander is not None
+        else nullcontext()
+    )
+    with trigger_container:
+        trigger_type_label = st.selectbox(
+            "Trigger",
+            options=["Always", "After another attack succeeds"],
+            index=0,
+            key=profile_widget_key(prefix, "trigger_type"),
+        )
+        _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
+        trigger_type = (
+            TriggerType.AFTER_SUCCESS
+            if trigger_type_label == "After another attack succeeds"
+            else TriggerType.ALWAYS
+        )
+        trigger_source_attack_id = None
+        trigger_frequency = TriggerFrequency.PER_SUCCESS
+        if trigger_type is TriggerType.AFTER_SUCCESS:
+            source_options = _trigger_source_options(prefix)
+            option_ids = [attack_id for attack_id, _ in source_options]
+            selected_source = st.selectbox(
+                "Trigger after",
+                options=option_ids,
+                format_func=lambda attack_id: dict(source_options).get(
+                    attack_id, attack_id
+                ),
+                index=0 if option_ids else None,
+                key=profile_widget_key(prefix, "trigger_source_attack_id"),
+            )
+            trigger_source_attack_id = selected_source if selected_source else None
+            _field_error(
+                errors_by_key, profile_widget_key(prefix, "trigger_source_attack_id")
+            )
+            source_resolution = ResolutionType.ATTACK_ROLL
+            if trigger_source_attack_id:
+                source_resolution_label = st.session_state.get(
+                    profile_widget_key(trigger_source_attack_id, "resolution_type"),
+                    "Attack Roll",
+                )
+                source_resolution = {
+                    "Attack Roll": ResolutionType.ATTACK_ROLL,
+                    "Saving Throw": ResolutionType.SAVING_THROW,
+                    "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+                }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
+            per_label, once_label = _trigger_frequency_labels(source_resolution)
+            frequency_label = st.radio(
+                "Frequency",
+                options=[per_label, once_label],
+                key=profile_widget_key(prefix, "trigger_frequency"),
+            )
+            trigger_frequency = (
+                TriggerFrequency.ONCE_IF_ANY
+                if frequency_label == once_label
+                else TriggerFrequency.PER_SUCCESS
+            )
+
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,
@@ -1740,6 +1909,10 @@ def _attack_profile_inputs(
         save_dc=None if save_dc is None else int(save_dc),
         successful_save_damage=successful_save_damage,
         features=features,
+        attack_id=prefix,
+        trigger_type=trigger_type,
+        trigger_source_attack_id=trigger_source_attack_id,
+        trigger_frequency=trigger_frequency,
     )
 
 
@@ -1870,6 +2043,19 @@ def _hydrate_build_session_state(
         )
         session_state[profile_widget_key(widget_prefix, "active_rounds")] = (
             profile.active_rounds
+        )
+        session_state[profile_widget_key(widget_prefix, "trigger_type")] = (
+            "After another attack succeeds"
+            if profile.trigger_type is TriggerType.AFTER_SUCCESS
+            else "Always"
+        )
+        session_state[profile_widget_key(widget_prefix, "trigger_source_attack_id")] = (
+            profile.trigger_source_attack_id
+        )
+        session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = (
+            "Once if any resolution succeeds"
+            if profile.trigger_frequency is TriggerFrequency.ONCE_IF_ANY
+            else "Once per successful resolution"
         )
         for feature in FEATURE_ORDER:
             session_state[feature_widget_key(widget_prefix, feature)] = (
@@ -2165,6 +2351,27 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                     else SuccessfulSaveDamage.NO_DAMAGE
                 ),
                 features,
+                widget_prefix,
+                (
+                    TriggerType.AFTER_SUCCESS
+                    if session_state.get(
+                        profile_widget_key(widget_prefix, "trigger_type"), "Always"
+                    )
+                    == "After another attack succeeds"
+                    else TriggerType.ALWAYS
+                ),
+                session_state.get(
+                    profile_widget_key(widget_prefix, "trigger_source_attack_id")
+                ),
+                (
+                    TriggerFrequency.ONCE_IF_ANY
+                    if str(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "trigger_frequency"), ""
+                        )
+                    ).startswith("Once if")
+                    else TriggerFrequency.PER_SUCCESS
+                ),
             )
         )
     return _build_config_from_profiles(
