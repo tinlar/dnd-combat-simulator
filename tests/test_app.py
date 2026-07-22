@@ -1961,3 +1961,323 @@ def test_shared_scenario_row_no_longer_contains_simulation_count_or_seed() -> No
     assert '"Enemy Save Bonus"' in shared_block
     assert '"Number of rounds"' in shared_block
     assert '"Compare with another build"' in shared_block
+
+
+def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _attack_profile_inputs,
+        profile_widget_key,
+        validate_build_fields,
+    )
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+
+    calls = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            calls.append((label, kwargs))
+            if label == "Trigger":
+                return "After another attack succeeds"
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    state = {
+        "first-additional-attack-count": 1,
+        profile_widget_key(
+            "first-additional-1", "trigger_type"
+        ): "After another attack succeeds",
+        profile_widget_key("first-additional-1", "trigger_source_attack_id"): None,
+    }
+    col = Column()
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        selectbox=col.selectbox,
+        text_input=col.text_input,
+        number_input=col.number_input,
+        radio=col.radio,
+        columns=lambda spec, **kwargs: [
+            col for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+        expander=lambda *args, **kwargs: Context(),
+        checkbox=lambda *args, **kwargs: False,
+        warning=lambda *args, **kwargs: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+
+    trigger_after = next(kwargs for label, kwargs in calls if label == "Trigger after")
+    assert trigger_after["options"][0] is None
+    assert trigger_after["format_func"](None) == "Select an earlier attack..."
+    assert trigger_after["index"] == 0
+    assert profile.trigger_source_attack_id is None
+
+    build = BuildConfig(
+        "Build A",
+        5,
+        "1d6",
+        1,
+        attack_profiles=(
+            AttackProfile("Primary", 5, "1d6", 1, attack_id="first-primary"),
+            AttackProfile(
+                "Follow-up",
+                5,
+                "1d6",
+                1,
+                attack_id="first-additional-1",
+                trigger_type=TriggerType.AFTER_SUCCESS,
+            ),
+        ),
+    )
+    errors = [
+        error
+        for error in validate_build_fields(build, prefix="first")
+        if error.key
+        == profile_widget_key("first-additional-1", "trigger_source_attack_id")
+    ]
+    assert [error.message for error in errors] == [
+        "Select the attack that must succeed first."
+    ]
+
+
+def test_selecting_trigger_source_stores_stable_id_and_clears_error(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import (
+        _attack_profile_inputs,
+        profile_widget_key,
+        validate_build_fields,
+    )
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            if label == "Trigger":
+                return "After another attack succeeds"
+            if label == "Trigger after":
+                value = "first-primary"
+                kwargs["key"] and state.__setitem__(kwargs["key"], value)
+                return value
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    state = {"first-additional-attack-count": 1}
+    col = Column()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state=state,
+            selectbox=col.selectbox,
+            text_input=col.text_input,
+            number_input=col.number_input,
+            radio=col.radio,
+            columns=lambda spec, **kwargs: [
+                col for _ in range(spec if isinstance(spec, int) else len(spec))
+            ],
+            expander=lambda *args, **kwargs: Context(),
+            checkbox=lambda *args, **kwargs: False,
+            warning=lambda *args, **kwargs: None,
+        ),
+    )
+
+    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+
+    assert profile.trigger_source_attack_id == "first-primary"
+    assert (
+        state[profile_widget_key("first-additional-1", "trigger_source_attack_id")]
+        == "first-primary"
+    )
+    build = BuildConfig(
+        "Build A",
+        5,
+        "1d6",
+        1,
+        attack_profiles=(
+            AttackProfile("Renamed Primary", 5, "1d6", 1, attack_id="first-primary"),
+            AttackProfile(
+                "Follow-up",
+                5,
+                "1d6",
+                1,
+                attack_id="first-additional-1",
+                trigger_type=TriggerType.AFTER_SUCCESS,
+                trigger_source_attack_id="first-primary",
+            ),
+        ),
+    )
+    assert validate_build_fields(build, prefix="first") == []
+
+
+def test_saved_trigger_source_remains_selected_after_rerun_and_rename(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import _attack_profile_inputs, profile_widget_key
+
+    calls = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return "New name" if label == "Attack name" else kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            calls.append((label, kwargs))
+            if label == "Trigger":
+                return "After another attack succeeds"
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    state = {
+        "first-additional-attack-count": 1,
+        profile_widget_key("first-primary", "name"): "Renamed source",
+        profile_widget_key(
+            "first-additional-1", "trigger_source_attack_id"
+        ): "first-primary",
+    }
+    col = Column()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state=state,
+            selectbox=col.selectbox,
+            text_input=col.text_input,
+            number_input=col.number_input,
+            radio=col.radio,
+            columns=lambda spec, **kwargs: [
+                col for _ in range(spec if isinstance(spec, int) else len(spec))
+            ],
+            expander=lambda *args, **kwargs: Context(),
+            checkbox=lambda *args, **kwargs: False,
+            warning=lambda *args, **kwargs: None,
+        ),
+    )
+
+    profile = _attack_profile_inputs("first-additional-1", "Additional attack 1")
+
+    trigger_after = next(kwargs for label, kwargs in calls if label == "Trigger after")
+    assert trigger_after["index"] == 1
+    assert trigger_after["format_func"]("first-primary") == "Renamed source"
+    assert profile.trigger_source_attack_id == "first-primary"
+
+
+def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.app import _attack_profile_inputs
+
+    state = {"first-additional-attack-count": 2}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    assert app._trigger_source_options("first-additional-1") == [
+        ("first-primary", "Primary attack")
+    ]
+
+    warnings = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            assert label != "Trigger after"
+            return (
+                "After another attack succeeds"
+                if label == "Trigger"
+                else kwargs["options"][kwargs.get("index", 0)]
+            )
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    col = Column()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state={"first-additional-attack-count": 0},
+            selectbox=col.selectbox,
+            text_input=col.text_input,
+            number_input=col.number_input,
+            radio=col.radio,
+            columns=lambda spec, **kwargs: [
+                col for _ in range(spec if isinstance(spec, int) else len(spec))
+            ],
+            expander=lambda *args, **kwargs: Context(),
+            checkbox=lambda *args, **kwargs: False,
+            warning=lambda message, **kwargs: warnings.append(message),
+        ),
+    )
+
+    profile = _attack_profile_inputs("first-primary", "Primary attack")
+    assert profile.trigger_source_attack_id is None
+    assert warnings == [
+        "Add or move an attack before this one before configuring a trigger."
+    ]

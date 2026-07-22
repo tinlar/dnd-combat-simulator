@@ -133,6 +133,10 @@ DAMAGE_FORMULA_HELP = dedent("""
     once to the complete damage roll.
     """).strip()
 
+NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE = (
+    "Add or move an attack before this one before configuring a trigger."
+)
+
 DAMAGE_FORMULA_PLACEHOLDER = "Examples: 1d8+4, 3d6!, 3d6!>4, 4d6kh3+2, 8d100dh3."
 
 
@@ -285,46 +289,65 @@ def validate_build_fields(
                 "Attack profile names must be unique within a build.",
             )
     profile_ids = [profile.attack_id for profile in profiles]
+    trigger_source_error_keys: set[str] = set()
+
+    def has_path_to_current(source_id: str, current_id: str) -> bool:
+        dependencies = {
+            profile.attack_id: profile.trigger_source_attack_id
+            for profile in profiles
+            if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS
+        }
+        seen: set[str] = set()
+        cursor = source_id
+        while cursor and cursor not in seen:
+            if cursor == current_id:
+                return True
+            seen.add(cursor)
+            cursor = dependencies.get(cursor)
+        return False
+
     for index, profile in enumerate(profiles):
         widget_prefix = profile_prefix(prefix, index)
+        source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
         if TriggerType(profile.trigger_type) is TriggerType.ALWAYS:
             continue
+        earlier_ids = profile_ids[:index]
+        eligible_ids = [
+            attack_id
+            for attack_id in earlier_ids
+            if not has_path_to_current(attack_id, profile.attack_id)
+        ]
         source_id = profile.trigger_source_attack_id
         if not source_id:
             _add_error(
                 errors,
-                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
-                "Select the attack that must succeed first.",
+                source_key,
+                (
+                    NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE
+                    if not eligible_ids
+                    else "Select the attack that must succeed first."
+                ),
             )
-        elif source_id == profile.attack_id:
+            trigger_source_error_keys.add(source_key)
+        elif source_id not in eligible_ids:
             _add_error(
                 errors,
-                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
-                "An attack cannot trigger itself.",
+                source_key,
+                "The selected trigger source is not eligible.",
             )
-        elif source_id not in profile_ids:
-            _add_error(
-                errors,
-                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
-                "The selected trigger source no longer exists.",
-            )
-        elif profile_ids.index(source_id) > index:
-            _add_error(
-                errors,
-                profile_widget_key(widget_prefix, "trigger_source_attack_id"),
-                "Trigger source must occur earlier in the attack order.",
-            )
-    try:
-        from dnd_combat_simulator.simulation import validate_trigger_dependencies
+            trigger_source_error_keys.add(source_key)
+    if not trigger_source_error_keys:
+        try:
+            from dnd_combat_simulator.simulation import validate_trigger_dependencies
 
-        validate_trigger_dependencies(profiles, label=build.name or "Build")
-    except ValueError as error:
-        if profiles:
-            _add_error(
-                errors,
-                profile_widget_key(profile_prefix(prefix, 0), "trigger_type"),
-                str(error),
-            )
+            validate_trigger_dependencies(profiles, label=build.name or "Build")
+        except ValueError as error:
+            if profiles:
+                _add_error(
+                    errors,
+                    profile_widget_key(profile_prefix(prefix, 0), "trigger_type"),
+                    str(error),
+                )
     return errors
 
 
@@ -1687,18 +1710,39 @@ def _trigger_source_options(prefix: str) -> list[tuple[str, str]]:
 
     parts = prefix.split("-")
     build_prefix = parts[0]
-    current_id = prefix
     count = int(
         getattr(st, "session_state", {}).get(
             f"{build_prefix}-additional-attack-count", 0
         )
     )
+    definitions = _profile_definitions(build_prefix, count)
+    current_index = next(
+        (
+            index
+            for index, _definition in enumerate(definitions)
+            if profile_prefix(build_prefix, index) == prefix
+        ),
+        None,
+    )
+    if current_index is None:
+        return []
+
+    def would_create_cycle(candidate_id: str) -> bool:
+        seen: set[str] = set()
+        current = candidate_id
+        while current and current not in seen:
+            if current == prefix:
+                return True
+            seen.add(current)
+            current = st.session_state.get(
+                profile_widget_key(current, "trigger_source_attack_id")
+            )
+        return False
+
     options: list[tuple[str, str]] = []
-    for index, (_, _, default_name) in enumerate(
-        _profile_definitions(build_prefix, count)
-    ):
+    for index, (_, _, default_name) in enumerate(definitions[:current_index]):
         source_prefix = profile_prefix(build_prefix, index)
-        if source_prefix == current_id:
+        if would_create_cycle(source_prefix):
             continue
         name = st.session_state.get(
             profile_widget_key(source_prefix, "name"), default_name
@@ -1860,19 +1904,33 @@ def _attack_profile_inputs(
         if trigger_type is TriggerType.AFTER_SUCCESS:
             source_options = _trigger_source_options(prefix)
             option_ids = [attack_id for attack_id, _ in source_options]
-            selected_source = st.selectbox(
-                "Trigger after",
-                options=option_ids,
-                format_func=lambda attack_id: dict(source_options).get(
-                    attack_id, attack_id
-                ),
-                index=0 if option_ids else None,
-                key=profile_widget_key(prefix, "trigger_source_attack_id"),
-            )
-            trigger_source_attack_id = selected_source if selected_source else None
-            _field_error(
-                errors_by_key, profile_widget_key(prefix, "trigger_source_attack_id")
-            )
+            source_key = profile_widget_key(prefix, "trigger_source_attack_id")
+            stored_source = st.session_state.get(source_key)
+            if not option_ids:
+                st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
+                st.session_state[source_key] = None
+            else:
+                options_with_placeholder = [None, *option_ids]
+                selected_index = (
+                    options_with_placeholder.index(stored_source)
+                    if stored_source in option_ids
+                    else 0
+                )
+                selected_source = st.selectbox(
+                    "Trigger after",
+                    options=options_with_placeholder,
+                    format_func=lambda attack_id: (
+                        "Select an earlier attack..."
+                        if attack_id is None
+                        else dict(source_options).get(attack_id, attack_id)
+                    ),
+                    index=selected_index,
+                    key=source_key,
+                )
+                trigger_source_attack_id = (
+                    selected_source if selected_source in option_ids else None
+                )
+            _field_error(errors_by_key, source_key)
             source_resolution = ResolutionType.ATTACK_ROLL
             if trigger_source_attack_id:
                 source_resolution_label = st.session_state.get(
