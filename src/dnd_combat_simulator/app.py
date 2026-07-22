@@ -945,6 +945,11 @@ def format_signed_damage(value: float) -> str:
     return f"{value:+.2f}"
 
 
+def format_signed_compact_decimal(value: float) -> str:
+    """Format a signed decimal delta with compact trailing zero handling."""
+    return f"{value:+.2f}".rstrip("0").rstrip(".")
+
+
 def format_signed_rate(value: float) -> str:
     """Format a signed fractional rate as a percentage-point delta."""
     return f"{value:+.2%}"
@@ -1268,7 +1273,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Difference": format_signed_damage(difference.average_damage_per_round),
         },
         {
-            "Metric": "Average total damage across all affected targets",
+            "Metric": "Average total damage per combat",
             comparison.first_build.name: format_damage(
                 first.average_total_damage_per_simulation
             ),
@@ -1278,7 +1283,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Difference": format_signed_damage(difference.average_total_damage),
         },
         {
-            "Metric": "Average damage per target per round",
+            "Metric": "Average damage per affected target",
             comparison.first_build.name: format_damage(
                 first.average_damage_per_target_per_round
             ),
@@ -1287,6 +1292,58 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             ),
             "Difference": format_signed_damage(
                 difference.average_damage_per_target_per_round
+            ),
+        },
+        {
+            "Metric": "Average attack executions per combat",
+            comparison.first_build.name: format_compact_decimal(
+                _average_attack_executions_per_combat(first)
+            ),
+            comparison.second_build.name: format_compact_decimal(
+                _average_attack_executions_per_combat(second)
+            ),
+            "Difference": format_signed_compact_decimal(
+                _average_attack_executions_per_combat(first)
+                - _average_attack_executions_per_combat(second)
+            ),
+        },
+        {
+            "Metric": "Average attack executions per round",
+            comparison.first_build.name: format_compact_decimal(
+                _average_attack_executions_per_round(first)
+            ),
+            comparison.second_build.name: format_compact_decimal(
+                _average_attack_executions_per_round(second)
+            ),
+            "Difference": format_signed_compact_decimal(
+                _average_attack_executions_per_round(first)
+                - _average_attack_executions_per_round(second)
+            ),
+        },
+        {
+            "Metric": "Average targets damaged per combat",
+            comparison.first_build.name: format_compact_decimal(
+                _average_targets_damaged_per_combat(first)
+            ),
+            comparison.second_build.name: format_compact_decimal(
+                _average_targets_damaged_per_combat(second)
+            ),
+            "Difference": format_signed_compact_decimal(
+                _average_targets_damaged_per_combat(first)
+                - _average_targets_damaged_per_combat(second)
+            ),
+        },
+        {
+            "Metric": "Average targets damaged per round",
+            comparison.first_build.name: format_compact_decimal(
+                _average_targets_damaged_per_round(first)
+            ),
+            comparison.second_build.name: format_compact_decimal(
+                _average_targets_damaged_per_round(second)
+            ),
+            "Difference": format_signed_compact_decimal(
+                _average_targets_damaged_per_round(first)
+                - _average_targets_damaged_per_round(second)
             ),
         },
         {
@@ -1376,6 +1433,35 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
     return rows
 
 
+def _total_simulated_rounds(result: SimulationResult) -> int:
+    """Return the number of completed combat rounds represented by a result."""
+    return result.simulations_run * result.rounds_per_simulation
+
+
+def _average_attack_executions_per_combat(result: SimulationResult) -> float:
+    """Return average attack profile executions in each completed combat."""
+    return result.total_attacks_made / result.simulations_run
+
+
+def _average_attack_executions_per_round(result: SimulationResult) -> float:
+    """Return average attack profile executions in each simulated combat round."""
+    return result.total_attacks_made / _total_simulated_rounds(result)
+
+
+def _average_targets_damaged_per_combat(result: SimulationResult) -> float:
+    """Return average damaged targets in each completed combat.
+
+    The simulator counts each damage event's affected targets and does not identify
+    whether multiple events damaged the same creature.
+    """
+    return result.total_targets_affected / result.simulations_run
+
+
+def _average_targets_damaged_per_round(result: SimulationResult) -> float:
+    """Return average damaged targets in each simulated combat round."""
+    return result.total_targets_affected / _total_simulated_rounds(result)
+
+
 def _render_results(result: SimulationResult) -> None:
     """Render simulation results in a compact metric grid."""
     import streamlit as st
@@ -1398,16 +1484,30 @@ def _render_results(result: SimulationResult) -> None:
 
     second_row = st.columns(4)
     second_row[0].metric(
-        "Minimum total damage",
-        format_damage(result.minimum_total_damage_in_simulation),
+        "Average attack executions per combat",
+        format_compact_decimal(_average_attack_executions_per_combat(result)),
+        help="Average number of attack profile executions in each completed combat.",
     )
     second_row[1].metric(
-        "Maximum total damage",
-        format_damage(result.maximum_total_damage_in_simulation),
+        "Average attack executions per round",
+        format_compact_decimal(_average_attack_executions_per_round(result)),
+        help="Average number of attack profile executions in each simulated combat round.",
     )
-    second_row[2].metric("Total attack uses", f"{result.total_attacks_made:,}")
+    second_row[2].metric(
+        "Average targets damaged per combat",
+        format_compact_decimal(_average_targets_damaged_per_combat(result)),
+        help=(
+            "Average number of targets damaged in each completed combat. "
+            "A creature damaged more than once can be counted more than once."
+        ),
+    )
     second_row[3].metric(
-        "Target instances damaged", f"{result.total_targets_affected:,}"
+        "Average targets damaged per round",
+        format_compact_decimal(_average_targets_damaged_per_round(result)),
+        help=(
+            "Average number of targets damaged in each simulated combat round. "
+            "A creature damaged more than once can be counted more than once."
+        ),
     )
 
     st.caption(f"Attack roll mode: {result.attack_roll_mode.value.title()}")
@@ -1462,8 +1562,11 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
                 f"after {source} succeeds"
             )
         if profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
-            row["Automatic damage applications"] = (
-                f"{profile_result.automatic_damage_applications:,}"
+            row["Average automatic damage applications per combat"] = (
+                format_compact_decimal(
+                    profile_result.automatic_damage_applications
+                    / result.simulations_run
+                )
             )
         elif profile.resolution_type is ResolutionType.SAVING_THROW:
             row["Failed save percentage"] = format_rate(profile_result.failed_save_rate)
@@ -1483,16 +1586,47 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
     """Build aggregate rows for a single-build result table."""
     return [
         {
-            "Metric": "Average total damage per round",
-            "Value": format_damage(result.average_damage_per_round),
-        },
-        {
-            "Metric": "Average total damage across the combat",
+            "Metric": "Average total damage per combat",
             "Value": format_damage(result.average_total_damage_per_simulation),
         },
         {
-            "Metric": "Average damage per target per round",
+            "Metric": "Average damage per round",
+            "Value": format_damage(result.average_damage_per_round),
+        },
+        {
+            "Metric": "Average damage per affected target",
             "Value": format_damage(result.average_damage_per_target_per_round),
+            "Details": (
+                "A creature damaged by multiple attacks can contribute multiple times."
+            ),
+        },
+        {
+            "Metric": "Average attack executions per combat",
+            "Value": format_compact_decimal(
+                _average_attack_executions_per_combat(result)
+            ),
+        },
+        {
+            "Metric": "Average attack executions per round",
+            "Value": format_compact_decimal(
+                _average_attack_executions_per_round(result)
+            ),
+        },
+        {
+            "Metric": "Average targets damaged per combat",
+            "Value": format_compact_decimal(
+                _average_targets_damaged_per_combat(result)
+            ),
+            "Details": (
+                "A creature damaged by multiple attacks can contribute multiple times."
+            ),
+        },
+        {
+            "Metric": "Average targets damaged per round",
+            "Value": format_compact_decimal(_average_targets_damaged_per_round(result)),
+            "Details": (
+                "A creature damaged by multiple attacks can contribute multiple times."
+            ),
         },
         {
             "Metric": "Round 1 burst damage",
@@ -1508,19 +1642,6 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
                 f"{result.highest_damage_round} "
                 f"({format_damage(result.highest_round_average_damage)})"
             ),
-        },
-        {
-            "Metric": "Minimum total damage",
-            "Value": format_damage(result.minimum_total_damage_in_simulation),
-        },
-        {
-            "Metric": "Maximum total damage",
-            "Value": format_damage(result.maximum_total_damage_in_simulation),
-        },
-        {"Metric": "Total attack uses", "Value": f"{result.total_attacks_made:,}"},
-        {
-            "Metric": "Target instances damaged",
-            "Value": f"{result.total_targets_affected:,}",
         },
     ]
 
