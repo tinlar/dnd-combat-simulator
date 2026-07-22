@@ -1,3 +1,5 @@
+from random import Random
+
 import pytest
 
 from dnd_combat_simulator.combat import (
@@ -11,6 +13,7 @@ from dnd_combat_simulator.simulation import (
     ComparisonDifference,
     ScenarioConfig,
     SimulationResult,
+    TriggerType,
     compare_builds,
     parse_active_rounds,
     run_damage_simulations,
@@ -898,7 +901,7 @@ def test_simulate_build_does_not_validate_unrelated_second_build() -> None:
 
 
 def test_elven_accuracy_rejected_for_non_attack_profiles() -> None:
-    import pytest
+    from random import Random
 
     from dnd_combat_simulator.combat import AttackFeature, ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, run_damage_simulations
@@ -2091,3 +2094,87 @@ def test_build_comparison_keeps_target_damage_averages_independent() -> None:
     assert comparison.first_result.round_results[0].average_targets_affected == 2
     assert comparison.second_result.average_damage_per_target_per_round == 9
     assert comparison.second_result.round_results[0].average_targets_affected == 1
+
+
+def _sometimes_profile(percent: int | None = 100) -> AttackProfile:
+    return AttackProfile(
+        name="sometimes",
+        attack_bonus=None,
+        damage_dice="1",
+        attacks_per_round=99,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        attack_id="sometimes",
+        trigger_type=TriggerType.SOMETIMES,
+        trigger_chance_percent=percent,
+    )
+
+
+def test_sometimes_successful_check_executes_once_per_round_and_can_repeat() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1",
+        rounds=2,
+        simulations=1,
+        attack_profiles=(_sometimes_profile(100),),
+        rng=Random(1),
+    )
+
+    assert result.total_attacks_made == 2
+    assert [round_result.average_attacks for round_result in result.round_results] == [
+        1,
+        1,
+    ]
+    assert result.attack_profile_results[0].triggered_profile_uses == 2
+
+
+def test_sometimes_failed_check_does_not_execute_or_count_as_miss() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(_sometimes_profile(1),),
+        rng=Random(0),
+    )
+
+    assert result.total_attacks_made == 0
+    assert result.attack_profile_results[0].triggered_profile_uses == 0
+    assert result.hit_rate == 0
+    assert result.failed_save_rate == 0
+
+
+def test_sometimes_checks_are_independent_across_combats_and_seed_reproducible() -> (
+    None
+):
+    kwargs = dict(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1",
+        rounds=1,
+        simulations=4,
+        attack_profiles=(_sometimes_profile(50),),
+    )
+
+    first = run_damage_simulations(**kwargs, rng=Random(1))
+    second = run_damage_simulations(**kwargs, rng=Random(1))
+
+    assert first.total_attacks_made == 2
+    assert [r.total_attacks_made for r in first.attack_profile_results] == [2]
+    assert second.total_attacks_made == first.total_attacks_made
+    assert second.average_total_damage == first.average_total_damage
+
+
+@pytest.mark.parametrize("percent", [None, 0, -1, 101])
+def test_sometimes_invalid_percentages_prevent_simulation(percent: int | None) -> None:
+    with pytest.raises(ValueError, match="Sometimes percentage chance"):
+        run_damage_simulations(
+            attack_bonus=0,
+            target_armor_class=10,
+            damage_dice="1",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(_sometimes_profile(percent),),
+            rng=Random(1),
+        )

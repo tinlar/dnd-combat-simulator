@@ -62,6 +62,7 @@ class SharedAttackProfileConfiguration:
     trigger_type: TriggerType = TriggerType.ALWAYS
     trigger_source_attack_id: str | None = None
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
+    trigger_chance_percent: int | None = None
 
     @classmethod
     def from_attack_profile(
@@ -83,6 +84,7 @@ class SharedAttackProfileConfiguration:
             trigger_type=TriggerType(profile.trigger_type),
             trigger_source_attack_id=profile.trigger_source_attack_id,
             trigger_frequency=TriggerFrequency(profile.trigger_frequency),
+            trigger_chance_percent=profile.trigger_chance_percent,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -102,6 +104,7 @@ class SharedAttackProfileConfiguration:
             trigger_type=self.trigger_type,
             trigger_source_attack_id=self.trigger_source_attack_id,
             trigger_frequency=self.trigger_frequency,
+            trigger_chance_percent=self.trigger_chance_percent,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -123,6 +126,7 @@ class SharedAttackProfileConfiguration:
             "trigger_type": self.trigger_type.value,
             "trigger_source_attack_id": self.trigger_source_attack_id,
             "trigger_frequency": self.trigger_frequency.value,
+            "trigger_chance_percent": self.trigger_chance_percent,
         }
 
 
@@ -410,6 +414,7 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
             obj.get("trigger_frequency", TriggerFrequency.PER_SUCCESS.value),
             ctx,
         ),
+        obj.get("trigger_chance_percent"),
     )
 
 
@@ -452,6 +457,14 @@ def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> 
         raise SharedConfigurationError(f"{label} has invalid numeric fields.")
     if profile.attacks_per_round < 1 or profile.affected_targets < 1:
         raise SharedConfigurationError(f"{label} has invalid attack counts.")
+    if profile.trigger_type is TriggerType.SOMETIMES and (
+        not isinstance(profile.trigger_chance_percent, int)
+        or profile.trigger_chance_percent < 1
+        or profile.trigger_chance_percent > 100
+    ):
+        raise SharedConfigurationError(
+            f"{label} Sometimes percentage chance must be a whole number from 1 through 100."
+        )
     try:
         roll_damage_formula(profile.damage_formula)
         parse_active_rounds(profile.active_rounds)

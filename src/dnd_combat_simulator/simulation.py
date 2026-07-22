@@ -25,6 +25,7 @@ class TriggerType(StrEnum):
     AFTER_SUCCESS = "after_success"
     AFTER_FAILURE = "after_failure"
     AFTER_CRITICAL = "after_critical"
+    SOMETIMES = "sometimes"
 
 
 class TriggerFrequency(StrEnum):
@@ -61,6 +62,7 @@ class AttackProfile:
     trigger_type: TriggerType = TriggerType.ALWAYS
     trigger_source_attack_id: str | None = None
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
+    trigger_chance_percent: int | None = None
 
 
 @dataclass(frozen=True)
@@ -267,7 +269,7 @@ def validate_trigger_dependencies(
     edges: dict[str, str] = {}
     for index, profile in enumerate(profiles):
         trigger_type = TriggerType(profile.trigger_type)
-        if trigger_type is TriggerType.ALWAYS:
+        if trigger_type in (TriggerType.ALWAYS, TriggerType.SOMETIMES):
             continue
         source_id = profile.trigger_source_attack_id
         if not source_id:
@@ -328,6 +330,14 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
     if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
         msg = f"{label} Attack Bonus is required for attack-roll profiles."
         raise ValueError(msg)
+    if TriggerType(profile.trigger_type) is TriggerType.SOMETIMES:
+        if (
+            not isinstance(profile.trigger_chance_percent, int)
+            or profile.trigger_chance_percent < 1
+            or profile.trigger_chance_percent > 100
+        ):
+            msg = f"{label} Sometimes percentage chance must be a whole number from 1 through 100."
+            raise ValueError(msg)
     if resolution_type is ResolutionType.SAVING_THROW:
         if profile.save_dc is None:
             msg = f"{label} Save DC is required for saving-throw profiles."
@@ -482,7 +492,13 @@ def run_damage_simulations(
                 ):
                     continue
                 trigger_type = TriggerType(profile.trigger_type)
-                if trigger_type is not TriggerType.ALWAYS:
+                if trigger_type is TriggerType.SOMETIMES:
+                    execution_count = int(
+                        random_number_generator.randint(1, 100)
+                        <= (profile.trigger_chance_percent or 0)
+                    )
+                    configured_uses = 0
+                elif trigger_type is not TriggerType.ALWAYS:
                     source_index = next(
                         index
                         for index, source_profile in enumerate(profiles)
@@ -729,9 +745,11 @@ def run_damage_simulations(
                 else 0
             ),
             total_profile_uses=profile_attacks[index],
-            hit_rate=(profile_hits[index] / profile_attack_roll_resolutions[index])
-            if profile_attack_roll_resolutions[index]
-            else 0,
+            hit_rate=(
+                (profile_hits[index] / profile_attack_roll_resolutions[index])
+                if profile_attack_roll_resolutions[index]
+                else 0
+            ),
             critical_hit_rate=(
                 profile_critical_hits[index] / profile_attack_roll_resolutions[index]
                 if profile_attack_roll_resolutions[index]
@@ -794,10 +812,10 @@ def run_damage_simulations(
                 else 0
             ),
             hit_rate=(
-                round_hits[round_number] / round_attack_roll_resolutions[round_number]
-            )
-            if round_attack_roll_resolutions[round_number]
-            else 0,
+                (round_hits[round_number] / round_attack_roll_resolutions[round_number])
+                if round_attack_roll_resolutions[round_number]
+                else 0
+            ),
             critical_hit_rate=(
                 round_critical_hits[round_number]
                 / round_attack_roll_resolutions[round_number]
@@ -842,17 +860,23 @@ def run_damage_simulations(
             if total_attack_roll_resolutions
             else 0
         ),
-        critical_hit_rate=total_critical_hits / total_attack_roll_resolutions
-        if total_attack_roll_resolutions
-        else 0,
+        critical_hit_rate=(
+            total_critical_hits / total_attack_roll_resolutions
+            if total_attack_roll_resolutions
+            else 0
+        ),
         minimum_total_damage_in_simulation=minimum_total_damage or 0,
         maximum_total_damage_in_simulation=maximum_total_damage or 0,
-        failed_save_rate=total_failed_saves / total_saving_throw_resolutions
-        if total_saving_throw_resolutions
-        else 0,
-        successful_save_rate=total_successful_saves / total_saving_throw_resolutions
-        if total_saving_throw_resolutions
-        else 0,
+        failed_save_rate=(
+            total_failed_saves / total_saving_throw_resolutions
+            if total_saving_throw_resolutions
+            else 0
+        ),
+        successful_save_rate=(
+            total_successful_saves / total_saving_throw_resolutions
+            if total_saving_throw_resolutions
+            else 0
+        ),
         total_target_resolutions=total_target_resolutions,
         total_targets_affected=sum(profile_targets_affected_total.values()),
         average_damage_per_target_per_round=(
