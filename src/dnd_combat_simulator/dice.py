@@ -458,6 +458,50 @@ def _roll_dice_pool_breakdown(
     return DiceTermRoll(term=term, chains=chains, subtotal=subtotal)
 
 
+def _roll_dice_pool_int(
+    term: DiceTerm,
+    rng: RandomNumberGenerator,
+    *,
+    features: frozenset[str] = frozenset(),
+) -> int:
+    """Evaluate one dice term without allocating detailed roll breakdown objects."""
+    dice = term.dice
+    chain_totals: list[int] = []
+    for _ in range(dice.count):
+        face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+        chain_total = contribution
+        additional = 0
+        while _matches_explosion(face, dice):
+            additional += 1
+            if additional > MAX_EXPLOSION_CHAIN_ROLLS:
+                raise ValueError(
+                    "Maximum explosion chain limit "
+                    f"({MAX_EXPLOSION_CHAIN_ROLLS}) exceeded."
+                )
+            face, contribution = _roll_feature_adjusted_face(dice, rng, features)
+            chain_total += contribution
+        chain_totals.append(chain_total)
+
+    retained_indexes = set(range(len(chain_totals)))
+    indexed_totals = sorted(enumerate(chain_totals), key=lambda item: item[1])
+    selection_count = dice.selection_count or 0
+    if dice.selection_mode is PoolSelectionMode.KEEP_HIGHEST:
+        retained_indexes = {index for index, _ in indexed_totals[-selection_count:]}
+    elif dice.selection_mode is PoolSelectionMode.KEEP_LOWEST:
+        retained_indexes = {index for index, _ in indexed_totals[:selection_count]}
+    elif dice.selection_mode is PoolSelectionMode.DROP_HIGHEST:
+        retained_indexes = {
+            index
+            for index, _ in indexed_totals[: len(indexed_totals) - selection_count]
+        }
+    elif dice.selection_mode is PoolSelectionMode.DROP_LOWEST:
+        retained_indexes = {index for index, _ in indexed_totals[selection_count:]}
+
+    return term.sign * sum(
+        total for index, total in enumerate(chain_totals) if index in retained_indexes
+    )
+
+
 def roll_dice_pool(
     dice: DiceNotation,
     rng: RandomNumberGenerator,
@@ -466,6 +510,28 @@ def roll_dice_pool(
 ) -> int:
     """Evaluate one dice-pool portion before applying any flat modifier."""
     return _roll_dice_pool_breakdown(DiceTerm(dice), rng, features=features).subtotal
+
+
+def roll_compiled_damage_expression(
+    expression: DamageExpression,
+    *,
+    critical: bool = False,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[str] = frozenset(),
+) -> int:
+    """Roll an already parsed damage expression without building breakdown objects."""
+    random_number_generator = rng if rng is not None else Random()
+    total = 0
+    for term in expression.terms:
+        if isinstance(term, ConstantTerm):
+            total += term.value
+            continue
+        total += _roll_dice_pool_int(term, random_number_generator, features=features)
+        if critical:
+            total += _roll_dice_pool_int(
+                term, random_number_generator, features=features
+            )
+    return max(0, total)
 
 
 def roll_damage_formula_breakdown(
@@ -510,9 +576,9 @@ def roll_damage_formula(
     features: frozenset[str] = frozenset(),
 ) -> int:
     """Roll a full damage formula, applying constants once after pool rolls."""
-    return roll_damage_formula_breakdown(
-        notation, critical=critical, rng=rng, features=features
-    ).total
+    return roll_compiled_damage_expression(
+        parse_damage_expression(notation), critical=critical, rng=rng, features=features
+    )
 
 
 def format_damage_roll_breakdown(breakdown: DamageRollBreakdown) -> str:

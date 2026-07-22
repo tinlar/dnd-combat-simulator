@@ -12,12 +12,15 @@ from dnd_combat_simulator.combat import (
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
-    resolve_automatic_damage,
     resolve_saving_throw_damage,
     resolve_weapon_attack,
     validate_feature_resolution_combination,
 )
-from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
+from dnd_combat_simulator.dice import (
+    RandomNumberGenerator,
+    parse_damage_expression,
+    roll_compiled_damage_expression,
+)
 
 
 class TriggerType(StrEnum):
@@ -509,6 +512,12 @@ def run_damage_simulations(
     active_round_sets = tuple(
         parse_active_rounds(profile.active_rounds) for profile in profiles
     )
+    compiled_damage_expressions = tuple(
+        parse_damage_expression(profile.damage_dice.strip()) for profile in profiles
+    )
+    source_profile_indexes = {
+        _profile_id(profile): index for index, profile in enumerate(profiles)
+    }
 
     random_number_generator = rng if rng is not None else Random()
     total_rounds = rounds * simulations
@@ -518,6 +527,7 @@ def run_damage_simulations(
     total_attack_roll_resolutions = 0
     total_saving_throw_resolutions = 0
     total_automatic_damage_applications = 0
+    total_automatic_damage = 0
     total_damage_all_simulations = 0
     total_hits = 0
     total_critical_hits = 0
@@ -532,6 +542,7 @@ def run_damage_simulations(
     profile_attack_roll_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_saving_throw_resolutions = dict.fromkeys(range(len(profiles)), 0)
     profile_automatic_damage_applications = dict.fromkeys(range(len(profiles)), 0)
+    profile_automatic_damage_totals = dict.fromkeys(range(len(profiles)), 0)
     profile_hits = dict.fromkeys(range(len(profiles)), 0)
     profile_critical_hits = dict.fromkeys(range(len(profiles)), 0)
     profile_failed_saves = dict.fromkeys(range(len(profiles)), 0)
@@ -598,12 +609,9 @@ def run_damage_simulations(
                     )
                     configured_uses = 0
                 elif trigger_type is not TriggerType.ALWAYS:
-                    source_index = next(
-                        index
-                        for index, source_profile in enumerate(profiles)
-                        if _profile_id(source_profile)
-                        == profile.trigger_source_attack_id
-                    )
+                    source_index = source_profile_indexes[
+                        str(profile.trigger_source_attack_id)
+                    ]
                     if trigger_type is TriggerType.AFTER_SUCCESS:
                         qualifying_resolutions = successful_resolutions_by_profile[
                             source_index
@@ -760,8 +768,8 @@ def run_damage_simulations(
                                 save.successful_save
                             )
                             continue
-                        shared_damage = roll_damage_formula(
-                            profile.damage_dice.strip(),
+                        shared_damage = roll_compiled_damage_expression(
+                            compiled_damage_expressions[profile_index],
                             rng=random_number_generator,
                             features=frozenset(
                                 feature.value for feature in profile.features
@@ -814,12 +822,13 @@ def run_damage_simulations(
 
                     else:
                         for _target_index in range(profile.affected_targets):
-                            automatic = resolve_automatic_damage(
-                                damage_dice=profile.damage_dice.strip(),
+                            damage = roll_compiled_damage_expression(
+                                compiled_damage_expressions[profile_index],
                                 rng=random_number_generator,
-                                features=profile.features,
+                                features=frozenset(
+                                    feature.value for feature in profile.features
+                                ),
                             )
-                            damage = automatic.damage_dealt
                             simulation_damage += damage
                             round_damage_totals[round_number] += damage
                             profile_damage_totals[profile_index] += damage
@@ -832,7 +841,9 @@ def run_damage_simulations(
                             profile_target_resolutions[profile_index] += 1
                             round_target_resolutions[round_number] += 1
                             total_automatic_damage_applications += 1
+                            total_automatic_damage += damage
                             profile_automatic_damage_applications[profile_index] += 1
+                            profile_automatic_damage_totals[profile_index] += damage
                             successful_resolutions_by_profile[profile_index] += 1
 
         for resource_id, remaining in remaining_resources.items():
@@ -888,9 +899,8 @@ def run_damage_simulations(
             total_target_resolutions=profile_target_resolutions[index],
             total_targets_affected=profile_targets_affected_total[index],
             average_damage_per_target_per_round=(
-                profile_individual_damage_total[index]
-                / profile_targets_affected_total[index]
-                if profile_targets_affected_total[index]
+                profile_damage_totals[index] / profile_target_resolutions[index]
+                if profile_target_resolutions[index]
                 else 0
             ),
             automatic_damage_applications=profile_automatic_damage_applications[index],
@@ -908,7 +918,7 @@ def run_damage_simulations(
                 profile_attacks[index] / total_rounds if total_rounds else 0
             ),
             average_automatic_damage_per_application=(
-                profile_damage_totals[index]
+                profile_automatic_damage_totals[index]
                 / profile_automatic_damage_applications[index]
                 if profile_automatic_damage_applications[index]
                 else 0
@@ -1014,13 +1024,13 @@ def run_damage_simulations(
         total_target_resolutions=total_target_resolutions,
         total_targets_affected=sum(profile_targets_affected_total.values()),
         average_damage_per_target_per_round=(
-            total_damage_all_simulations / sum(profile_targets_affected_total.values())
-            if sum(profile_targets_affected_total.values())
+            total_damage_all_simulations / total_target_resolutions
+            if total_target_resolutions
             else 0
         ),
         automatic_damage_applications=total_automatic_damage_applications,
         average_automatic_damage_per_application=(
-            total_damage_all_simulations / total_automatic_damage_applications
+            total_automatic_damage / total_automatic_damage_applications
             if total_automatic_damage_applications
             else 0
         ),
