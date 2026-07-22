@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -164,6 +165,9 @@ SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
 TRIGGER_EXPANDED_KEY_SUFFIX = "trigger-expanded"
 MANAGED_RESOURCE_COUNT_KEY = "scenario-managed-resource-count"
 MANAGED_RESOURCE_EXPANDED_KEY = "scenario-managed-resources-expanded"
+MANAGED_RESOURCE_IDS_KEY = "scenario-managed-resource-ids"
+
+logger = logging.getLogger(__name__)
 
 
 def _generate_default_seed() -> int:
@@ -241,7 +245,7 @@ def _validate_profile_fields(
         _add_error(
             errors,
             profile_widget_key(prefix, "affected_targets"),
-            "Affected Targets must be at least 1.",
+            "Target Resolutions must be at least 1.",
         )
     if (
         profile.resolution_type is ResolutionType.ATTACK_ROLL
@@ -406,16 +410,23 @@ def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationEr
     names = [
         resource.name.strip().casefold() for resource in scenario.managed_resources
     ]
-    for index, resource in enumerate(scenario.managed_resources):
-        prefix = f"scenario-managed-resource-{index}"
+    for resource in scenario.managed_resources:
         if not resource.name.strip():
-            _add_error(errors, f"{prefix}-name", "Resource name is required.")
+            _add_error(
+                errors,
+                managed_resource_widget_key(resource.resource_id, "name"),
+                "Resource name is required.",
+            )
         elif names.count(resource.name.strip().casefold()) > 1:
-            _add_error(errors, f"{prefix}-name", "Resource names must be unique.")
+            _add_error(
+                errors,
+                managed_resource_widget_key(resource.resource_id, "name"),
+                "Resource names must be unique.",
+            )
         if not isinstance(resource.starting_value, int) or resource.starting_value < 0:
             _add_error(
                 errors,
-                f"{prefix}-starting-value",
+                managed_resource_widget_key(resource.resource_id, "starting-value"),
                 "Starting value must be a whole number of at least 0.",
             )
     return errors
@@ -1099,7 +1110,7 @@ def _profile_metadata(
         "Active Rounds": profile.active_rounds or "Every round",
         "Maximum attacks per active round": profile.attacks_per_round,
         "Attacks per active round": profile.attacks_per_round,
-        "Affected targets": profile.affected_targets,
+        "Target resolutions": profile.affected_targets,
         "Actual profile uses": profile_result.total_profile_uses,
         "Skipped profile uses": profile_result.total_skipped_profile_uses,
         "Average damage per use": profile_result.average_damage_per_use,
@@ -1197,7 +1208,7 @@ def _profile_contribution_bar_chart(data):
                     title="Average damage per use",
                     format=".2f",
                 ),
-                alt.Tooltip("Affected targets:Q", title="Affected Targets"),
+                alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
             ],
         )
     )
@@ -1230,7 +1241,7 @@ def _profile_damage_per_use_bar_chart(data):
                     "Maximum attacks per active round:Q",
                     title="Maximum attacks per active round",
                 ),
-                alt.Tooltip("Affected targets:Q", title="Affected Targets"),
+                alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
                 alt.Tooltip("Active Rounds:N", title="Active Rounds"),
             ],
         )
@@ -1343,26 +1354,26 @@ def _comparison_baseline(comparison: BuildComparisonResult):
 
 
 def _result_difference_column_label(comparison: BuildComparisonResult) -> str:
-    """Describe the fixed comparison direction used for metric differences."""
-    baseline_build, _, lower_build, _ = _comparison_baseline(comparison)
-    return f"Difference ({baseline_build.name} − {lower_build.name})"
+    """Describe the fixed Build A minus Build B comparison direction."""
+    return (
+        f"Difference ({comparison.first_build.name} − {comparison.second_build.name})"
+    )
 
 
 def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
     """Build side-by-side display rows for comparison results."""
     first = comparison.first_result
     second = comparison.second_result
-    _, baseline, _, lower = _comparison_baseline(comparison)
     difference_label = _result_difference_column_label(comparison)
 
-    def damage_delta(baseline_value: float, lower_value: float) -> str:
-        return format_positive_damage(baseline_value - lower_value)
+    def damage_delta(first_value: float, second_value: float) -> str:
+        return format_positive_damage(first_value - second_value)
 
-    def decimal_delta(baseline_value: float, lower_value: float) -> str:
-        return format_positive_compact_decimal(baseline_value - lower_value)
+    def decimal_delta(first_value: float, second_value: float) -> str:
+        return format_positive_compact_decimal(first_value - second_value)
 
-    def rate_delta(baseline_value: float, lower_value: float) -> str:
-        return format_positive_rate(baseline_value - lower_value)
+    def rate_delta(first_value: float, second_value: float) -> str:
+        return format_positive_rate(first_value - second_value)
 
     return [
         {
@@ -1372,7 +1383,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 second.average_damage_per_round
             ),
             difference_label: damage_delta(
-                baseline.average_damage_per_round, lower.average_damage_per_round
+                first.average_damage_per_round, second.average_damage_per_round
             ),
         },
         {
@@ -1384,12 +1395,12 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 second.average_total_damage_per_simulation
             ),
             difference_label: damage_delta(
-                baseline.average_total_damage_per_simulation,
-                lower.average_total_damage_per_simulation,
+                first.average_total_damage_per_simulation,
+                second.average_total_damage_per_simulation,
             ),
         },
         {
-            "Metric": "Average damage per affected target",
+            "Metric": "Expected damage per target resolution",
             comparison.first_build.name: format_damage(
                 first.average_damage_per_target_per_round
             ),
@@ -1397,8 +1408,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 second.average_damage_per_target_per_round
             ),
             difference_label: damage_delta(
-                baseline.average_damage_per_target_per_round,
-                lower.average_damage_per_target_per_round,
+                first.average_damage_per_target_per_round,
+                second.average_damage_per_target_per_round,
             ),
         },
         {
@@ -1410,8 +1421,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 _average_attack_executions_per_combat(second)
             ),
             difference_label: decimal_delta(
-                _average_attack_executions_per_combat(baseline),
-                _average_attack_executions_per_combat(lower),
+                _average_attack_executions_per_combat(first),
+                _average_attack_executions_per_combat(second),
             ),
         },
         {
@@ -1423,12 +1434,12 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 _average_attack_executions_per_round(second)
             ),
             difference_label: decimal_delta(
-                _average_attack_executions_per_round(baseline),
-                _average_attack_executions_per_round(lower),
+                _average_attack_executions_per_round(first),
+                _average_attack_executions_per_round(second),
             ),
         },
         {
-            "Metric": "Average targets damaged per combat",
+            "Metric": "Average damaging target resolutions per combat",
             comparison.first_build.name: format_compact_decimal(
                 _average_targets_damaged_per_combat(first)
             ),
@@ -1436,12 +1447,12 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 _average_targets_damaged_per_combat(second)
             ),
             difference_label: decimal_delta(
-                _average_targets_damaged_per_combat(baseline),
-                _average_targets_damaged_per_combat(lower),
+                _average_targets_damaged_per_combat(first),
+                _average_targets_damaged_per_combat(second),
             ),
         },
         {
-            "Metric": "Average targets damaged per round",
+            "Metric": "Average damaging target resolutions per round",
             comparison.first_build.name: format_compact_decimal(
                 _average_targets_damaged_per_round(first)
             ),
@@ -1449,8 +1460,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 _average_targets_damaged_per_round(second)
             ),
             difference_label: decimal_delta(
-                _average_targets_damaged_per_round(baseline),
-                _average_targets_damaged_per_round(lower),
+                _average_targets_damaged_per_round(first),
+                _average_targets_damaged_per_round(second),
             ),
         },
         {
@@ -1458,7 +1469,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.first_build.name: format_rate(first.critical_hit_rate),
             comparison.second_build.name: format_rate(second.critical_hit_rate),
             difference_label: rate_delta(
-                baseline.critical_hit_rate, lower.critical_hit_rate
+                first.critical_hit_rate, second.critical_hit_rate
             ),
         },
         {
@@ -1468,7 +1479,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 second.first_round_burst_damage
             ),
             difference_label: damage_delta(
-                baseline.first_round_burst_damage, lower.first_round_burst_damage
+                first.first_round_burst_damage, second.first_round_burst_damage
             ),
         },
         {
@@ -1480,8 +1491,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
                 second.average_damage_after_round_1
             ),
             difference_label: damage_delta(
-                baseline.average_damage_after_round_1,
-                lower.average_damage_after_round_1,
+                first.average_damage_after_round_1,
+                second.average_damage_after_round_1,
             ),
         },
         {
@@ -1520,13 +1531,13 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
                 f"{comparison.second_build.name} avg total damage": format_damage(
                     second_round.average_damage
                 ),
-                f"{comparison.first_build.name} avg targets affected": format_damage(
+                f"{comparison.first_build.name} avg dmg resolutions": format_damage(
                     first_round.average_targets_affected
                 ),
                 f"{comparison.first_build.name} avg individual damage": format_damage(
                     first_round.average_individual_damage
                 ),
-                f"{comparison.second_build.name} avg targets affected": format_damage(
+                f"{comparison.second_build.name} avg dmg resolutions": format_damage(
                     second_round.average_targets_affected
                 ),
                 f"{comparison.second_build.name} avg individual damage": format_damage(
@@ -1607,7 +1618,7 @@ def _render_results(result: SimulationResult) -> None:
         ),
     )
     second_row[2].metric(
-        "Average targets damaged per combat",
+        "Average damaging target resolutions per combat",
         format_compact_decimal(_average_targets_damaged_per_combat(result)),
         help=(
             "Average number of targets damaged in each completed combat. "
@@ -1615,7 +1626,7 @@ def _render_results(result: SimulationResult) -> None:
         ),
     )
     second_row[3].metric(
-        "Average targets damaged per round",
+        "Average damaging target resolutions per round",
         format_compact_decimal(_average_targets_damaged_per_round(result)),
         help=(
             "Average number of targets damaged in each simulated combat round. "
@@ -1635,7 +1646,7 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Attack profile": profile.name,
             "Resolution type": profile.resolution_type.value.replace("_", " ").title(),
             "Maximum attacks per active round": str(profile.attacks_per_round),
-            "Affected targets": str(profile.affected_targets),
+            "Target resolutions": str(profile.affected_targets),
             "Active Rounds": profile.active_rounds or "Every round",
             "Feats and Features": format_features(profile.features),
             "Average damage per use": format_damage(
@@ -1711,7 +1722,7 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Value": format_damage(result.average_damage_per_round),
         },
         {
-            "Metric": "Average damage per affected target",
+            "Metric": "Expected damage per target resolution",
             "Value": format_damage(result.average_damage_per_target_per_round),
             "Details": (
                 "A creature damaged by multiple attacks can contribute multiple times."
@@ -1730,7 +1741,7 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
             ),
         },
         {
-            "Metric": "Average targets damaged per combat",
+            "Metric": "Average damaging target resolutions per combat",
             "Value": format_compact_decimal(
                 _average_targets_damaged_per_combat(result)
             ),
@@ -1739,7 +1750,7 @@ def _single_result_rows(result: SimulationResult) -> list[dict[str, str]]:
             ),
         },
         {
-            "Metric": "Average targets damaged per round",
+            "Metric": "Average damaging target resolutions per round",
             "Value": format_compact_decimal(_average_targets_damaged_per_round(result)),
             "Details": (
                 "A creature damaged by multiple attacks can contribute multiple times."
@@ -1769,10 +1780,10 @@ def _single_round_breakdown_rows(result: SimulationResult) -> list[dict[str, str
         {
             "Round": str(round_result.round_number),
             "Avg Total Damage": format_damage(round_result.average_damage),
-            "Avg Targets Affected": format_damage(
+            "Avg Damaging Resolutions": format_damage(
                 round_result.average_targets_affected
             ),
-            "Avg Individual Damage": format_damage(
+            "Expected Damage / Resolution": format_damage(
                 round_result.average_individual_damage
             ),
             "Hit percentage": format_rate(round_result.hit_rate),
@@ -2062,32 +2073,72 @@ def _trigger_settings_expander(prefix: str):
         return expander("Trigger Settings", expanded=False)
 
 
-def managed_resource_widget_key(index: int, field: str) -> str:
-    return f"scenario-managed-resource-{index}-{field}"
+def managed_resource_widget_key(resource_id: int | str, field: str) -> str:
+    return f"scenario-managed-resource-{resource_id}-{field}"
+
+
+def _new_resource_id(position: int = 0) -> str:
+    return f"resource-{int(time.time() * 1000)}-{position}"
+
+
+def _managed_resource_ids_from_state(state) -> list[str]:
+    if MANAGED_RESOURCE_IDS_KEY in state:
+        return [
+            str(resource_id) for resource_id in state.get(MANAGED_RESOURCE_IDS_KEY, [])
+        ]
+    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+    ids: list[str] = []
+    for index in range(count):
+        legacy_id_key = managed_resource_widget_key(index, "id")
+        resource_id = str(state.get(legacy_id_key, f"resource-{index + 1}"))
+        ids.append(resource_id)
+        for legacy_field, stable_field in (
+            ("name", "name"),
+            ("starting-value", "starting-value"),
+        ):
+            legacy_key = managed_resource_widget_key(index, legacy_field)
+            stable_key = managed_resource_widget_key(resource_id, stable_field)
+            if legacy_key in state and stable_key not in state:
+                state[stable_key] = state[legacy_key]
+    state[MANAGED_RESOURCE_IDS_KEY] = ids
+    state[MANAGED_RESOURCE_COUNT_KEY] = len(ids)
+    return ids
+
+
+def _delete_managed_resource_state(resource_id: str) -> None:
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    state[MANAGED_RESOURCE_IDS_KEY] = [
+        current_id
+        for current_id in _managed_resource_ids_from_state(state)
+        if current_id != resource_id
+    ]
+    state[MANAGED_RESOURCE_COUNT_KEY] = len(state[MANAGED_RESOURCE_IDS_KEY])
+    for key in list(state):
+        if str(key).startswith(f"scenario-managed-resource-{resource_id}-"):
+            del state[key]
 
 
 def _managed_resources_from_state() -> tuple[ManagedResource, ...]:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
-    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+    ids = _managed_resource_ids_from_state(state)
     return tuple(
         ManagedResource(
-            resource_id=str(
-                state.get(
-                    managed_resource_widget_key(index, "id"), f"resource-{index + 1}"
-                )
-            ),
+            resource_id=resource_id,
             name=str(
                 state.get(
-                    managed_resource_widget_key(index, "name"), f"Resource {index + 1}"
+                    managed_resource_widget_key(resource_id, "name"),
+                    f"Resource {index + 1}",
                 )
             ),
             starting_value=int(
-                state.get(managed_resource_widget_key(index, "starting-value"), 0)
+                state.get(managed_resource_widget_key(resource_id, "starting-value"), 0)
             ),
         )
-        for index in range(count)
+        for index, resource_id in enumerate(ids)
     )
 
 
@@ -2136,7 +2187,8 @@ def _render_managed_resources(
 
     errors_by_key = errors_by_key or {}
     state = getattr(st, "session_state", {})
-    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+    resource_ids = _managed_resource_ids_from_state(state)
+    count = len(resource_ids)
     expander = getattr(st, "expander", None)
     with (
         expander(
@@ -2146,28 +2198,29 @@ def _render_managed_resources(
         if expander is not None
         else nullcontext()
     ):
-        state[MANAGED_RESOURCE_EXPANDED_KEY] = True
         resources: list[ManagedResource] = []
-        for index in range(count):
-            id_key = managed_resource_widget_key(index, "id")
-            if id_key not in state:
-                state[id_key] = f"resource-{int(time.time() * 1000)}-{index}"
+        for index, resource_id in enumerate(resource_ids):
+            id_key = managed_resource_widget_key(resource_id, "id")
+            state[id_key] = resource_id
             cols = st.columns([3, 2, 1])
             name = cols[0].text_input(
                 "Resource name",
-                key=managed_resource_widget_key(index, "name"),
+                key=managed_resource_widget_key(resource_id, "name"),
                 value=f"Resource {index + 1}",
             )
-            _field_error(errors_by_key, managed_resource_widget_key(index, "name"))
+            _field_error(
+                errors_by_key, managed_resource_widget_key(resource_id, "name")
+            )
             starting = cols[1].number_input(
                 "Starting value",
                 min_value=0,
                 step=1,
-                key=managed_resource_widget_key(index, "starting-value"),
+                key=managed_resource_widget_key(resource_id, "starting-value"),
                 value=0,
             )
             _field_error(
-                errors_by_key, managed_resource_widget_key(index, "starting-value")
+                errors_by_key,
+                managed_resource_widget_key(resource_id, "starting-value"),
             )
             resource_id = str(state[id_key])
             used_by = _resource_usage_profile_keys(resource_id)
@@ -2182,18 +2235,18 @@ def _render_managed_resources(
                 )
                 confirmed = cols[2].checkbox(
                     "Confirm delete",
-                    key=managed_resource_widget_key(index, "confirm-delete"),
+                    key=managed_resource_widget_key(resource_id, "confirm-delete"),
                 )
             else:
                 confirmed = True
             if (
                 cols[2].button(
-                    "Delete", key=managed_resource_widget_key(index, "delete")
+                    "Delete", key=managed_resource_widget_key(resource_id, "delete")
                 )
                 and confirmed
             ):
                 _clear_resource_from_profiles(resource_id)
-                state[MANAGED_RESOURCE_COUNT_KEY] = max(0, count - 1)
+                _delete_managed_resource_state(resource_id)
                 rerun = getattr(st, "rerun", None)
                 if rerun is not None:
                     rerun()
@@ -2201,10 +2254,11 @@ def _render_managed_resources(
         if getattr(st, "button", lambda *args, **kwargs: False)(
             "Add Resource", key="scenario-add-managed-resource"
         ):
+            new_id = _new_resource_id(count)
+            state[MANAGED_RESOURCE_IDS_KEY] = [*resource_ids, new_id]
             state[MANAGED_RESOURCE_COUNT_KEY] = count + 1
-            state[managed_resource_widget_key(count, "id")] = (
-                f"resource-{int(time.time() * 1000)}-{count}"
-            )
+            state[managed_resource_widget_key(new_id, "name")] = f"Resource {count + 1}"
+            state[managed_resource_widget_key(new_id, "starting-value")] = 0
             rerun = getattr(st, "rerun", None)
             if rerun is not None:
                 rerun()
@@ -2282,7 +2336,7 @@ def _attack_profile_inputs(
     )
     _field_error(errors_by_key, profile_widget_key(prefix, "attacks_per_round"))
     affected_targets = row_two[1].number_input(
-        "Affected Targets",
+        "Target Resolutions",
         min_value=1,
         value=1,
         step=1,
@@ -2684,15 +2738,19 @@ def hydrate_session_state_from_shared_configuration(
     session_state[SCENARIO_WIDGET_KEYS["simulations"]] = scenario.simulations
     session_state[SCENARIO_WIDGET_KEYS["seed"]] = scenario.seed
     session_state[COMPARE_WIDGET_KEY] = configuration.compare_enabled
+    session_state[MANAGED_RESOURCE_IDS_KEY] = [
+        resource.resource_id for resource in configuration.scenario.managed_resources
+    ]
     session_state[MANAGED_RESOURCE_COUNT_KEY] = len(
         configuration.scenario.managed_resources
     )
-    for index, resource in enumerate(configuration.scenario.managed_resources):
-        session_state[managed_resource_widget_key(index, "id")] = resource.resource_id
-        session_state[managed_resource_widget_key(index, "name")] = resource.name
-        session_state[managed_resource_widget_key(index, "starting-value")] = (
-            resource.starting_value
+    for resource in configuration.scenario.managed_resources:
+        session_state[managed_resource_widget_key(resource.resource_id, "name")] = (
+            resource.name
         )
+        session_state[
+            managed_resource_widget_key(resource.resource_id, "starting-value")
+        ] = resource.starting_value
     _hydrate_build_session_state(session_state, "first", configuration.build_a)
     _hydrate_build_session_state(session_state, "second", configuration.build_b)
 
@@ -3201,6 +3259,7 @@ def _render_share_configuration_button() -> None:
             state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
             state.pop(SHARE_ERROR_MESSAGE_KEY, None)
         except (SharedConfigurationError, ShareStoreError):
+            logger.exception("Failed to create share link from current configuration.")
             state.pop(GENERATED_SHARE_URL_KEY, None)
             state[SHARE_ERROR_MESSAGE_KEY] = (
                 "Unable to create a share link right now. Try again later."
@@ -3399,6 +3458,7 @@ def main() -> None:
             try:
                 comparison = _run_comparison_with_feedback(inputs)
             except (ValueError, SharedConfigurationError) as error:
+                logger.exception("Comparison simulation failed during Streamlit run.")
                 st.error(_friendly_validation_message(error))
             else:
                 st.success(
@@ -3435,6 +3495,7 @@ def main() -> None:
             try:
                 result = _run_single_build_with_feedback(inputs)
             except (ValueError, SharedConfigurationError) as error:
+                logger.exception("Single-build simulation failed during Streamlit run.")
                 st.error(_friendly_validation_message(error))
             else:
                 st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))

@@ -577,7 +577,7 @@ def test_attack_roll_profile_resolves_each_target_independently() -> None:
     assert result.total_attacks_made == 1
     assert result.total_target_resolutions == 3
     assert result.average_total_damage_per_simulation == 6
-    assert result.average_damage_per_target_per_round == 3
+    assert result.average_damage_per_target_per_round == 2
     assert result.hit_rate == 2 / 3
     assert result.critical_hit_rate == 1 / 3
     assert rng.calls == [(1, 20), (1, 4), (1, 20), (1, 4), (1, 4), (1, 20)]
@@ -1424,7 +1424,7 @@ def test_area_attack_targets_individual_damage_and_target_count() -> None:
     assert result.average_damage_per_round == 14
     assert result.round_results[0].average_targets_affected == 2
     assert result.round_results[0].average_individual_damage == 7
-    assert result.average_damage_per_target_per_round == 7
+    assert result.average_damage_per_target_per_round == 3.5
 
 
 def test_rounds_with_no_affected_targets_contribute_zero_individual_damage() -> None:
