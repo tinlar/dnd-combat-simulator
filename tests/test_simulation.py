@@ -11,6 +11,7 @@ from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
     ComparisonDifference,
+    RoundResult,
     ScenarioConfig,
     SimulationResult,
     TriggerType,
@@ -2095,6 +2096,171 @@ def test_build_comparison_keeps_target_damage_averages_independent() -> None:
     assert comparison.first_result.round_results[0].average_targets_affected == 2
     assert comparison.second_result.average_damage_per_target_per_round == 9
     assert comparison.second_result.round_results[0].average_targets_affected == 1
+
+
+def test_comparison_difference_uses_absolute_target_resolution_gap() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            "Build A",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Wide",
+                    None,
+                    "4",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        second_build=BuildConfig(
+            "Build B",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Focused",
+                    None,
+                    "7",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert comparison.higher_average_damage_build_name == "Build A"
+    assert comparison.difference.average_damage_per_round == 1
+    assert comparison.difference.average_damage_per_target_per_round == 3
+    assert comparison.difference.average_damage_per_target_per_round > 0
+
+
+def test_comparison_difference_uses_absolute_target_gap_when_build_b_higher() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            "Build A",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Focused",
+                    None,
+                    "7",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        second_build=BuildConfig(
+            "Build B",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Wide",
+                    None,
+                    "4",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert comparison.higher_average_damage_build_name == "Build B"
+    assert comparison.difference.average_damage_per_round == 1
+    assert comparison.difference.average_damage_per_target_per_round == 3
+    assert comparison.difference.average_damage_per_target_per_round > 0
+
+
+def test_comparison_tied_dpr_uses_build_a_as_difference_baseline() -> None:
+    comparison = compare_builds(
+        first_build=BuildConfig(
+            "Build A",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Wide",
+                    None,
+                    "4",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        second_build=BuildConfig(
+            "Build B",
+            0,
+            "1",
+            1,
+            attack_profiles=(
+                AttackProfile(
+                    "Focused",
+                    None,
+                    "8",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                ),
+            ),
+        ),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    assert comparison.higher_average_damage_build_name is None
+    assert comparison.difference.average_damage_per_round == 0
+    assert comparison.difference.average_damage_per_target_per_round == 4
+
+
+def test_round_result_average_individual_damage_is_compatibility_alias() -> None:
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=1,
+        damage_dice="3",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(
+            AttackProfile(
+                "Damage",
+                None,
+                "3",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=Random(1),
+    )
+
+    round_result = result.round_results[0]
+    assert round_result.average_damage_per_target_resolution == 3
+    assert round_result.average_individual_damage == 3
+
+
+def test_round_result_rejects_conflicting_compatibility_alias_values() -> None:
+    with pytest.raises(ValueError, match="cannot conflict"):
+        RoundResult(
+            1,
+            1,
+            1,
+            0,
+            0,
+            average_damage_per_target_resolution=1,
+            average_individual_damage=2,
+        )
 
 
 def _sometimes_profile(percent: int | None = 100) -> AttackProfile:

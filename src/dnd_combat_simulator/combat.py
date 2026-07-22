@@ -195,16 +195,14 @@ class DamageResolutionResult:
     automatic_damage_application: bool = False
 
 
-def roll_attack_d20(
-    mode: AttackRollMode = AttackRollMode.NORMAL,
+def _roll_attack_d20_fast(
+    attack_roll_mode: AttackRollMode,
     *,
-    rng: RandomNumberGenerator | None = None,
+    rng: RandomNumberGenerator,
     features: frozenset[AttackFeature] = frozenset(),
 ) -> AttackRoll:
-    """Roll one or two d20s and select the die required by the roll mode."""
-    random_number_generator = rng if rng is not None else Random()
-    attack_roll_mode = AttackRollMode(mode)
-
+    """Roll a d20 using already-normalized attack-roll inputs."""
+    random_number_generator = rng
     if attack_roll_mode is AttackRollMode.NORMAL:
         rolls = (random_number_generator.randint(1, 20),)
         selected_roll = rolls[0]
@@ -229,11 +227,26 @@ def roll_attack_d20(
         )
         selected_roll = min(rolls)
     else:
-        msg = f"Unsupported attack roll mode: {mode!r}."
+        msg = f"Unsupported attack roll mode: {attack_roll_mode!r}."
         raise ValueError(msg)
 
     return AttackRoll(
         mode=attack_roll_mode, d20_rolls=rolls, selected_d20_roll=selected_roll
+    )
+
+
+def roll_attack_d20(
+    mode: AttackRollMode = AttackRollMode.NORMAL,
+    *,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
+) -> AttackRoll:
+    """Roll one or two d20s and select the die required by the roll mode."""
+    random_number_generator = rng if rng is not None else Random()
+    return _roll_attack_d20_fast(
+        AttackRollMode(mode),
+        rng=random_number_generator,
+        features=frozenset(AttackFeature(feature) for feature in features),
     )
 
 
@@ -271,13 +284,13 @@ def resolve_compiled_weapon_attack(
 ) -> AttackResult:
     """Resolve one attack using a precompiled damage expression."""
     random_number_generator = rng if rng is not None else Random()
-    attack_features = frozenset(AttackFeature(feature) for feature in features)
-    feature_values = (
-        _damage_feature_values(attack_features)
-        if damage_features is None
-        else damage_features
-    )
-    attack_roll = roll_attack_d20(
+    if damage_features is None:
+        attack_features = frozenset(AttackFeature(feature) for feature in features)
+        feature_values = _damage_feature_values(attack_features)
+    else:
+        attack_features = features
+        feature_values = damage_features
+    attack_roll = _roll_attack_d20_fast(
         attack_roll_mode, rng=random_number_generator, features=attack_features
     )
     natural_d20_roll = attack_roll.selected_d20_roll
@@ -358,12 +371,14 @@ def resolve_compiled_saving_throw_damage(
     failed_save = not successful_save
 
     damage_dealt = 0
-    saving_throw_features = frozenset(AttackFeature(feature) for feature in features)
-    feature_values = (
-        _damage_feature_values(saving_throw_features)
-        if damage_features is None
-        else damage_features
-    )
+    if damage_features is None:
+        saving_throw_features = frozenset(
+            AttackFeature(feature) for feature in features
+        )
+        feature_values = _damage_feature_values(saving_throw_features)
+    else:
+        saving_throw_features = features
+        feature_values = damage_features
     if (
         failed_save
         or successful_save_damage is SuccessfulSaveDamage.HALF_DAMAGE

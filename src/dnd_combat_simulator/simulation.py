@@ -87,16 +87,13 @@ class AttackProfile:
     resource_costs: tuple[ResourceCost, ...] = field(default_factory=tuple)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class RoundResult:
     """Summary statistics for one simulated round number.
 
-    ``average_damage_per_target_resolution`` is round total damage divided by
-    all target resolutions in the round, including misses, successful saves for
-    zero damage, zero-damage rolls, half-damage saves, and automatic damage.
-    ``average_individual_damage`` is a backward-compatible alias for the same
-    metric. Damaging-resolution counts remain available separately through
-    ``average_targets_affected``.
+    ``average_damage_per_target_resolution`` is the canonical expected damage
+    per target resolution. ``average_individual_damage`` is a read-only
+    compatibility alias for the same value.
     """
 
     round_number: int
@@ -106,9 +103,50 @@ class RoundResult:
     critical_hit_rate: float
     average_targets_affected: float = field(default=0, compare=False)
     average_damage_per_target_resolution: float = field(default=0, compare=False)
-    average_individual_damage: float = field(default=0, compare=False)
     failed_save_rate: float = 0
     successful_save_rate: float = 0
+
+    def __init__(
+        self,
+        round_number: int,
+        average_damage: float,
+        average_attacks: float,
+        hit_rate: float,
+        critical_hit_rate: float,
+        average_targets_affected: float = 0,
+        average_damage_per_target_resolution: float = 0,
+        average_individual_damage: float | None = None,
+        failed_save_rate: float = 0,
+        successful_save_rate: float = 0,
+    ) -> None:
+        if average_individual_damage is not None:
+            if (
+                average_damage_per_target_resolution != 0
+                and average_damage_per_target_resolution != average_individual_damage
+            ):
+                msg = (
+                    "average_individual_damage is an alias for "
+                    "average_damage_per_target_resolution and cannot conflict."
+                )
+                raise ValueError(msg)
+            average_damage_per_target_resolution = average_individual_damage
+        object.__setattr__(self, "round_number", round_number)
+        object.__setattr__(self, "average_damage", average_damage)
+        object.__setattr__(self, "average_attacks", average_attacks)
+        object.__setattr__(self, "hit_rate", hit_rate)
+        object.__setattr__(self, "critical_hit_rate", critical_hit_rate)
+        object.__setattr__(self, "average_targets_affected", average_targets_affected)
+        object.__setattr__(
+            self,
+            "average_damage_per_target_resolution",
+            average_damage_per_target_resolution,
+        )
+        object.__setattr__(self, "failed_save_rate", failed_save_rate)
+        object.__setattr__(self, "successful_save_rate", successful_save_rate)
+
+    @property
+    def average_individual_damage(self) -> float:
+        return self.average_damage_per_target_resolution
 
 
 @dataclass(frozen=True)
@@ -300,7 +338,6 @@ class ProfileAccumulator:
     failed_saves: int = 0
     successful_saves: int = 0
     damaging_resolutions: int = 0
-    damaging_resolution_damage_total: float = 0.0
 
 
 @dataclass
@@ -308,7 +345,6 @@ class RoundAccumulator:
     damage_total: int = 0
     attacks: int = 0
     damaging_resolutions: int = 0
-    damaging_resolution_damage_total: float = 0.0
     target_resolutions: int = 0
     attack_roll_resolutions: int = 0
     saving_throw_resolutions: int = 0
@@ -336,7 +372,10 @@ class OverallAccumulator:
 
 @dataclass
 class CombatTriggerState:
-    triggered_once: dict[tuple[int, int], bool] = field(default_factory=dict)
+    successful_resolutions_by_profile: list[int]
+    failed_resolutions_by_profile: list[int]
+    critical_resolutions_by_profile: list[int]
+    triggered_once_by_profile: list[bool]
 
 
 _ACTIVE_ROUNDS_GROUP_PATTERN = re.compile(r"\d+(?:\s*-\s*\d+)?")
@@ -611,6 +650,153 @@ def _validate_scenario(scenario: ScenarioConfig) -> None:
     _validate_managed_resources(scenario.managed_resources)
 
 
+def _determine_profile_execution_count(
+    *,
+    plan: ProfileExecutionPlan,
+    trigger_state: CombatTriggerState,
+    rng: RandomNumberGenerator,
+) -> tuple[int, int]:
+    if plan.trigger_type is TriggerType.SOMETIMES:
+        return (
+            int(rng.randint(1, 100) <= (plan.trigger_chance_percent or 0)),
+            0,
+        )
+    if plan.trigger_type is TriggerType.ALWAYS:
+        return plan.profile.attacks_per_round, plan.profile.attacks_per_round
+
+    source_index = plan.trigger_source_index
+    assert source_index is not None
+    if plan.trigger_type is TriggerType.AFTER_SUCCESS:
+        qualifying_resolutions = trigger_state.successful_resolutions_by_profile[
+            source_index
+        ]
+    elif plan.trigger_type is TriggerType.AFTER_FAILURE:
+        qualifying_resolutions = trigger_state.failed_resolutions_by_profile[
+            source_index
+        ]
+    else:
+        qualifying_resolutions = trigger_state.critical_resolutions_by_profile[
+            source_index
+        ]
+
+    if plan.trigger_frequency is TriggerFrequency.PER_SUCCESS:
+        return qualifying_resolutions, 0
+    if plan.trigger_frequency is TriggerFrequency.ONCE_PER_ROUND:
+        return int(qualifying_resolutions > 0), 0
+
+    already_triggered = trigger_state.triggered_once_by_profile[plan.profile_index]
+    execution_count = int(qualifying_resolutions > 0 and not already_triggered)
+    if execution_count:
+        trigger_state.triggered_once_by_profile[plan.profile_index] = True
+    return execution_count, 0
+
+
+def _record_target_resolution(
+    *,
+    overall: OverallAccumulator,
+    profile_stat: ProfileAccumulator,
+    round_stat: RoundAccumulator,
+    damage: int,
+) -> None:
+    overall.target_resolutions += 1
+    profile_stat.target_resolutions += 1
+    round_stat.target_resolutions += 1
+    if damage > 0:
+        profile_stat.damaging_resolutions += 1
+        round_stat.damaging_resolutions += 1
+
+
+def _has_available_resources(
+    costs: tuple[CompiledResourceCost, ...], remaining_resources: list[int]
+) -> int | None:
+    return next(
+        (
+            cost.resource_index
+            for cost in costs
+            if remaining_resources[cost.resource_index] < cost.amount
+        ),
+        None,
+    )
+
+
+def _consume_resources(
+    costs: tuple[CompiledResourceCost, ...],
+    remaining_resources: list[int],
+    resource_consumed_totals: list[int],
+) -> None:
+    for cost in costs:
+        remaining_resources[cost.resource_index] -= cost.amount
+        resource_consumed_totals[cost.resource_index] += cost.amount
+
+
+def _resolve_attack_roll_profile_execution(
+    *,
+    plan: ProfileExecutionPlan,
+    target_armor_class: int,
+    rng: RandomNumberGenerator,
+) -> tuple[int, bool, bool]:
+    attack = resolve_compiled_weapon_attack(
+        attack_bonus=plan.profile.attack_bonus or 0,
+        target_armor_class=target_armor_class,
+        damage_expression=plan.compiled_damage_expression,
+        attack_roll_mode=plan.attack_roll_mode,
+        rng=rng,
+        features=plan.attack_features,
+        damage_features=plan.damage_features,
+    )
+    return attack.damage_dealt, attack.hit, attack.critical_hit
+
+
+def _resolve_saving_throw_profile_execution(
+    *,
+    plan: ProfileExecutionPlan,
+    enemy_save_bonus: int,
+    rng: RandomNumberGenerator,
+) -> tuple[int, bool, bool]:
+    save = resolve_compiled_saving_throw_damage(
+        save_dc=plan.profile.save_dc or 0,
+        enemy_save_bonus=enemy_save_bonus,
+        damage_expression=plan.compiled_damage_expression,
+        successful_save_damage=plan.successful_save_damage,
+        rng=rng,
+        features=plan.attack_features,
+        damage_features=plan.damage_features,
+    )
+    return save.damage_dealt, save.failed_save, save.successful_save
+
+
+def _resolve_automatic_damage_profile_execution(
+    *, plan: ProfileExecutionPlan, rng: RandomNumberGenerator
+) -> int:
+    return roll_compiled_damage_expression(
+        plan.compiled_damage_expression, rng=rng, features=plan.damage_features
+    )
+
+
+def _finalize_resource_results(
+    *,
+    managed_resources: tuple[ManagedResource, ...],
+    used_resource_indexes: set[int],
+    resource_consumed_totals: list[int],
+    resource_remaining_totals: list[int],
+    resource_ended_at_zero_combats: list[int],
+    resource_skipped_totals: list[int],
+    simulations: int,
+) -> tuple[ResourceUsageResult, ...]:
+    return tuple(
+        ResourceUsageResult(
+            resource=resource,
+            average_consumed_per_combat=resource_consumed_totals[index] / simulations,
+            average_remaining_per_combat=resource_remaining_totals[index] / simulations,
+            exhausted_combat_rate=resource_ended_at_zero_combats[index] / simulations,
+            average_skipped_executions_per_combat=resource_skipped_totals[index]
+            / simulations,
+        )
+        for index, resource in enumerate(managed_resources)
+        if index in used_resource_indexes
+    )
+
+
 def run_damage_simulations(
     *,
     attack_bonus: int,
@@ -669,38 +855,32 @@ def run_damage_simulations(
     round_stats = [RoundAccumulator() for _ in range(rounds)]
     minimum_total_damage: int | None = None
     maximum_total_damage: int | None = None
-    resource_by_id = {resource.resource_id: resource for resource in managed_resources}
-    used_resource_ids = {
-        cost.resource_id for profile in profiles for cost in profile.resource_costs
+    used_resource_indexes = {
+        cost.resource_index for plan in execution_plan for cost in plan.resource_costs
     }
-    resource_consumed_totals = dict.fromkeys(resource_by_id, 0)
-    resource_remaining_totals = dict.fromkeys(resource_by_id, 0)
-    resource_exhausted_combats = dict.fromkeys(resource_by_id, 0)
-    resource_skipped_totals = dict.fromkeys(resource_by_id, 0)
-
-    def record_target_damage(
-        *,
-        profile_index: int,
-        round_number: int,
-        damage: int,
-    ) -> None:
-        if damage <= 0:
-            return
-        round_stats[round_number - 1].damaging_resolutions += 1
-        round_stats[round_number - 1].damaging_resolution_damage_total += damage
-        profile_stats[profile_index].damaging_resolutions += 1
-        profile_stats[profile_index].damaging_resolution_damage_total += damage
+    resource_consumed_totals = [0 for _ in managed_resources]
+    resource_remaining_totals = [0 for _ in managed_resources]
+    resource_ended_at_zero_combats = [0 for _ in managed_resources]
+    resource_skipped_totals = [0 for _ in managed_resources]
 
     for _ in range(simulations):
         simulation_damage = 0
-        remaining_resources = {
-            r.resource_id: r.starting_value for r in managed_resources
-        }
-        combat_triggered_once: dict[tuple[int, int], bool] = {}
+        remaining_resources = [
+            resource.starting_value for resource in managed_resources
+        ]
+        combat_trigger_state = CombatTriggerState(
+            successful_resolutions_by_profile=[0 for _ in profiles],
+            failed_resolutions_by_profile=[0 for _ in profiles],
+            critical_resolutions_by_profile=[0 for _ in profiles],
+            triggered_once_by_profile=[False for _ in profiles],
+        )
         for round_number in range(1, rounds + 1):
-            successful_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
-            failed_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
-            critical_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
+            for profile_index in range(len(profiles)):
+                combat_trigger_state.successful_resolutions_by_profile[
+                    profile_index
+                ] = 0
+                combat_trigger_state.failed_resolutions_by_profile[profile_index] = 0
+                combat_trigger_state.critical_resolutions_by_profile[profile_index] = 0
             for plan in execution_plan:
                 profile_index = plan.profile_index
                 profile = plan.profile
@@ -710,45 +890,12 @@ def run_damage_simulations(
                     and round_number not in active_round_set
                 ):
                     continue
+                execution_count, configured_uses = _determine_profile_execution_count(
+                    plan=plan,
+                    trigger_state=combat_trigger_state,
+                    rng=random_number_generator,
+                )
                 trigger_type = plan.trigger_type
-                if trigger_type is TriggerType.SOMETIMES:
-                    execution_count = int(
-                        random_number_generator.randint(1, 100)
-                        <= (plan.trigger_chance_percent or 0)
-                    )
-                    configured_uses = 0
-                elif trigger_type is not TriggerType.ALWAYS:
-                    source_index = plan.trigger_source_index
-                    assert source_index is not None
-                    if trigger_type is TriggerType.AFTER_SUCCESS:
-                        qualifying_resolutions = successful_resolutions_by_profile[
-                            source_index
-                        ]
-                    elif trigger_type is TriggerType.AFTER_FAILURE:
-                        qualifying_resolutions = failed_resolutions_by_profile[
-                            source_index
-                        ]
-                    else:
-                        qualifying_resolutions = critical_resolutions_by_profile[
-                            source_index
-                        ]
-                    frequency = plan.trigger_frequency
-                    if frequency is TriggerFrequency.PER_SUCCESS:
-                        execution_count = qualifying_resolutions
-                    elif frequency is TriggerFrequency.ONCE_PER_ROUND:
-                        execution_count = int(qualifying_resolutions > 0)
-                    else:
-                        combat_key = (profile_index, source_index)
-                        already_triggered = combat_triggered_once.get(combat_key, False)
-                        execution_count = int(
-                            qualifying_resolutions > 0 and not already_triggered
-                        )
-                        if execution_count:
-                            combat_triggered_once[combat_key] = True
-                    configured_uses = 0
-                else:
-                    execution_count = profile.attacks_per_round
-                    configured_uses = profile.attacks_per_round
                 profile_stats[profile_index].configured_uses += configured_uses
                 if trigger_type is not TriggerType.ALWAYS:
                     profile_stats[profile_index].triggered_uses += execution_count
@@ -759,23 +906,19 @@ def run_damage_simulations(
                         overall.skipped_attacks += skipped
                         profile_stats[profile_index].skipped_attacks += skipped
                         break
-                    unavailable_resource_id = next(
-                        (
-                            cost.resource_id
-                            for cost in plan.resource_costs
-                            if remaining_resources.get(cost.resource_id, 0)
-                            < cost.amount
-                        ),
-                        None,
+                    unavailable_resource_index = _has_available_resources(
+                        plan.resource_costs, remaining_resources
                     )
-                    if unavailable_resource_id is not None:
+                    if unavailable_resource_index is not None:
                         overall.skipped_attacks += 1
                         profile_stats[profile_index].skipped_attacks += 1
-                        resource_skipped_totals[unavailable_resource_id] += 1
+                        resource_skipped_totals[unavailable_resource_index] += 1
                         continue
-                    for cost in plan.resource_costs:
-                        remaining_resources[cost.resource_id] -= cost.amount
-                        resource_consumed_totals[cost.resource_id] += cost.amount
+                    _consume_resources(
+                        plan.resource_costs,
+                        remaining_resources,
+                        resource_consumed_totals,
+                    )
                     overall.attacks += 1
                     round_stats[round_number - 1].attacks += 1
                     profile_stats[profile_index].attacks += 1
@@ -794,29 +937,27 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
-                            record_target_damage(
-                                profile_index=profile_index,
-                                round_number=round_number,
+                            _record_target_resolution(
+                                overall=overall,
+                                profile_stat=profile_stats[profile_index],
+                                round_stat=round_stats[round_number - 1],
                                 damage=damage,
                             )
-                            overall.target_resolutions += 1
-                            profile_stats[profile_index].target_resolutions += 1
-                            round_stats[round_number - 1].target_resolutions += 1
                             overall.attack_roll_resolutions += 1
                             profile_stats[profile_index].attack_roll_resolutions += 1
                             round_stats[round_number - 1].attack_roll_resolutions += 1
                             overall.hits += int(attack.hit)
                             round_stats[round_number - 1].hits += int(attack.hit)
                             profile_stats[profile_index].hits += int(attack.hit)
-                            successful_resolutions_by_profile[profile_index] += int(
-                                attack.hit
-                            )
-                            failed_resolutions_by_profile[profile_index] += int(
-                                not attack.hit
-                            )
-                            critical_resolutions_by_profile[profile_index] += int(
-                                attack.critical_hit
-                            )
+                            combat_trigger_state.successful_resolutions_by_profile[
+                                profile_index
+                            ] += int(attack.hit)
+                            combat_trigger_state.failed_resolutions_by_profile[
+                                profile_index
+                            ] += int(not attack.hit)
+                            combat_trigger_state.critical_resolutions_by_profile[
+                                profile_index
+                            ] += int(attack.critical_hit)
                             overall.critical_hits += int(attack.critical_hit)
                             round_stats[round_number - 1].critical_hits += int(
                                 attack.critical_hit
@@ -841,14 +982,12 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
-                            record_target_damage(
-                                profile_index=profile_index,
-                                round_number=round_number,
+                            _record_target_resolution(
+                                overall=overall,
+                                profile_stat=profile_stats[profile_index],
+                                round_stat=round_stats[round_number - 1],
                                 damage=damage,
                             )
-                            overall.target_resolutions += 1
-                            profile_stats[profile_index].target_resolutions += 1
-                            round_stats[round_number - 1].target_resolutions += 1
                             overall.saving_throw_resolutions += 1
                             profile_stats[profile_index].saving_throw_resolutions += 1
                             round_stats[round_number - 1].saving_throw_resolutions += 1
@@ -859,12 +998,12 @@ def run_damage_simulations(
                             profile_stats[profile_index].failed_saves += int(
                                 save.failed_save
                             )
-                            successful_resolutions_by_profile[profile_index] += int(
-                                save.failed_save
-                            )
-                            failed_resolutions_by_profile[profile_index] += int(
-                                save.successful_save
-                            )
+                            combat_trigger_state.successful_resolutions_by_profile[
+                                profile_index
+                            ] += int(save.failed_save)
+                            combat_trigger_state.failed_resolutions_by_profile[
+                                profile_index
+                            ] += int(save.successful_save)
                             overall.successful_saves += int(save.successful_save)
                             round_stats[round_number - 1].successful_saves += int(
                                 save.successful_save
@@ -897,14 +1036,12 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
-                            record_target_damage(
-                                profile_index=profile_index,
-                                round_number=round_number,
+                            _record_target_resolution(
+                                overall=overall,
+                                profile_stat=profile_stats[profile_index],
+                                round_stat=round_stats[round_number - 1],
                                 damage=damage,
                             )
-                            overall.target_resolutions += 1
-                            profile_stats[profile_index].target_resolutions += 1
-                            round_stats[round_number - 1].target_resolutions += 1
                             overall.saving_throw_resolutions += 1
                             profile_stats[profile_index].saving_throw_resolutions += 1
                             round_stats[round_number - 1].saving_throw_resolutions += 1
@@ -915,12 +1052,12 @@ def run_damage_simulations(
                             profile_stats[profile_index].failed_saves += int(
                                 failed_save
                             )
-                            successful_resolutions_by_profile[profile_index] += int(
-                                failed_save
-                            )
-                            failed_resolutions_by_profile[profile_index] += int(
-                                successful_save
-                            )
+                            combat_trigger_state.successful_resolutions_by_profile[
+                                profile_index
+                            ] += int(failed_save)
+                            combat_trigger_state.failed_resolutions_by_profile[
+                                profile_index
+                            ] += int(successful_save)
                             overall.successful_saves += int(successful_save)
                             round_stats[round_number - 1].successful_saves += int(
                                 successful_save
@@ -939,14 +1076,12 @@ def run_damage_simulations(
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
-                            record_target_damage(
-                                profile_index=profile_index,
-                                round_number=round_number,
+                            _record_target_resolution(
+                                overall=overall,
+                                profile_stat=profile_stats[profile_index],
+                                round_stat=round_stats[round_number - 1],
                                 damage=damage,
                             )
-                            overall.target_resolutions += 1
-                            profile_stats[profile_index].target_resolutions += 1
-                            round_stats[round_number - 1].target_resolutions += 1
                             overall.automatic_damage_applications += 1
                             overall.automatic_damage += damage
                             profile_stats[
@@ -955,11 +1090,13 @@ def run_damage_simulations(
                             profile_stats[
                                 profile_index
                             ].automatic_damage_total += damage
-                            successful_resolutions_by_profile[profile_index] += 1
+                            combat_trigger_state.successful_resolutions_by_profile[
+                                profile_index
+                            ] += 1
 
-        for resource_id, remaining in remaining_resources.items():
-            resource_remaining_totals[resource_id] += remaining
-            resource_exhausted_combats[resource_id] += int(remaining == 0)
+        for resource_index, remaining in enumerate(remaining_resources):
+            resource_remaining_totals[resource_index] += remaining
+            resource_ended_at_zero_combats[resource_index] += int(remaining == 0)
         overall.damage_all_simulations += simulation_damage
         minimum_total_damage = (
             simulation_damage
@@ -1059,12 +1196,6 @@ def run_damage_simulations(
                 if round_stats[round_number - 1].target_resolutions
                 else 0
             ),
-            average_individual_damage=(
-                round_stats[round_number - 1].damage_total
-                / round_stats[round_number - 1].target_resolutions
-                if round_stats[round_number - 1].target_resolutions
-                else 0
-            ),
             hit_rate=(
                 (
                     round_stats[round_number - 1].hits
@@ -1102,19 +1233,14 @@ def run_damage_simulations(
     )
     highest = max(round_results, key=lambda result: result.average_damage)
 
-    resource_usage_results = tuple(
-        ResourceUsageResult(
-            resource=resource_by_id[resource_id],
-            average_consumed_per_combat=resource_consumed_totals[resource_id]
-            / simulations,
-            average_remaining_per_combat=resource_remaining_totals[resource_id]
-            / simulations,
-            exhausted_combat_rate=resource_exhausted_combats[resource_id] / simulations,
-            average_skipped_executions_per_combat=resource_skipped_totals[resource_id]
-            / simulations,
-        )
-        for resource_id in resource_by_id
-        if resource_id in used_resource_ids
+    resource_usage_results = _finalize_resource_results(
+        managed_resources=managed_resources,
+        used_resource_indexes=used_resource_indexes,
+        resource_consumed_totals=resource_consumed_totals,
+        resource_remaining_totals=resource_remaining_totals,
+        resource_ended_at_zero_combats=resource_ended_at_zero_combats,
+        resource_skipped_totals=resource_skipped_totals,
+        simulations=simulations,
     )
 
     return SimulationResult(
@@ -1255,9 +1381,9 @@ def compare_builds(
             critical_hit_rate=abs(
                 first_result.critical_hit_rate - second_result.critical_hit_rate
             ),
-            average_damage_per_target_per_round=(
-                higher_result.average_damage_per_target_per_round
-                - lower_result.average_damage_per_target_per_round
+            average_damage_per_target_per_round=abs(
+                first_result.average_damage_per_target_per_round
+                - second_result.average_damage_per_target_per_round
             ),
         ),
         higher_average_damage_build_name=higher_name,

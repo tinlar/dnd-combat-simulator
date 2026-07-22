@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import statistics
 import time
 from dataclasses import asdict, dataclass
 from random import Random
@@ -42,6 +43,9 @@ class BenchmarkResult:
     simulations: int
     rounds: int
     runtime_seconds: float
+    median_seconds: float
+    minimum_seconds: float
+    samples_seconds: tuple[float, ...]
     baseline_seconds: float | None
     percent_change_vs_baseline: float | None
 
@@ -173,38 +177,53 @@ def _load_baseline(path: str | None) -> dict[str, float]:
         return {}
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
-    return {result["name"]: result["runtime_seconds"] for result in data["results"]}
+    return {
+        result["name"]: result.get("median_seconds", result["runtime_seconds"])
+        for result in data["results"]
+    }
+
+
+def _run_case(case: BenchmarkCase) -> None:
+    run_damage_simulations(
+        attack_bonus=7,
+        target_armor_class=15,
+        damage_dice="1d8+4",
+        rounds=case.rounds,
+        simulations=case.simulations,
+        attack_profiles=case.profiles,
+        managed_resources=case.resources,
+        rng=Random(20260722),
+    )
 
 
 def run_benchmarks(
-    *, include_large: bool, baseline_path: str | None
+    *, include_large: bool, baseline_path: str | None, repeats: int = 5
 ) -> dict[str, object]:
     baseline = _load_baseline(baseline_path)
     results: list[BenchmarkResult] = []
     for case in _cases(include_large):
-        started = time.perf_counter()
-        run_damage_simulations(
-            attack_bonus=7,
-            target_armor_class=15,
-            damage_dice="1d8+4",
-            rounds=case.rounds,
-            simulations=case.simulations,
-            attack_profiles=case.profiles,
-            managed_resources=case.resources,
-            rng=Random(20260722),
-        )
-        runtime = time.perf_counter() - started
+        _run_case(case)
+        samples = []
+        for _ in range(repeats):
+            started = time.perf_counter()
+            _run_case(case)
+            samples.append(time.perf_counter() - started)
+        median = statistics.median(samples)
+        minimum = min(samples)
         baseline_seconds = baseline.get(case.name)
         percent_change = None
         if baseline_seconds:
-            percent_change = ((runtime - baseline_seconds) / baseline_seconds) * 100
+            percent_change = ((median - baseline_seconds) / baseline_seconds) * 100
         results.append(
             BenchmarkResult(
                 case.name,
                 case.description,
                 case.simulations,
                 case.rounds,
-                runtime,
+                median,
+                median,
+                minimum,
+                tuple(samples),
                 baseline_seconds,
                 percent_change,
             )
@@ -220,10 +239,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--include-large", action="store_true")
     parser.add_argument("--baseline-json")
+    parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     data = run_benchmarks(
-        include_large=args.include_large, baseline_path=args.baseline_json
+        include_large=args.include_large,
+        baseline_path=args.baseline_json,
+        repeats=max(1, args.repeats),
     )
     if args.json:
         print(json.dumps(data, indent=2))
@@ -237,7 +259,8 @@ def main() -> None:
         if baseline is not None and change is not None:
             suffix = f" | baseline {baseline:.6f}s | change {change:+.1f}%"
         print(
-            f"{result['name']}: {result['runtime_seconds']:.6f}s | "
+            f"{result['name']}: median {result['median_seconds']:.6f}s | "
+            f"min {result['minimum_seconds']:.6f}s | "
             f"{result['simulations']} sims | {result['description']}{suffix}"
         )
 
