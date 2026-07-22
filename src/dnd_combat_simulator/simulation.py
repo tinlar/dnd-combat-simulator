@@ -44,6 +44,23 @@ def _normalized_trigger_frequency(value: TriggerFrequency | str) -> TriggerFrequ
 
 
 @dataclass(frozen=True)
+class ManagedResource:
+    """A named scenario resource available to each simulated combat."""
+
+    resource_id: str
+    name: str
+    starting_value: int
+
+
+@dataclass(frozen=True)
+class ResourceCost:
+    """Cost paid by an attack profile when it actually executes."""
+
+    resource_id: str
+    amount: int
+
+
+@dataclass(frozen=True)
 class AttackProfile:
     """One distinct attack routine within a build."""
 
@@ -63,6 +80,7 @@ class AttackProfile:
     trigger_source_attack_id: str | None = None
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
     trigger_chance_percent: int | None = None
+    resource_costs: tuple[ResourceCost, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -111,6 +129,17 @@ class AttackProfileResult:
 
 
 @dataclass(frozen=True)
+class ResourceUsageResult:
+    """Aggregated per-combat usage for one managed resource."""
+
+    resource: ManagedResource
+    average_consumed_per_combat: float
+    average_remaining_per_combat: float
+    exhausted_combat_rate: float
+    average_skipped_executions_per_combat: float
+
+
+@dataclass(frozen=True)
 class SimulationResult:
     """Summary statistics for repeated weapon-attack simulations."""
 
@@ -148,6 +177,9 @@ class SimulationResult:
     average_triggered_profile_uses_per_simulation: float = field(
         default=0, compare=False
     )
+    resource_usage_results: tuple[ResourceUsageResult, ...] = field(
+        default_factory=tuple, compare=False
+    )
 
 
 @dataclass(frozen=True)
@@ -184,6 +216,7 @@ class ScenarioConfig:
     rounds: int
     simulations: int
     enemy_save_bonus: int = 3
+    managed_resources: tuple[ManagedResource, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -304,6 +337,51 @@ def validate_trigger_dependencies(
             seen.add(current)
 
 
+def _validate_managed_resources(resources: tuple[ManagedResource, ...]) -> None:
+    names: list[str] = []
+    ids: list[str] = []
+    for index, resource in enumerate(resources, start=1):
+        if not resource.resource_id.strip():
+            raise ValueError(f"Managed resource {index} ID is required.")
+        if not resource.name.strip():
+            raise ValueError(f"Managed resource {index} name is required.")
+        if not isinstance(resource.starting_value, int) or resource.starting_value < 0:
+            raise ValueError(
+                f"Managed resource {resource.name or index} starting value must be "
+                "a whole number greater than or equal to 0."
+            )
+        ids.append(resource.resource_id)
+        names.append(resource.name.strip().casefold())
+    if len(set(ids)) != len(ids):
+        raise ValueError("Managed resource IDs must be unique.")
+    if len(set(names)) != len(names):
+        raise ValueError("Managed resource names must be unique.")
+
+
+def _validate_resource_costs(
+    profiles: tuple[AttackProfile, ...],
+    resources: tuple[ManagedResource, ...],
+    *,
+    label: str,
+) -> None:
+    resource_ids = {resource.resource_id for resource in resources}
+    for profile_index, profile in enumerate(profiles, start=1):
+        for cost in profile.resource_costs:
+            if not cost.resource_id:
+                raise ValueError(
+                    f"{label} profile {profile_index} resource selection is required."
+                )
+            if cost.resource_id not in resource_ids:
+                raise ValueError(
+                    f"{label} profile {profile_index} references a missing resource."
+                )
+            if not isinstance(cost.amount, int) or cost.amount < 1:
+                raise ValueError(
+                    f"{label} profile {profile_index} resource cost must be a "
+                    "whole number greater than 0."
+                )
+
+
 def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
     if not profile.name.strip():
         msg = f"{label} attack name is required."
@@ -350,7 +428,9 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
             raise ValueError(msg)
 
 
-def _validate_build(build: BuildConfig, *, label: str) -> None:
+def _validate_build(
+    build: BuildConfig, *, label: str, resources: tuple[ManagedResource, ...] = ()
+) -> None:
     if not build.name.strip():
         msg = f"{label} build name is required."
         raise ValueError(msg)
@@ -361,6 +441,7 @@ def _validate_build(build: BuildConfig, *, label: str) -> None:
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"{label} profile {index}")
     validate_trigger_dependencies(profiles, label=label)
+    _validate_resource_costs(profiles, resources, label=label)
 
 
 def _validate_scenario(scenario: ScenarioConfig) -> None:
@@ -373,6 +454,7 @@ def _validate_scenario(scenario: ScenarioConfig) -> None:
     if scenario.simulations < 1:
         msg = "Number of simulations must be at least 1."
         raise ValueError(msg)
+    _validate_managed_resources(scenario.managed_resources)
 
 
 def run_damage_simulations(
@@ -387,6 +469,7 @@ def run_damage_simulations(
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     attack_profiles: tuple[AttackProfile, ...] | None = None,
     rng: RandomNumberGenerator | None = None,
+    managed_resources: tuple[ManagedResource, ...] = (),
 ) -> SimulationResult:
     """Run repeated damage simulations with one or more active attack profiles.
 
@@ -421,6 +504,8 @@ def run_damage_simulations(
     for index, profile in enumerate(profiles, start=1):
         _validate_attack_profile(profile, label=f"Attack profile {index}")
     validate_trigger_dependencies(profiles, label="Attack profiles")
+    _validate_managed_resources(managed_resources)
+    _validate_resource_costs(profiles, managed_resources, label="Attack profiles")
     active_round_sets = tuple(
         parse_active_rounds(profile.active_rounds) for profile in profiles
     )
@@ -466,6 +551,14 @@ def run_damage_simulations(
     round_successful_saves = dict.fromkeys(range(1, rounds + 1), 0)
     minimum_total_damage: int | None = None
     maximum_total_damage: int | None = None
+    resource_by_id = {resource.resource_id: resource for resource in managed_resources}
+    used_resource_ids = {
+        cost.resource_id for profile in profiles for cost in profile.resource_costs
+    }
+    resource_consumed_totals = dict.fromkeys(resource_by_id, 0)
+    resource_remaining_totals = dict.fromkeys(resource_by_id, 0)
+    resource_exhausted_combats = dict.fromkeys(resource_by_id, 0)
+    resource_skipped_totals = dict.fromkeys(resource_by_id, 0)
 
     def record_target_damage(
         *,
@@ -482,6 +575,9 @@ def run_damage_simulations(
 
     for _ in range(simulations):
         simulation_damage = 0
+        remaining_resources = {
+            r.resource_id: r.starting_value for r in managed_resources
+        }
         combat_triggered_once: dict[tuple[int, int], bool] = {}
         for round_number in range(1, rounds + 1):
             successful_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
@@ -547,6 +643,23 @@ def run_damage_simulations(
                         total_skipped_attacks += skipped
                         profile_skipped_attacks[profile_index] += skipped
                         break
+                    unavailable_resource_id = next(
+                        (
+                            cost.resource_id
+                            for cost in profile.resource_costs
+                            if remaining_resources.get(cost.resource_id, 0)
+                            < cost.amount
+                        ),
+                        None,
+                    )
+                    if unavailable_resource_id is not None:
+                        total_skipped_attacks += 1
+                        profile_skipped_attacks[profile_index] += 1
+                        resource_skipped_totals[unavailable_resource_id] += 1
+                        continue
+                    for cost in profile.resource_costs:
+                        remaining_resources[cost.resource_id] -= cost.amount
+                        resource_consumed_totals[cost.resource_id] += cost.amount
                     total_attacks += 1
                     round_attacks[round_number] += 1
                     profile_attacks[profile_index] += 1
@@ -722,6 +835,9 @@ def run_damage_simulations(
                             profile_automatic_damage_applications[profile_index] += 1
                             successful_resolutions_by_profile[profile_index] += 1
 
+        for resource_id, remaining in remaining_resources.items():
+            resource_remaining_totals[resource_id] += remaining
+            resource_exhausted_combats[resource_id] += int(remaining == 0)
         total_damage_all_simulations += simulation_damage
         minimum_total_damage = (
             simulation_damage
@@ -848,6 +964,21 @@ def run_damage_simulations(
     )
     highest = max(round_results, key=lambda result: result.average_damage)
 
+    resource_usage_results = tuple(
+        ResourceUsageResult(
+            resource=resource_by_id[resource_id],
+            average_consumed_per_combat=resource_consumed_totals[resource_id]
+            / simulations,
+            average_remaining_per_combat=resource_remaining_totals[resource_id]
+            / simulations,
+            exhausted_combat_rate=resource_exhausted_combats[resource_id] / simulations,
+            average_skipped_executions_per_combat=resource_skipped_totals[resource_id]
+            / simulations,
+        )
+        for resource_id in resource_by_id
+        if resource_id in used_resource_ids
+    )
+
     return SimulationResult(
         simulations_run=simulations,
         rounds_per_simulation=rounds,
@@ -902,6 +1033,13 @@ def run_damage_simulations(
         round_results=round_results,
         total_skipped_profile_uses=total_skipped_attacks,
         average_skipped_profile_uses_per_simulation=total_skipped_attacks / simulations,
+        configured_profile_uses=sum(profile_configured_uses.values()),
+        triggered_profile_uses=sum(profile_triggered_uses.values()),
+        average_triggered_profile_uses_per_simulation=sum(
+            profile_triggered_uses.values()
+        )
+        / simulations,
+        resource_usage_results=resource_usage_results,
     )
 
 
@@ -912,7 +1050,9 @@ def simulate_build(
 ) -> SimulationResult:
     """Validate and simulate one build in one scenario with a deterministic seed."""
     _validate_scenario(scenario)
-    _validate_build(build, label=build.name.strip() or "Build")
+    _validate_build(
+        build, label=build.name.strip() or "Build", resources=scenario.managed_resources
+    )
     return run_damage_simulations(
         attack_bonus=build.attack_bonus,
         target_armor_class=scenario.target_armor_class,
@@ -924,6 +1064,7 @@ def simulate_build(
         attack_roll_mode=build.attack_roll_mode,
         attack_profiles=build.resolved_attack_profiles(),
         rng=Random(seed),
+        managed_resources=scenario.managed_resources,
     )
 
 

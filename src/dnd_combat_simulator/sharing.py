@@ -21,6 +21,8 @@ from dnd_combat_simulator.dice import roll_damage_formula
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
+    ManagedResource,
+    ResourceCost,
     ScenarioConfig,
     TriggerFrequency,
     TriggerType,
@@ -63,6 +65,7 @@ class SharedAttackProfileConfiguration:
     trigger_source_attack_id: str | None = None
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
     trigger_chance_percent: int | None = None
+    resource_costs: tuple[ResourceCost, ...] = ()
 
     @classmethod
     def from_attack_profile(
@@ -85,6 +88,7 @@ class SharedAttackProfileConfiguration:
             trigger_source_attack_id=profile.trigger_source_attack_id,
             trigger_frequency=TriggerFrequency(profile.trigger_frequency),
             trigger_chance_percent=profile.trigger_chance_percent,
+            resource_costs=profile.resource_costs,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -105,6 +109,7 @@ class SharedAttackProfileConfiguration:
             trigger_source_attack_id=self.trigger_source_attack_id,
             trigger_frequency=self.trigger_frequency,
             trigger_chance_percent=self.trigger_chance_percent,
+            resource_costs=self.resource_costs,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -127,6 +132,10 @@ class SharedAttackProfileConfiguration:
             "trigger_source_attack_id": self.trigger_source_attack_id,
             "trigger_frequency": self.trigger_frequency.value,
             "trigger_chance_percent": self.trigger_chance_percent,
+            "resource_costs": [
+                {"resource_id": cost.resource_id, "amount": cost.amount}
+                for cost in self.resource_costs
+            ],
         }
 
 
@@ -167,12 +176,30 @@ class SharedBuildConfiguration:
 
 
 @dataclass(frozen=True)
+class SharedManagedResourceConfiguration:
+    resource_id: str
+    name: str
+    starting_value: int
+
+    def to_managed_resource(self) -> ManagedResource:
+        return ManagedResource(self.resource_id, self.name, self.starting_value)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "resource_id": self.resource_id,
+            "name": self.name,
+            "starting_value": self.starting_value,
+        }
+
+
+@dataclass(frozen=True)
 class SharedScenarioConfiguration:
     target_armor_class: int
     enemy_save_bonus: int
     rounds: int
     simulations: int
     seed: int
+    managed_resources: tuple[SharedManagedResourceConfiguration, ...] = ()
 
     def to_scenario_config(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -180,6 +207,9 @@ class SharedScenarioConfiguration:
             self.rounds,
             self.simulations,
             self.enemy_save_bonus,
+            tuple(
+                resource.to_managed_resource() for resource in self.managed_resources
+            ),
         )
 
     def to_json_dict(self) -> dict[str, int]:
@@ -189,6 +219,9 @@ class SharedScenarioConfiguration:
             "rounds": self.rounds,
             "simulations": self.simulations,
             "seed": self.seed,
+            "managed_resources": [
+                resource.to_json_dict() for resource in self.managed_resources
+            ],
         }
 
 
@@ -227,6 +260,12 @@ def shared_configuration_from_configs(
             scenario.rounds,
             scenario.simulations,
             seed,
+            tuple(
+                SharedManagedResourceConfiguration(
+                    resource.resource_id, resource.name, resource.starting_value
+                )
+                for resource in scenario.managed_resources
+            ),
         ),
         SharedBuildConfiguration.from_build_config(build_a),
         SharedBuildConfiguration.from_build_config(build_b),
@@ -328,6 +367,10 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
         _expect(scenario_raw, "rounds", int, "scenario"),
         _expect(scenario_raw, "simulations", int, "scenario"),
         _expect(scenario_raw, "seed", int, "scenario"),
+        tuple(
+            _resource_from_json(resource, f"scenario managed resource {i}")
+            for i, resource in enumerate(scenario_raw.get("managed_resources", []), 1)
+        ),
     )
     return SharedConfiguration(
         version,
@@ -415,6 +458,27 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
             ctx,
         ),
         obj.get("trigger_chance_percent"),
+        tuple(
+            _resource_cost_from_json(cost, f"{ctx} resource cost {i}")
+            for i, cost in enumerate(obj.get("resource_costs", []), 1)
+        ),
+    )
+
+
+def _resource_from_json(raw: object, ctx: str) -> SharedManagedResourceConfiguration:
+    obj = _required_dict(raw, ctx)
+    return SharedManagedResourceConfiguration(
+        _expect(obj, "resource_id", str, ctx),
+        _expect(obj, "name", str, ctx),
+        _expect(obj, "starting_value", int, ctx),
+    )
+
+
+def _resource_cost_from_json(raw: object, ctx: str) -> ResourceCost:
+    obj = _required_dict(raw, ctx)
+    return ResourceCost(
+        _expect(obj, "resource_id", str, ctx),
+        _expect(obj, "amount", int, ctx),
     )
 
 
@@ -430,6 +494,25 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
         or scenario.simulations < 1
     ):
         raise SharedConfigurationError("Shared scenario contains invalid values.")
+    resource_ids = {resource.resource_id for resource in scenario.managed_resources}
+    resource_names = [
+        resource.name.strip().casefold() for resource in scenario.managed_resources
+    ]
+    if any(
+        not resource.resource_id.strip()
+        or not resource.name.strip()
+        or resource.starting_value < 0
+        for resource in scenario.managed_resources
+    ):
+        raise SharedConfigurationError(
+            "Shared scenario contains invalid managed resources."
+        )
+    if len(resource_ids) != len(scenario.managed_resources) or len(
+        set(resource_names)
+    ) != len(resource_names):
+        raise SharedConfigurationError(
+            "Shared scenario managed resources must be unique."
+        )
     for label, build in (("Build A", config.build_a), ("Build B", config.build_b)):
         if not build.name.strip() or not build.attack_profiles:
             raise SharedConfigurationError(
@@ -438,7 +521,7 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
         if len(build.attack_profiles) > MAX_ATTACK_PROFILES_PER_BUILD:
             raise SharedConfigurationError(f"{label} has too many attack profiles.")
         for i, profile in enumerate(build.attack_profiles, 1):
-            _validate_profile(profile, f"{label} profile {i}")
+            _validate_profile(profile, f"{label} profile {i}", resource_ids)
         try:
             validate_trigger_dependencies(
                 tuple(profile.to_attack_profile() for profile in build.attack_profiles),
@@ -448,7 +531,11 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
             raise SharedConfigurationError(str(error)) from error
 
 
-def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> None:
+def _validate_profile(
+    profile: SharedAttackProfileConfiguration,
+    label: str,
+    resource_ids: set[str] | None = None,
+) -> None:
     if not profile.name.strip() or not profile.damage_formula.strip():
         raise SharedConfigurationError(f"{label} has invalid name or Damage Formula.")
     if not isinstance(profile.attack_bonus, int | None) or not isinstance(
@@ -466,6 +553,10 @@ def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> 
             f"{label} Sometimes percentage chance must be a whole number "
             "from 1 through 100."
         )
+    resource_ids = resource_ids or set()
+    for cost in profile.resource_costs:
+        if cost.resource_id not in resource_ids or cost.amount < 1:
+            raise SharedConfigurationError(f"{label} has invalid resource costs.")
     try:
         roll_damage_formula(profile.damage_formula)
         parse_active_rounds(profile.active_rounds)
