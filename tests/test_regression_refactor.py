@@ -1,10 +1,12 @@
 from random import Random
 
+import pytest
+
 from dnd_combat_simulator.combat import ResolutionType, SuccessfulSaveDamage
 from dnd_combat_simulator.dice import (
     parse_damage_expression,
     roll_compiled_damage_expression,
-    roll_damage_formula,
+    roll_damage_formula_breakdown,
 )
 from dnd_combat_simulator.simulation import (
     AttackProfile,
@@ -99,9 +101,96 @@ def test_comparison_difference_is_build_a_minus_build_b_for_all_metrics():
     assert comparison.difference.hit_rate > 0
 
 
-def test_compiled_damage_expression_matches_public_formula_for_same_seed():
-    expression = parse_damage_expression("4d6r1!kh3+2d8!+1d4-2")
-    for seed in range(20):
-        assert roll_compiled_damage_expression(
-            expression, rng=Random(seed)
-        ) == roll_damage_formula("4d6r1!kh3+2d8!+1d4-2", rng=Random(seed))
+class RecordingRandom(Random):
+    def __init__(self, seed: int) -> None:
+        super().__init__(seed)
+        self.calls: list[tuple[int, int]] = []
+
+    def randint(self, a: int, b: int) -> int:
+        self.calls.append((a, b))
+        return super().randint(a, b)
+
+
+@pytest.mark.parametrize(
+    ("formula", "critical", "features"),
+    [
+        ("7", False, frozenset()),
+        ("1d6", False, frozenset()),
+        ("1d6+2d4", False, frozenset()),
+        ("2d6+3", False, frozenset()),
+        ("2d6-3", False, frozenset()),
+        ("1d8+2", True, frozenset()),
+        ("2d8r8", False, frozenset()),
+        ("2d8r<2", False, frozenset()),
+        ("1d6!", False, frozenset()),
+        ("1d6!3", False, frozenset()),
+        ("1d6!>4", False, frozenset()),
+        ("4d6kh3", False, frozenset()),
+        ("4d6kl2", False, frozenset()),
+        ("4d6dh1", False, frozenset()),
+        ("4d6dl1", False, frozenset()),
+        ("4d6", False, frozenset({"great_weapon_fighting"})),
+        ("4d6", False, frozenset({"tavern_brawler"})),
+        (
+            "4d6",
+            False,
+            frozenset({"great_weapon_fighting", "tavern_brawler"}),
+        ),
+        (
+            "4d6r<2!kh3+2d8dl1-1d4+4",
+            True,
+            frozenset({"great_weapon_fighting", "tavern_brawler"}),
+        ),
+    ],
+)
+@pytest.mark.parametrize("seed", range(5))
+def test_compiled_damage_expression_matches_independent_breakdown(
+    formula: str, critical: bool, features: frozenset[str], seed: int
+) -> None:
+    expression = parse_damage_expression(formula)
+    fast_rng = RecordingRandom(seed)
+    detailed_rng = RecordingRandom(seed)
+
+    assert (
+        roll_compiled_damage_expression(
+            expression, critical=critical, rng=fast_rng, features=features
+        )
+        == roll_damage_formula_breakdown(
+            formula, critical=critical, rng=detailed_rng, features=features
+        ).total
+    )
+    assert fast_rng.calls == detailed_rng.calls
+
+
+def test_run_damage_simulations_parses_each_profile_damage_once(monkeypatch):
+    import dnd_combat_simulator.simulation as simulation
+
+    original = simulation.parse_damage_expression
+    parsed: list[str] = []
+
+    def counting_parse(text: str):
+        parsed.append(text)
+        return original(text)
+
+    monkeypatch.setattr(simulation, "parse_damage_expression", counting_parse)
+
+    run_damage_simulations(
+        attack_bonus=7,
+        target_armor_class=15,
+        damage_dice="1d8+4",
+        rounds=3,
+        simulations=5,
+        attack_profiles=(
+            AttackProfile("Strike", 7, "1d8+4", 2),
+            AttackProfile(
+                "Burst",
+                None,
+                "2d6",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=Random(1),
+    )
+
+    assert parsed == ["1d8+4", "2d6"]
