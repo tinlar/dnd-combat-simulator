@@ -308,6 +308,18 @@ def validate_build_fields(
         trigger_type = TriggerType(profile.trigger_type)
         if trigger_type is TriggerType.ALWAYS:
             continue
+        if trigger_type is TriggerType.SOMETIMES:
+            if (
+                not isinstance(profile.trigger_chance_percent, int)
+                or profile.trigger_chance_percent < 1
+                or profile.trigger_chance_percent > 100
+            ):
+                _add_error(
+                    errors,
+                    profile_widget_key(widget_prefix, "trigger_chance_percent"),
+                    "Enter a whole number from 1 through 100.",
+                )
+            continue
         other_ids = [
             attack_id for attack_id in profile_ids if attack_id != profile.attack_id
         ]
@@ -819,6 +831,7 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "trigger_type": "trigger-type",
         "trigger_source_attack_id": "trigger-source-attack-id",
         "trigger_frequency": "trigger-frequency",
+        "trigger_chance_percent": "trigger-chance-percent",
     }
     return f"{prefix}-{suffixes[field]}"
 
@@ -2024,6 +2037,7 @@ def _attack_profile_inputs(
                 "Another attack succeeds",
                 "Another attack fails",
                 "Another attack critically hits",
+                "Sometimes",
             ],
             index=0,
             key=profile_widget_key(prefix, "trigger_type"),
@@ -2039,10 +2053,25 @@ def _attack_profile_inputs(
             "Another attack succeeds": TriggerType.AFTER_SUCCESS,
             "Another attack fails": TriggerType.AFTER_FAILURE,
             "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+            "Sometimes": TriggerType.SOMETIMES,
         }.get(trigger_type_label, TriggerType.ALWAYS)
         trigger_source_attack_id = None
         trigger_frequency = TriggerFrequency.PER_SUCCESS
-        if trigger_type is not TriggerType.ALWAYS:
+        trigger_chance_percent = None
+        if trigger_type is TriggerType.SOMETIMES:
+            chance_text = st.text_input(
+                "Percentage Chance",
+                value="100",
+                key=profile_widget_key(prefix, "trigger_chance_percent"),
+                help="Sometimes [Percentage Chance] % per round",
+            )
+            if str(chance_text).isdigit():
+                trigger_chance_percent = int(chance_text)
+            _field_error(
+                errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
+            )
+            st.caption("Sometimes [Percentage Chance] % per round")
+        elif trigger_type is not TriggerType.ALWAYS:
             source_options = _trigger_source_options(prefix)
             option_ids = [attack_id for attack_id, _ in source_options]
             source_key = profile_widget_key(prefix, "trigger_source_attack_id")
@@ -2116,6 +2145,7 @@ def _attack_profile_inputs(
         trigger_type=trigger_type,
         trigger_source_attack_id=trigger_source_attack_id,
         trigger_frequency=trigger_frequency,
+        trigger_chance_percent=trigger_chance_percent,
     )
 
 
@@ -2251,9 +2281,15 @@ def _hydrate_build_session_state(
             TriggerType.AFTER_SUCCESS: "Another attack succeeds",
             TriggerType.AFTER_FAILURE: "Another attack fails",
             TriggerType.AFTER_CRITICAL: "Another attack critically hits",
+            TriggerType.SOMETIMES: "Sometimes",
         }.get(profile.trigger_type, "Always")
         session_state[profile_widget_key(widget_prefix, "trigger_source_attack_id")] = (
             profile.trigger_source_attack_id
+        )
+        session_state[profile_widget_key(widget_prefix, "trigger_chance_percent")] = (
+            ""
+            if profile.trigger_chance_percent is None
+            else str(profile.trigger_chance_percent)
         )
         session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = {
             TriggerFrequency.ONCE_PER_ROUND: "Once per round",
@@ -2561,6 +2597,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         "After another attack succeeds": TriggerType.AFTER_SUCCESS,
                         "Another attack fails": TriggerType.AFTER_FAILURE,
                         "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+                        "Sometimes": TriggerType.SOMETIMES,
                     }.get(
                         session_state.get(
                             profile_widget_key(widget_prefix, "trigger_type"),
@@ -2588,6 +2625,25 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         ),
                         TriggerFrequency.PER_SUCCESS,
                     )
+                ),
+                (
+                    int(
+                        str(
+                            session_state.get(
+                                profile_widget_key(
+                                    widget_prefix, "trigger_chance_percent"
+                                ),
+                                "",
+                            )
+                        )
+                    )
+                    if str(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "trigger_chance_percent"),
+                            "",
+                        )
+                    ).isdigit()
+                    else None
                 ),
             )
         )

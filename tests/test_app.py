@@ -2345,3 +2345,131 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     assert warnings == [
         "Add another attack to this build before configuring an attack trigger."
     ]
+
+
+def test_selecting_sometimes_reveals_percentage_and_hides_what_frequency(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.app import _attack_profile_inputs, profile_widget_key
+    from dnd_combat_simulator.simulation import TriggerType
+
+    labels = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            labels.append(label)
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            labels.append(label)
+            if label == "Percentage Chance":
+                return "25"
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            labels.append(label)
+            if label == "When":
+                return "Sometimes"
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            labels.append(label)
+            return kwargs["options"][0]
+
+    col = Column()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state={
+                profile_widget_key("first-primary", "trigger_type"): "Sometimes"
+            },
+            selectbox=col.selectbox,
+            text_input=col.text_input,
+            number_input=col.number_input,
+            radio=col.radio,
+            columns=lambda spec, **kwargs: [
+                col for _ in range(spec if isinstance(spec, int) else len(spec))
+            ],
+            expander=lambda *args, **kwargs: Context(),
+            checkbox=lambda *args, **kwargs: False,
+            caption=lambda *args, **kwargs: None,
+        ),
+    )
+
+    profile = _attack_profile_inputs("first-primary", "Attack")
+
+    assert profile.trigger_type is TriggerType.SOMETIMES
+    assert profile.trigger_chance_percent == 25
+    assert "Percentage Chance" in labels
+    assert "What" not in labels
+    assert "Frequency" not in labels
+
+
+@pytest.mark.parametrize("percent", [1, 100])
+def test_sometimes_validation_accepts_boundaries(percent):
+    from dnd_combat_simulator.app import validate_build_fields
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+
+    build = BuildConfig(
+        "Build",
+        5,
+        "1d4",
+        1,
+        attack_profiles=(
+            AttackProfile(
+                "Sometimes",
+                None,
+                "1",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                attack_id="a",
+                trigger_type=TriggerType.SOMETIMES,
+                trigger_chance_percent=percent,
+            ),
+        ),
+    )
+
+    assert not validate_build_fields(build, prefix="first")
+
+
+@pytest.mark.parametrize("percent", [None, 0, -1, 101, "", "1.5", "abc"])
+def test_sometimes_validation_rejects_invalid_percentage_values(percent):
+    from dnd_combat_simulator.app import validate_build_fields, profile_widget_key
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+
+    build = BuildConfig(
+        "Build",
+        5,
+        "1d4",
+        1,
+        attack_profiles=(
+            AttackProfile(
+                "Sometimes",
+                None,
+                "1",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                attack_id="a",
+                trigger_type=TriggerType.SOMETIMES,
+                trigger_chance_percent=percent,
+            ),
+        ),
+    )
+
+    errors = validate_build_fields(build, prefix="first")
+
+    assert any(
+        error.key == profile_widget_key("first-primary", "trigger_chance_percent")
+        for error in errors
+    )

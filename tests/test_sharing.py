@@ -36,6 +36,7 @@ from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
     ScenarioConfig,
+    TriggerType,
     compare_builds,
     simulate_build,
 )
@@ -422,3 +423,29 @@ def test_existing_shared_profile_without_trigger_data_loads_as_always() -> None:
         "profile",
     )
     assert profile.trigger_type == "always"
+
+
+def test_sometimes_trigger_survives_serialization_round_trip() -> None:
+    profile = AttackProfile(
+        name="sometimes",
+        attack_bonus=None,
+        damage_dice="1d4",
+        attacks_per_round=1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        attack_id="sometimes",
+        trigger_type=TriggerType.SOMETIMES,
+        trigger_chance_percent=25,
+    )
+    config = shared_configuration_from_configs(
+        build_a=BuildConfig("A", 5, "1d4", 1, attack_profiles=(profile,)),
+        build_b=BuildConfig("B", 5, "1d4", 1),
+        scenario=ScenarioConfig(target_armor_class=15, rounds=3, simulations=10),
+        seed=123,
+        compare_enabled=False,
+    )
+
+    decoded = deserialize_shared_configuration(serialize_shared_configuration(config))
+    decoded_profile = decoded.build_a.to_build_config().attack_profiles[0]
+
+    assert decoded_profile.trigger_type == TriggerType.SOMETIMES
+    assert decoded_profile.trigger_chance_percent == 25
