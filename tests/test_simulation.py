@@ -3,6 +3,7 @@ from random import Random
 import pytest
 
 from dnd_combat_simulator.combat import (
+    AttackFeature,
     AttackRollMode,
     ResolutionType,
     SuccessfulSaveDamage,
@@ -11,9 +12,12 @@ from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
     ComparisonDifference,
+    ManagedResource,
+    ResourceCost,
     RoundResult,
     ScenarioConfig,
     SimulationResult,
+    TriggerFrequency,
     TriggerType,
     compare_builds,
     parse_active_rounds,
@@ -2345,3 +2349,274 @@ def test_sometimes_invalid_percentages_prevent_simulation(percent: int | None) -
             attack_profiles=(_sometimes_profile(percent),),
             rng=Random(1),
         )
+
+
+def _optimized_regression_cases():
+    return [
+        pytest.param(
+            [AttackProfile("normal", 10, "1d4", 2)],
+            [10, 2, 20, 1, 2],
+            {},
+            {"damage": 5, "executions": 2, "resolutions": 2, "calls": []},
+            id="normal-attack-and-critical-hit",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "elven",
+                    5,
+                    "1d4",
+                    1,
+                    attack_roll_mode=AttackRollMode.ADVANTAGE,
+                    features=frozenset({AttackFeature.ELVEN_ACCURACY}),
+                )
+            ],
+            [2, 3, 18, 4],
+            {},
+            {"damage": 4, "executions": 1, "resolutions": 1, "calls": []},
+            id="advantage-elven-accuracy",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "reroll-damage",
+                    20,
+                    "1d6",
+                    1,
+                    features=frozenset(
+                        {
+                            AttackFeature.GREAT_WEAPON_FIGHTING,
+                            AttackFeature.TAVERN_BRAWLER,
+                        }
+                    ),
+                )
+            ],
+            [10, 1, 2],
+            {},
+            {"damage": 3, "executions": 1, "resolutions": 1, "calls": []},
+            id="great-weapon-fighting-tavern-brawler",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "cantrip",
+                    None,
+                    "1d8",
+                    1,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=10,
+                    features=frozenset({AttackFeature.POTENT_CANTRIP}),
+                )
+            ],
+            [20, 8],
+            {"enemy_save_bonus": 0},
+            {"damage": 4, "executions": 1, "resolutions": 1, "calls": []},
+            id="potent-cantrip-miss",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "save",
+                    None,
+                    "1d6",
+                    1,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=15,
+                )
+            ],
+            [4, 5],
+            {"enemy_save_bonus": 0},
+            {"damage": 5, "executions": 1, "resolutions": 1, "calls": []},
+            id="single-target-saving-throw",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "multi-save",
+                    None,
+                    "1d6",
+                    1,
+                    affected_targets=2,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=15,
+                )
+            ],
+            [5, 4, 18],
+            {"enemy_save_bonus": 0},
+            {"damage": 5, "executions": 1, "resolutions": 2, "calls": []},
+            id="multi-target-saving-throw",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "half-save",
+                    None,
+                    "1d6",
+                    1,
+                    resolution_type=ResolutionType.SAVING_THROW,
+                    save_dc=10,
+                    successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+                )
+            ],
+            [20, 5],
+            {"enemy_save_bonus": 0},
+            {"damage": 2, "executions": 1, "resolutions": 1, "calls": []},
+            id="half-damage-on-save",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "auto",
+                    None,
+                    "1d4",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                )
+            ],
+            [3],
+            {},
+            {"damage": 3, "executions": 1, "resolutions": 1, "calls": []},
+            id="automatic-damage",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "stop", 0, "1", 3, features=frozenset({AttackFeature.STOP_ON_MISS})
+                )
+            ],
+            [2],
+            {},
+            {"damage": 0, "executions": 1, "resolutions": 1, "skipped": 2, "calls": []},
+            id="stop-on-miss",
+        ),
+        pytest.param(
+            [
+                AttackProfile("source", 20, "1", 1, attack_id="source"),
+                AttackProfile(
+                    "round-trigger",
+                    None,
+                    "1",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    attack_id="round",
+                    trigger_type=TriggerType.AFTER_SUCCESS,
+                    trigger_source_attack_id="source",
+                    trigger_frequency=TriggerFrequency.ONCE_PER_ROUND,
+                ),
+                AttackProfile(
+                    "combat-trigger",
+                    None,
+                    "1",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    attack_id="combat",
+                    trigger_type=TriggerType.AFTER_SUCCESS,
+                    trigger_source_attack_id="source",
+                    trigger_frequency=TriggerFrequency.ONCE_PER_COMBAT,
+                ),
+            ],
+            [10, 10],
+            {"rounds": 2},
+            {
+                "damage": 5,
+                "executions": 5,
+                "resolutions": 5,
+                "triggered": 3,
+                "calls": [],
+            },
+            id="once-per-round-and-combat-triggers-multiple-rounds",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "sometimes",
+                    None,
+                    "1",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    trigger_type=TriggerType.SOMETIMES,
+                    trigger_chance_percent=50,
+                )
+            ],
+            [50],
+            {},
+            {
+                "damage": 1,
+                "executions": 1,
+                "resolutions": 1,
+                "triggered": 1,
+                "calls": [],
+            },
+            id="sometimes-trigger",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "resource",
+                    None,
+                    "1",
+                    2,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    resource_costs=(ResourceCost("ki", 1),),
+                )
+            ],
+            [],
+            {"managed_resources": (ManagedResource("ki", "Ki", 1),)},
+            {
+                "damage": 1,
+                "executions": 1,
+                "resolutions": 1,
+                "skipped": 1,
+                "resource": 1,
+                "calls": [],
+            },
+            id="resource-blocked-execution",
+        ),
+        pytest.param(
+            [
+                AttackProfile(
+                    "compound",
+                    None,
+                    "1d4+1d4!4",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                )
+            ],
+            [2, 4, 3],
+            {},
+            {"damage": 9, "executions": 1, "resolutions": 1, "calls": []},
+            id="compound-and-exploding-damage-expression",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("profiles", "rolls", "options", "expected"), _optimized_regression_cases()
+)
+def test_run_damage_simulations_optimized_engine_regression_matrix(
+    profiles, rolls, options, expected
+) -> None:
+    rng = PredictableRng(list(rolls))
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1",
+        rounds=options.get("rounds", 1),
+        simulations=1,
+        enemy_save_bonus=options.get("enemy_save_bonus", 0),
+        attack_profiles=tuple(profiles),
+        rng=rng,
+        managed_resources=options.get("managed_resources", ()),
+    )
+
+    assert result.average_total_damage_per_simulation == expected["damage"]
+    assert result.total_attacks_made == expected["executions"]
+    assert result.total_target_resolutions == expected["resolutions"]
+    assert result.triggered_profile_uses == expected.get("triggered", 0)
+    assert result.total_skipped_profile_uses == expected.get("skipped", 0)
+    if "resource" in expected:
+        assert (
+            result.resource_usage_results[0].average_consumed_per_combat
+            == expected["resource"]
+        )
+    assert rng.rolls == expected["calls"]

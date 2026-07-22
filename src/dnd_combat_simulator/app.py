@@ -1373,14 +1373,10 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
     second = comparison.second_result
     difference_label = _result_difference_column_label(comparison)
 
-    higher_build, higher_result, lower_build, lower_result = _comparison_baseline(
-        comparison
-    )
+    difference = comparison.difference
 
-    def damage_gap(metric: str) -> str:
-        return format_positive_damage(
-            getattr(higher_result, metric) - getattr(lower_result, metric)
-        )
+    def damage_gap(value: float) -> str:
+        return format_positive_damage(value)
 
     def nondamage_gap(first_value: float, second_value: float) -> str:
         return format_positive_compact_decimal(abs(first_value - second_value))
@@ -1395,7 +1391,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_round
             ),
-            difference_label: damage_gap("average_damage_per_round"),
+            difference_label: damage_gap(difference.average_damage_per_round),
         },
         {
             "Metric": "Average total damage per combat",
@@ -1405,7 +1401,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_total_damage_per_simulation
             ),
-            difference_label: damage_gap("average_total_damage_per_simulation"),
+            difference_label: damage_gap(difference.average_total_damage),
         },
         {
             "Metric": "Expected damage per target resolution",
@@ -1415,7 +1411,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_target_per_round
             ),
-            difference_label: damage_gap("average_damage_per_target_per_round"),
+            difference_label: damage_gap(
+                difference.average_damage_per_target_per_round
+            ),
         },
         {
             "Metric": "Average attack executions per combat",
@@ -1470,12 +1468,16 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             ),
         },
         {
+            "Metric": "Hit percentage",
+            comparison.first_build.name: format_rate(first.hit_rate),
+            comparison.second_build.name: format_rate(second.hit_rate),
+            difference_label: format_positive_rate(difference.hit_rate),
+        },
+        {
             "Metric": "Critical hit percentage",
             comparison.first_build.name: format_rate(first.critical_hit_rate),
             comparison.second_build.name: format_rate(second.critical_hit_rate),
-            difference_label: rate_gap(
-                first.critical_hit_rate, second.critical_hit_rate
-            ),
+            difference_label: format_positive_rate(difference.critical_hit_rate),
         },
         {
             "Metric": "Round 1 burst damage",
