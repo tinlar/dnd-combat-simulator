@@ -2411,7 +2411,7 @@ def _optimized_regression_cases():
             [20, 8],
             {"enemy_save_bonus": 0},
             {"damage": 4, "executions": 1, "resolutions": 1, "calls": []},
-            id="potent-cantrip-miss",
+            id="potent-cantrip-successful-save",
         ),
         pytest.param(
             [

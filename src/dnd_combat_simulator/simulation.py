@@ -186,8 +186,19 @@ class ResourceUsageResult:
     resource: ManagedResource
     average_consumed_per_combat: float
     average_remaining_per_combat: float
-    exhausted_combat_rate: float
-    average_skipped_executions_per_combat: float
+    ended_at_zero_combat_rate: float
+    average_blocked_executions_per_combat: float
+    blocked_execution_combat_rate: float = 0
+
+    @property
+    def exhausted_combat_rate(self) -> float:
+        """Compatibility alias for saved callers; means ended combat at zero."""
+        return self.ended_at_zero_combat_rate
+
+    @property
+    def average_skipped_executions_per_combat(self) -> float:
+        """Compatibility alias for blocked resource executions."""
+        return self.average_blocked_executions_per_combat
 
 
 @dataclass(frozen=True)
@@ -868,6 +879,7 @@ def _finalize_resource_results(
     resource_remaining_totals: list[int],
     resource_ended_at_zero_combats: list[int],
     resource_skipped_totals: list[int],
+    resource_blocked_combats: list[int],
     simulations: int,
 ) -> tuple[ResourceUsageResult, ...]:
     return tuple(
@@ -875,9 +887,12 @@ def _finalize_resource_results(
             resource=resource,
             average_consumed_per_combat=resource_consumed_totals[index] / simulations,
             average_remaining_per_combat=resource_remaining_totals[index] / simulations,
-            exhausted_combat_rate=resource_ended_at_zero_combats[index] / simulations,
-            average_skipped_executions_per_combat=resource_skipped_totals[index]
+            ended_at_zero_combat_rate=(
+                resource_ended_at_zero_combats[index] / simulations
+            ),
+            average_blocked_executions_per_combat=resource_skipped_totals[index]
             / simulations,
+            blocked_execution_combat_rate=resource_blocked_combats[index] / simulations,
         )
         for index, resource in enumerate(managed_resources)
         if index in used_resource_indexes
@@ -949,12 +964,14 @@ def run_damage_simulations(
     resource_remaining_totals = [0 for _ in managed_resources]
     resource_ended_at_zero_combats = [0 for _ in managed_resources]
     resource_skipped_totals = [0 for _ in managed_resources]
+    resource_blocked_combats = [0 for _ in managed_resources]
 
     for _ in range(simulations):
         simulation_damage = 0
         remaining_resources = [
             resource.starting_value for resource in managed_resources
         ]
+        resources_blocked_this_combat: set[int] = set()
         combat_trigger_state = CombatTriggerState(
             successful_resolutions_by_profile=[0 for _ in profiles],
             failed_resolutions_by_profile=[0 for _ in profiles],
@@ -1000,6 +1017,7 @@ def run_damage_simulations(
                         overall.skipped_attacks += 1
                         profile_stats[profile_index].skipped_attacks += 1
                         resource_skipped_totals[unavailable_resource_index] += 1
+                        resources_blocked_this_combat.add(unavailable_resource_index)
                         continue
                     _consume_resources(
                         plan.resource_costs,
@@ -1176,6 +1194,9 @@ def run_damage_simulations(
         for resource_index, remaining in enumerate(remaining_resources):
             resource_remaining_totals[resource_index] += remaining
             resource_ended_at_zero_combats[resource_index] += int(remaining == 0)
+            resource_blocked_combats[resource_index] += int(
+                resource_index in resources_blocked_this_combat
+            )
         overall.damage_all_simulations += simulation_damage
         minimum_total_damage = (
             simulation_damage
@@ -1212,6 +1233,7 @@ def run_damage_simulations(
         resource_remaining_totals=resource_remaining_totals,
         resource_ended_at_zero_combats=resource_ended_at_zero_combats,
         resource_skipped_totals=resource_skipped_totals,
+        resource_blocked_combats=resource_blocked_combats,
         simulations=simulations,
     )
 

@@ -146,3 +146,107 @@ def test_invalid_resource_input_caught_before_simulation() -> None:
         assert "Managed resource" in str(error)
     else:  # pragma: no cover
         raise AssertionError("invalid resource configuration was accepted")
+
+
+def test_resource_ends_at_zero_without_blocking_execution() -> None:
+    resource = ManagedResource("slot", "Spell Slot", 1)
+    profile = AttackProfile(
+        "Spell",
+        None,
+        "1",
+        1,
+        resolution_type="automatic_damage",
+        resource_costs=(ResourceCost("slot", 1),),
+    )
+
+    result = simulate_build(
+        resource_build(profile),
+        ScenarioConfig(15, 1, 1, managed_resources=(resource,)),
+        1,
+    )
+
+    usage = result.resource_usage_results[0]
+    assert usage.ended_at_zero_combat_rate == 1
+    assert usage.average_blocked_executions_per_combat == 0
+    assert usage.blocked_execution_combat_rate == 0
+
+
+def test_resource_reaches_zero_and_later_blocks_execution() -> None:
+    resource = ManagedResource("slot", "Spell Slot", 1)
+    profile = AttackProfile(
+        "Spell",
+        None,
+        "1",
+        2,
+        resolution_type="automatic_damage",
+        resource_costs=(ResourceCost("slot", 1),),
+    )
+
+    result = simulate_build(
+        resource_build(profile),
+        ScenarioConfig(15, 1, 1, managed_resources=(resource,)),
+        1,
+    )
+
+    usage = result.resource_usage_results[0]
+    assert usage.ended_at_zero_combat_rate == 1
+    assert usage.average_blocked_executions_per_combat == 1
+    assert usage.blocked_execution_combat_rate == 1
+
+
+def test_resource_never_reaches_zero() -> None:
+    resource = ManagedResource("slot", "Spell Slot", 3)
+    profile = AttackProfile(
+        "Spell",
+        None,
+        "1",
+        1,
+        resolution_type="automatic_damage",
+        resource_costs=(ResourceCost("slot", 1),),
+    )
+
+    result = simulate_build(
+        resource_build(profile),
+        ScenarioConfig(15, 1, 1, managed_resources=(resource,)),
+        1,
+    )
+
+    usage = result.resource_usage_results[0]
+    assert usage.ended_at_zero_combat_rate == 0
+    assert usage.average_remaining_per_combat == 2
+    assert usage.blocked_execution_combat_rate == 0
+
+
+def test_multiple_resources_only_one_blocks_execution() -> None:
+    first = ManagedResource("a", "A", 1)
+    second = ManagedResource("b", "B", 1)
+    profiles = (
+        AttackProfile(
+            "A",
+            None,
+            "1",
+            2,
+            resolution_type="automatic_damage",
+            resource_costs=(ResourceCost("a", 1),),
+        ),
+        AttackProfile(
+            "B",
+            None,
+            "1",
+            1,
+            resolution_type="automatic_damage",
+            resource_costs=(ResourceCost("b", 1),),
+        ),
+    )
+
+    result = simulate_build(
+        resource_build(*profiles),
+        ScenarioConfig(15, 1, 1, managed_resources=(first, second)),
+        1,
+    )
+
+    by_id = {
+        usage.resource.resource_id: usage for usage in result.resource_usage_results
+    }
+    assert by_id["a"].blocked_execution_combat_rate == 1
+    assert by_id["b"].blocked_execution_combat_rate == 0
