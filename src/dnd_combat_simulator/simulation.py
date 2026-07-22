@@ -23,11 +23,23 @@ from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
 class TriggerType(StrEnum):
     ALWAYS = "always"
     AFTER_SUCCESS = "after_success"
+    AFTER_FAILURE = "after_failure"
+    AFTER_CRITICAL = "after_critical"
 
 
 class TriggerFrequency(StrEnum):
     PER_SUCCESS = "per_success"
+    ONCE_PER_ROUND = "once_per_round"
+    ONCE_PER_COMBAT = "once_per_combat"
+    # Backward-compatible alias for previously saved shared links.
     ONCE_IF_ANY = "once_if_any"
+
+
+def _normalized_trigger_frequency(value: TriggerFrequency | str) -> TriggerFrequency:
+    frequency = TriggerFrequency(value)
+    if frequency is TriggerFrequency.ONCE_IF_ANY:
+        return TriggerFrequency.ONCE_PER_ROUND
+    return frequency
 
 
 @dataclass(frozen=True)
@@ -250,7 +262,8 @@ def validate_trigger_dependencies(
     id_to_index = {attack_id: index for index, attack_id in enumerate(ids)}
     edges: dict[str, str] = {}
     for index, profile in enumerate(profiles):
-        if TriggerType(profile.trigger_type) is TriggerType.ALWAYS:
+        trigger_type = TriggerType(profile.trigger_type)
+        if trigger_type is TriggerType.ALWAYS:
             continue
         source_id = profile.trigger_source_attack_id
         if not source_id:
@@ -262,12 +275,18 @@ def validate_trigger_dependencies(
             raise ValueError(
                 f"{label} profile {index + 1} trigger source no longer exists."
             )
-        if id_to_index[source_id] > index:
+        source_resolution = ResolutionType(
+            profiles[id_to_index[source_id]].resolution_type
+        )
+        if (
+            trigger_type is TriggerType.AFTER_CRITICAL
+            and source_resolution is not ResolutionType.ATTACK_ROLL
+        ):
             raise ValueError(
-                f"{label} profile {index + 1} trigger source must occur earlier."
+                f"{label} profile {index + 1} critical-hit trigger "
+                "source must use attack rolls."
             )
-        ResolutionType(profiles[id_to_index[source_id]].resolution_type)
-        TriggerFrequency(profile.trigger_frequency)
+        _normalized_trigger_frequency(profile.trigger_frequency)
         edges[own_id] = source_id
     for attack_id in ids:
         seen: set[str] = set()
@@ -446,8 +465,11 @@ def run_damage_simulations(
 
     for _ in range(simulations):
         simulation_damage = 0
+        combat_triggered_once: dict[tuple[int, int], bool] = {}
         for round_number in range(1, rounds + 1):
             successful_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
+            failed_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
+            critical_resolutions_by_profile = dict.fromkeys(range(len(profiles)), 0)
             for profile_index, profile in enumerate(profiles):
                 active_round_set = active_round_sets[profile_index]
                 if (
@@ -455,26 +477,45 @@ def run_damage_simulations(
                     and round_number not in active_round_set
                 ):
                     continue
-                if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS:
+                trigger_type = TriggerType(profile.trigger_type)
+                if trigger_type is not TriggerType.ALWAYS:
                     source_index = next(
                         index
                         for index, source_profile in enumerate(profiles)
                         if _profile_id(source_profile)
                         == profile.trigger_source_attack_id
                     )
-                    source_successes = successful_resolutions_by_profile[source_index]
-                    execution_count = (
-                        source_successes
-                        if TriggerFrequency(profile.trigger_frequency)
-                        is TriggerFrequency.PER_SUCCESS
-                        else int(source_successes > 0)
-                    )
+                    if trigger_type is TriggerType.AFTER_SUCCESS:
+                        qualifying_resolutions = successful_resolutions_by_profile[
+                            source_index
+                        ]
+                    elif trigger_type is TriggerType.AFTER_FAILURE:
+                        qualifying_resolutions = failed_resolutions_by_profile[
+                            source_index
+                        ]
+                    else:
+                        qualifying_resolutions = critical_resolutions_by_profile[
+                            source_index
+                        ]
+                    frequency = _normalized_trigger_frequency(profile.trigger_frequency)
+                    if frequency is TriggerFrequency.PER_SUCCESS:
+                        execution_count = qualifying_resolutions
+                    elif frequency is TriggerFrequency.ONCE_PER_ROUND:
+                        execution_count = int(qualifying_resolutions > 0)
+                    else:
+                        combat_key = (profile_index, source_index)
+                        already_triggered = combat_triggered_once.get(combat_key, False)
+                        execution_count = int(
+                            qualifying_resolutions > 0 and not already_triggered
+                        )
+                        if execution_count:
+                            combat_triggered_once[combat_key] = True
                     configured_uses = 0
                 else:
                     execution_count = profile.attacks_per_round
                     configured_uses = profile.attacks_per_round
                 profile_configured_uses[profile_index] += configured_uses
-                if TriggerType(profile.trigger_type) is TriggerType.AFTER_SUCCESS:
+                if trigger_type is not TriggerType.ALWAYS:
                     profile_triggered_uses[profile_index] += execution_count
                 stop_profile_after_miss = False
                 for attack_index in range(execution_count):
@@ -519,6 +560,12 @@ def run_damage_simulations(
                             profile_hits[profile_index] += int(attack.hit)
                             successful_resolutions_by_profile[profile_index] += int(
                                 attack.hit
+                            )
+                            failed_resolutions_by_profile[profile_index] += int(
+                                not attack.hit
+                            )
+                            critical_resolutions_by_profile[profile_index] += int(
+                                attack.critical_hit
                             )
                             total_critical_hits += int(attack.critical_hit)
                             round_critical_hits[round_number] += int(
@@ -565,6 +612,9 @@ def run_damage_simulations(
                             profile_failed_saves[profile_index] += int(save.failed_save)
                             successful_resolutions_by_profile[profile_index] += int(
                                 save.failed_save
+                            )
+                            failed_resolutions_by_profile[profile_index] += int(
+                                save.successful_save
                             )
                             total_successful_saves += int(save.successful_save)
                             round_successful_saves[round_number] += int(
@@ -616,6 +666,9 @@ def run_damage_simulations(
                             profile_failed_saves[profile_index] += int(failed_save)
                             successful_resolutions_by_profile[profile_index] += int(
                                 failed_save
+                            )
+                            failed_resolutions_by_profile[profile_index] += int(
+                                successful_save
                             )
                             total_successful_saves += int(successful_save)
                             round_successful_saves[round_number] += int(successful_save)

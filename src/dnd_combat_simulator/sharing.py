@@ -7,7 +7,7 @@ import binascii
 import json
 import re
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from dnd_combat_simulator.combat import (
@@ -339,13 +339,38 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
     profiles_raw = _expect(obj, "attack_profiles", list, name)
     if len(profiles_raw) > MAX_ATTACK_PROFILES_PER_BUILD:
         raise SharedConfigurationError(f"{name} has too many attack profiles.")
-    return SharedBuildConfiguration(
-        _expect(obj, "name", str, name),
-        tuple(
-            _profile_from_json(p, f"{name} profile {i}")
-            for i, p in enumerate(profiles_raw, 1)
-        ),
+    profiles = tuple(
+        _profile_from_json(p, f"{name} profile {i}")
+        for i, p in enumerate(profiles_raw, 1)
     )
+    raw_profile_objects = [
+        _required_dict(p, f"{name} profile {i}") for i, p in enumerate(profiles_raw, 1)
+    ]
+    needs_generated_ids = any(
+        profile.trigger_type is not TriggerType.ALWAYS for profile in profiles
+    ) and any(not profile.attack_id for profile in profiles)
+    if needs_generated_ids:
+        profiles = tuple(
+            replace(profile, attack_id=profile.attack_id or f"profile-{i}")
+            for i, profile in enumerate(profiles, 1)
+        )
+    ids = {profile.attack_id for profile in profiles}
+    names = [profile.name for profile in profiles]
+    migrated = []
+    for index, profile in enumerate(profiles):
+        raw_profile = raw_profile_objects[index]
+        source_id = profile.trigger_source_attack_id
+        if profile.trigger_type is not TriggerType.ALWAYS and (
+            not source_id or source_id not in ids
+        ):
+            legacy_index = raw_profile.get("trigger_source_attack_index")
+            legacy_name = raw_profile.get("trigger_source_attack_name")
+            if isinstance(legacy_index, int) and 0 <= legacy_index < len(profiles):
+                source_id = profiles[legacy_index].attack_id
+            elif isinstance(legacy_name, str) and names.count(legacy_name) == 1:
+                source_id = profiles[names.index(legacy_name)].attack_id
+        migrated.append(replace(profile, trigger_source_attack_id=source_id))
+    return SharedBuildConfiguration(_expect(obj, "name", str, name), tuple(migrated))
 
 
 def _enum(enum_type, value: object, ctx: str):
