@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from secrets import randbelow
-import time
 from textwrap import dedent
 
 from dnd_combat_simulator import APP_TITLE
@@ -159,6 +159,7 @@ INVALID_SHARED_CONFIG_MESSAGE_KEY = "_invalid_shared_config_message"
 SIMULATION_RUNNING_KEY = "_simulation_running"
 SIMULATION_PENDING_KEY = "_simulation_pending"
 SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
+TRIGGER_EXPANDED_KEY_SUFFIX = "trigger-expanded"
 
 
 def _generate_default_seed() -> int:
@@ -968,6 +969,21 @@ def format_signed_rate(value: float) -> str:
     return f"{value:+.2%}"
 
 
+def format_positive_damage(value: float) -> str:
+    """Format a non-negative damage delta for display."""
+    return f"{value:.2f}"
+
+
+def format_positive_compact_decimal(value: float) -> str:
+    """Format a non-negative decimal delta with compact trailing zero handling."""
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def format_positive_rate(value: float) -> str:
+    """Format a non-negative fractional rate as a percentage-point delta."""
+    return f"{value:.2%}"
+
+
 def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
     """Validate inputs and run the shared simulation engine."""
     validate_simulation_inputs(inputs)
@@ -1271,11 +1287,47 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
             )
 
 
+def _comparison_baseline(comparison: BuildComparisonResult):
+    """Return baseline/non-baseline build-result pairs using overall DPR."""
+    first_dpr = comparison.first_result.average_damage_per_round
+    second_dpr = comparison.second_result.average_damage_per_round
+    if second_dpr > first_dpr:
+        return (
+            comparison.second_build,
+            comparison.second_result,
+            comparison.first_build,
+            comparison.first_result,
+        )
+    return (
+        comparison.first_build,
+        comparison.first_result,
+        comparison.second_build,
+        comparison.second_result,
+    )
+
+
+def _result_difference_column_label(comparison: BuildComparisonResult) -> str:
+    """Describe the fixed comparison direction used for metric differences."""
+    baseline_build, _, lower_build, _ = _comparison_baseline(comparison)
+    return f"Difference ({baseline_build.name} − {lower_build.name})"
+
+
 def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
     """Build side-by-side display rows for comparison results."""
     first = comparison.first_result
     second = comparison.second_result
-    difference = comparison.difference
+    _, baseline, _, lower = _comparison_baseline(comparison)
+    difference_label = _result_difference_column_label(comparison)
+
+    def damage_delta(baseline_value: float, lower_value: float) -> str:
+        return format_positive_damage(baseline_value - lower_value)
+
+    def decimal_delta(baseline_value: float, lower_value: float) -> str:
+        return format_positive_compact_decimal(baseline_value - lower_value)
+
+    def rate_delta(baseline_value: float, lower_value: float) -> str:
+        return format_positive_rate(baseline_value - lower_value)
+
     return [
         {
             "Metric": "Average damage per round",
@@ -1283,7 +1335,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_round
             ),
-            "Difference": format_signed_damage(difference.average_damage_per_round),
+            difference_label: damage_delta(
+                baseline.average_damage_per_round, lower.average_damage_per_round
+            ),
         },
         {
             "Metric": "Average total damage per combat",
@@ -1293,7 +1347,10 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_total_damage_per_simulation
             ),
-            "Difference": format_signed_damage(difference.average_total_damage),
+            difference_label: damage_delta(
+                baseline.average_total_damage_per_simulation,
+                lower.average_total_damage_per_simulation,
+            ),
         },
         {
             "Metric": "Average damage per affected target",
@@ -1303,8 +1360,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_target_per_round
             ),
-            "Difference": format_signed_damage(
-                difference.average_damage_per_target_per_round
+            difference_label: damage_delta(
+                baseline.average_damage_per_target_per_round,
+                lower.average_damage_per_target_per_round,
             ),
         },
         {
@@ -1315,9 +1373,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_attack_executions_per_combat(second)
             ),
-            "Difference": format_signed_compact_decimal(
-                _average_attack_executions_per_combat(first)
-                - _average_attack_executions_per_combat(second)
+            difference_label: decimal_delta(
+                _average_attack_executions_per_combat(baseline),
+                _average_attack_executions_per_combat(lower),
             ),
         },
         {
@@ -1328,9 +1386,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_attack_executions_per_round(second)
             ),
-            "Difference": format_signed_compact_decimal(
-                _average_attack_executions_per_round(first)
-                - _average_attack_executions_per_round(second)
+            difference_label: decimal_delta(
+                _average_attack_executions_per_round(baseline),
+                _average_attack_executions_per_round(lower),
             ),
         },
         {
@@ -1341,9 +1399,9 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_targets_damaged_per_combat(second)
             ),
-            "Difference": format_signed_compact_decimal(
-                _average_targets_damaged_per_combat(first)
-                - _average_targets_damaged_per_combat(second)
+            difference_label: decimal_delta(
+                _average_targets_damaged_per_combat(baseline),
+                _average_targets_damaged_per_combat(lower),
             ),
         },
         {
@@ -1354,16 +1412,18 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_targets_damaged_per_round(second)
             ),
-            "Difference": format_signed_compact_decimal(
-                _average_targets_damaged_per_round(first)
-                - _average_targets_damaged_per_round(second)
+            difference_label: decimal_delta(
+                _average_targets_damaged_per_round(baseline),
+                _average_targets_damaged_per_round(lower),
             ),
         },
         {
             "Metric": "Critical hit percentage",
             comparison.first_build.name: format_rate(first.critical_hit_rate),
             comparison.second_build.name: format_rate(second.critical_hit_rate),
-            "Difference": format_signed_rate(difference.critical_hit_rate),
+            difference_label: rate_delta(
+                baseline.critical_hit_rate, lower.critical_hit_rate
+            ),
         },
         {
             "Metric": "Round 1 burst damage",
@@ -1371,8 +1431,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.first_round_burst_damage
             ),
-            "Difference": format_signed_damage(
-                first.first_round_burst_damage - second.first_round_burst_damage
+            difference_label: damage_delta(
+                baseline.first_round_burst_damage, lower.first_round_burst_damage
             ),
         },
         {
@@ -1383,15 +1443,16 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_after_round_1
             ),
-            "Difference": format_signed_damage(
-                first.average_damage_after_round_1 - second.average_damage_after_round_1
+            difference_label: damage_delta(
+                baseline.average_damage_after_round_1,
+                lower.average_damage_after_round_1,
             ),
         },
         {
             "Metric": "Highest-damage round",
             comparison.first_build.name: str(first.highest_damage_round),
             comparison.second_build.name: str(second.highest_damage_round),
-            "Difference": "—",
+            difference_label: "—",
         },
     ]
 
@@ -1504,7 +1565,10 @@ def _render_results(result: SimulationResult) -> None:
     second_row[1].metric(
         "Average attack executions per round",
         format_compact_decimal(_average_attack_executions_per_round(result)),
-        help="Average number of attack profile executions in each simulated combat round.",
+        help=(
+            "Average number of attack profile executions in each simulated "
+            "combat round."
+        ),
     )
     second_row[2].metric(
         "Average targets damaged per combat",
@@ -1557,7 +1621,16 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
                 profile_result.average_executions_per_round
             ),
         }
-        if profile.trigger_type is not TriggerType.ALWAYS:
+        average_triggered = profile_result.average_triggered_profile_uses_per_simulation
+        if profile.trigger_type is TriggerType.ALWAYS:
+            row["Trigger"] = "Executes normally each round."
+        elif profile.trigger_type is TriggerType.SOMETIMES:
+            row["Trigger"] = (
+                "Triggered "
+                f"{format_compact_decimal(average_triggered)} times per combat "
+                f"from a {profile.trigger_chance_percent}% once-per-round chance."
+            )
+        else:
             source = next(
                 (
                     item.attack_profile.name
@@ -1566,22 +1639,17 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
                 ),
                 "selected attack",
             )
-            average_triggered = (
-                profile_result.average_triggered_profile_uses_per_simulation
-            )
+            outcomes = {
+                TriggerType.AFTER_SUCCESS: "hits",
+                TriggerType.AFTER_FAILURE: "misses",
+                TriggerType.AFTER_CRITICAL: "scores a critical hit",
+            }
             row["Trigger"] = (
                 "Triggered "
                 f"{format_compact_decimal(average_triggered)} times per combat "
-                f"after {source} succeeds"
+                f"after {source} {outcomes[profile.trigger_type]}."
             )
-        if profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE:
-            row["Average automatic damage applications per combat"] = (
-                format_compact_decimal(
-                    profile_result.automatic_damage_applications
-                    / result.simulations_run
-                )
-            )
-        elif profile.resolution_type is ResolutionType.SAVING_THROW:
+        if profile.resolution_type is ResolutionType.SAVING_THROW:
             row["Failed save percentage"] = format_rate(profile_result.failed_save_rate)
             row["Successful save percentage"] = format_rate(
                 profile_result.successful_save_rate
@@ -1798,9 +1866,9 @@ def _render_comparison_results(comparison: BuildComparisonResult) -> None:
             st.markdown(f"##### {comparison.second_build.name} attack breakdown")
             st.table(_profile_breakdown_rows(comparison.second_result))
             st.caption(
-                "Difference is first build minus second build. Both builds used "
-                "separate random-number-generator instances initialized with the "
-                "same seed."
+                f"Difference uses {_result_difference_column_label(comparison)} for "
+                "every metric row. Both builds used separate random-number-generator "
+                "instances initialized with the same seed."
             )
 
 
@@ -1902,6 +1970,27 @@ def _trigger_frequency_labels(
 ) -> tuple[str, str, str]:
     del source_resolution_type
     return ("Every successful resolution", "Once per round", "Once per combat")
+
+
+def trigger_expanded_state_key(profile_id: str) -> str:
+    """Return the persistent session key for one trigger editor expansion state."""
+    return f"{profile_id}-{TRIGGER_EXPANDED_KEY_SUFFIX}"
+
+
+def _render_trigger_expander_control(prefix: str) -> bool:
+    """Render an explicit trigger expand/collapse control and return its state."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    expanded_key = trigger_expanded_state_key(prefix)
+    state.setdefault(expanded_key, False)
+    button = getattr(st, "button", None)
+    if button is None:
+        return hasattr(st, "expander")
+    label = "Hide trigger settings" if state[expanded_key] else "Show trigger settings"
+    if button(label, key=f"{expanded_key}-toggle"):
+        state[expanded_key] = not bool(state[expanded_key])
+    return bool(state[expanded_key])
 
 
 def _attack_profile_inputs(
@@ -2015,119 +2104,131 @@ def _attack_profile_inputs(
     )
     _field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
 
-    expander = getattr(st, "expander", None)
-    trigger_container = (
-        expander(
-            "Trigger",
-            expanded=bool(
-                errors_by_key.get(profile_widget_key(prefix, "trigger_type"))
-                or errors_by_key.get(
-                    profile_widget_key(prefix, "trigger_source_attack_id")
-                )
-            ),
-        )
-        if expander is not None
-        else nullcontext()
+    state = getattr(st, "session_state", {})
+    getattr(st, "markdown", lambda *args, **kwargs: None)("##### Trigger")
+    trigger_type_label = state.get(profile_widget_key(prefix, "trigger_type"), "Always")
+    trigger_type = {
+        "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+        "Another attack fails": TriggerType.AFTER_FAILURE,
+        "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+        "Sometimes": TriggerType.SOMETIMES,
+    }.get(trigger_type_label, TriggerType.ALWAYS)
+    trigger_source_attack_id = state.get(
+        profile_widget_key(prefix, "trigger_source_attack_id")
     )
-    with trigger_container:
-        trigger_type_label = st.selectbox(
-            "When",
-            options=[
-                "Always",
-                "Another attack succeeds",
-                "Another attack fails",
-                "Another attack critically hits",
-                "Sometimes",
-            ],
-            index=0,
-            key=profile_widget_key(prefix, "trigger_type"),
-            help=(
-                "Succeeds means an attack roll hits or a target fails "
-                "its saving throw. Fails means an attack roll misses "
-                "or a target succeeds on its saving throw. "
-                "Critically hits only applies to attack-roll attacks."
-            ),
-        )
-        _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
-        trigger_type = {
-            "Another attack succeeds": TriggerType.AFTER_SUCCESS,
-            "Another attack fails": TriggerType.AFTER_FAILURE,
-            "Another attack critically hits": TriggerType.AFTER_CRITICAL,
-            "Sometimes": TriggerType.SOMETIMES,
-        }.get(trigger_type_label, TriggerType.ALWAYS)
-        trigger_source_attack_id = None
-        trigger_frequency = TriggerFrequency.PER_SUCCESS
-        trigger_chance_percent = None
-        if trigger_type is TriggerType.SOMETIMES:
-            chance_text = st.text_input(
-                "Percentage Chance",
-                value="100",
-                key=profile_widget_key(prefix, "trigger_chance_percent"),
-                help="Sometimes [Percentage Chance] % per round",
-            )
-            if str(chance_text).isdigit():
-                trigger_chance_percent = int(chance_text)
-            _field_error(
-                errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
-            )
-            st.caption("Sometimes [Percentage Chance] % per round")
-        elif trigger_type is not TriggerType.ALWAYS:
-            source_options = _trigger_source_options(prefix)
-            option_ids = [attack_id for attack_id, _ in source_options]
-            source_key = profile_widget_key(prefix, "trigger_source_attack_id")
-            stored_source = st.session_state.get(source_key)
-            options_with_placeholder = [None, *option_ids]
-            selected_index = (
-                options_with_placeholder.index(stored_source)
-                if stored_source in option_ids
-                else 0
-            )
-            selected_source = st.selectbox(
-                "What",
-                options=options_with_placeholder,
-                format_func=lambda attack_id: (
-                    "Select an attack..."
-                    if attack_id is None
-                    else dict(source_options).get(attack_id, attack_id)
+    trigger_frequency = {
+        "Once per round": TriggerFrequency.ONCE_PER_ROUND,
+        "Once per combat": TriggerFrequency.ONCE_PER_COMBAT,
+    }.get(
+        state.get(profile_widget_key(prefix, "trigger_frequency")),
+        TriggerFrequency.PER_SUCCESS,
+    )
+    trigger_chance_text = state.get(
+        profile_widget_key(prefix, "trigger_chance_percent"), "100"
+    )
+    trigger_chance_percent = (
+        int(trigger_chance_text) if str(trigger_chance_text).isdigit() else None
+    )
+    if _render_trigger_expander_control(prefix):
+        with _render_section_container():
+            trigger_type_label = st.selectbox(
+                "When",
+                options=[
+                    "Always",
+                    "Another attack succeeds",
+                    "Another attack fails",
+                    "Another attack critically hits",
+                    "Sometimes",
+                ],
+                index=0,
+                key=profile_widget_key(prefix, "trigger_type"),
+                help=(
+                    "Succeeds means an attack roll hits or a target fails "
+                    "its saving throw. Fails means an attack roll misses "
+                    "or a target succeeds on its saving throw. "
+                    "Critically hits only applies to attack-roll attacks."
                 ),
-                index=selected_index,
-                key=source_key,
             )
-            trigger_source_attack_id = (
-                selected_source if selected_source in option_ids else stored_source
-            )
-            if not option_ids:
-                st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
-            _field_error(errors_by_key, source_key)
-            source_resolution = ResolutionType.ATTACK_ROLL
-            if trigger_source_attack_id in option_ids:
-                source_resolution_label = st.session_state.get(
-                    profile_widget_key(trigger_source_attack_id, "resolution_type"),
-                    "Attack Roll",
+            _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
+            trigger_type = {
+                "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+                "Another attack fails": TriggerType.AFTER_FAILURE,
+                "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+                "Sometimes": TriggerType.SOMETIMES,
+            }.get(trigger_type_label, TriggerType.ALWAYS)
+            trigger_source_attack_id = None
+            trigger_frequency = TriggerFrequency.PER_SUCCESS
+            trigger_chance_percent = None
+            if trigger_type is TriggerType.SOMETIMES:
+                chance_text = st.text_input(
+                    "Percentage Chance",
+                    value="100",
+                    key=profile_widget_key(prefix, "trigger_chance_percent"),
+                    help="Sometimes [Percentage Chance] % per round",
                 )
-                source_resolution = {
-                    "Attack Roll": ResolutionType.ATTACK_ROLL,
-                    "Saving Throw": ResolutionType.SAVING_THROW,
-                    "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
-                }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
-            frequency_labels = _trigger_frequency_labels(source_resolution)
-            if trigger_source_attack_id in option_ids:
-                frequency_label = st.radio(
-                    "Frequency",
-                    options=list(frequency_labels),
-                    key=profile_widget_key(prefix, "trigger_frequency"),
-                    help=(
-                        "Every successful resolution triggers once per "
-                        "qualifying target. "
-                        "Once per round caps the trigger to one use in each round. "
-                        "Once per combat caps it to one use in the simulated combat."
+                if str(chance_text).isdigit():
+                    trigger_chance_percent = int(chance_text)
+                _field_error(
+                    errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
+                )
+                st.caption("Sometimes [Percentage Chance] % per round")
+            elif trigger_type is not TriggerType.ALWAYS:
+                source_options = _trigger_source_options(prefix)
+                option_ids = [attack_id for attack_id, _ in source_options]
+                source_key = profile_widget_key(prefix, "trigger_source_attack_id")
+                stored_source = st.session_state.get(source_key)
+                options_with_placeholder = [None, *option_ids]
+                selected_index = (
+                    options_with_placeholder.index(stored_source)
+                    if stored_source in option_ids
+                    else 0
+                )
+                selected_source = st.selectbox(
+                    "What",
+                    options=options_with_placeholder,
+                    format_func=lambda attack_id: (
+                        "Select an attack..."
+                        if attack_id is None
+                        else dict(source_options).get(attack_id, attack_id)
                     ),
+                    index=selected_index,
+                    key=source_key,
                 )
-                trigger_frequency = {
-                    frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
-                    frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
-                }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
-
+                trigger_source_attack_id = (
+                    selected_source if selected_source in option_ids else stored_source
+                )
+                if not option_ids:
+                    st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
+                _field_error(errors_by_key, source_key)
+                source_resolution = ResolutionType.ATTACK_ROLL
+                if trigger_source_attack_id in option_ids:
+                    source_resolution_label = st.session_state.get(
+                        profile_widget_key(trigger_source_attack_id, "resolution_type"),
+                        "Attack Roll",
+                    )
+                    source_resolution = {
+                        "Attack Roll": ResolutionType.ATTACK_ROLL,
+                        "Saving Throw": ResolutionType.SAVING_THROW,
+                        "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+                    }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
+                frequency_labels = _trigger_frequency_labels(source_resolution)
+                if trigger_source_attack_id in option_ids:
+                    frequency_label = st.radio(
+                        "Frequency",
+                        options=list(frequency_labels),
+                        key=profile_widget_key(prefix, "trigger_frequency"),
+                        help=(
+                            "Every successful resolution triggers once per "
+                            "qualifying target. "
+                            "Once per round caps the trigger to one use in each round. "
+                            "Once per combat caps it to one use in the "
+                            "simulated combat."
+                        ),
+                    )
+                    trigger_frequency = {
+                        frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
+                        frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
+                    }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,
@@ -2825,7 +2926,7 @@ def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResu
     state[SIMULATION_RUNNING_KEY] = True
     start = time.perf_counter()
     try:
-        with st.spinner("Calculating simulation results..."):
+        with st.spinner("Calculating..."):
             result = run_single_build_from_inputs(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
@@ -2839,6 +2940,46 @@ def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResu
     finally:
         state[SIMULATION_RUNNING_KEY] = False
         state[SIMULATION_PENDING_KEY] = False
+
+
+def _run_comparison_with_feedback(inputs: ComparisonInputs) -> BuildComparisonResult:
+    """Run a build comparison with Streamlit-visible loading feedback."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    state[SIMULATION_RUNNING_KEY] = True
+    start = time.perf_counter()
+    try:
+        with st.spinner("Calculating..."):
+            result = run_comparison_from_inputs(inputs)
+    except (ValueError, SharedConfigurationError):
+        state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
+        raise
+    else:
+        elapsed = time.perf_counter() - start
+        state[SIMULATION_DURATION_MESSAGE_KEY] = (
+            f"Simulation complete in {elapsed:.1f} seconds."
+        )
+        return result
+    finally:
+        state[SIMULATION_RUNNING_KEY] = False
+        state[SIMULATION_PENDING_KEY] = False
+
+
+def _render_run_simulation_button(disabled: bool) -> bool:
+    """Render the shared simulation button for single and comparison workflows."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    simulation_running = bool(state.get(SIMULATION_RUNNING_KEY))
+    clicked = st.button(
+        "Run Simulation",
+        disabled=disabled or simulation_running,
+        on_click=_mark_simulation_pending,
+    )
+    if clicked and not simulation_running and not disabled:
+        state[SIMULATION_PENDING_KEY] = True
+    return bool(state.get(SIMULATION_PENDING_KEY)) and not disabled
 
 
 def main() -> None:
@@ -2939,8 +3080,13 @@ def main() -> None:
             *validate_build_fields(second_build, prefix="second"),
         ]
         if current_errors:
-            st.warning("Fix the highlighted fields before comparing builds.")
-        if st.button("Compare Builds", disabled=bool(current_errors)):
+            st.warning("Fix the highlighted fields before running the simulation.")
+            getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
+        if message := getattr(st, "session_state", {}).pop(
+            SIMULATION_DURATION_MESSAGE_KEY, None
+        ):
+            st.success(message)
+        if _render_run_simulation_button(bool(current_errors)):
             inputs = ComparisonInputs(
                 first_build=first_build,
                 second_build=second_build,
@@ -2948,10 +3094,15 @@ def main() -> None:
                 seed=int(seed),
             )
             try:
-                comparison = run_comparison_from_inputs(inputs)
+                comparison = _run_comparison_with_feedback(inputs)
             except (ValueError, SharedConfigurationError) as error:
                 st.error(_friendly_validation_message(error))
             else:
+                st.success(
+                    getattr(st, "session_state", {}).pop(
+                        SIMULATION_DURATION_MESSAGE_KEY
+                    )
+                )
                 _render_comparison_results(comparison)
     else:
         pre_render_errors = validation_errors_by_key(
@@ -2972,16 +3123,7 @@ def main() -> None:
             st.success(message)
 
         state = getattr(st, "session_state", {})
-        simulation_running = bool(state.get(SIMULATION_RUNNING_KEY))
-        clicked = st.button(
-            "Run Simulation",
-            disabled=bool(current_errors) or simulation_running,
-            on_click=_mark_simulation_pending,
-        )
-        if clicked and not simulation_running:
-            state[SIMULATION_PENDING_KEY] = True
-
-        if state.get(SIMULATION_PENDING_KEY) and not current_errors:
+        if _render_run_simulation_button(bool(current_errors)):
             inputs = SingleBuildInputs(
                 build=first_build,
                 scenario=scenario,

@@ -463,7 +463,8 @@ def _validate_profile(profile: SharedAttackProfileConfiguration, label: str) -> 
         or profile.trigger_chance_percent > 100
     ):
         raise SharedConfigurationError(
-            f"{label} Sometimes percentage chance must be a whole number from 1 through 100."
+            f"{label} Sometimes percentage chance must be a whole number "
+            "from 1 through 100."
         )
     try:
         roll_damage_formula(profile.damage_formula)

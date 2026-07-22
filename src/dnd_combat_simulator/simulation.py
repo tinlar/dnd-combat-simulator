@@ -336,7 +336,10 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
             or profile.trigger_chance_percent < 1
             or profile.trigger_chance_percent > 100
         ):
-            msg = f"{label} Sometimes percentage chance must be a whole number from 1 through 100."
+            msg = (
+                f"{label} Sometimes percentage chance must be a whole number "
+                "from 1 through 100."
+            )
             raise ValueError(msg)
     if resolution_type is ResolutionType.SAVING_THROW:
         if profile.save_dc is None:

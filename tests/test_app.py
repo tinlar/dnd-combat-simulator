@@ -165,7 +165,7 @@ def test_result_rows_show_side_by_side_comparison() -> None:
     assert rows[0]["Metric"] == "Average damage per round"
     assert rows[0]["Build A"] == "1.50"
     assert rows[0]["Build B"] == "2.50"
-    assert rows[0]["Difference"] == "-1.00"
+    assert rows[0]["Difference (Build B − Build A)"] == "1.00"
     assert all(row["Metric"] != "Full Damage Success Rate" for row in rows)
 
 
@@ -1189,7 +1189,7 @@ def test_run_single_build_with_feedback_sets_running_state_and_duration(
 
     assert app._run_single_build_with_feedback(object()) is result
 
-    assert events == ["Calculating simulation results..."]
+    assert events == ["Calculating..."]
     assert state[app.SIMULATION_RUNNING_KEY] is False
     assert state[app.SIMULATION_PENDING_KEY] is False
     assert state[app.SIMULATION_DURATION_MESSAGE_KEY] == (
@@ -2444,7 +2444,7 @@ def test_sometimes_validation_accepts_boundaries(percent):
 
 @pytest.mark.parametrize("percent", [None, 0, -1, 101, "", "1.5", "abc"])
 def test_sometimes_validation_rejects_invalid_percentage_values(percent):
-    from dnd_combat_simulator.app import validate_build_fields, profile_widget_key
+    from dnd_combat_simulator.app import profile_widget_key, validate_build_fields
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
 
@@ -2473,3 +2473,148 @@ def test_sometimes_validation_rejects_invalid_percentage_values(percent):
         error.key == profile_widget_key("first-primary", "trigger_chance_percent")
         for error in errors
     )
+
+
+def test_trigger_expansion_changes_only_on_explicit_toggle(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    state = {app.profile_widget_key("attack-id", "trigger_type"): "Sometimes"}
+    clicks = iter([False, True, False])
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state=state,
+            button=lambda *args, **kwargs: next(clicks),
+        ),
+    )
+
+    assert app._render_trigger_expander_control("attack-id") is False
+    state[app.profile_widget_key("attack-id", "trigger_chance_percent")] = "25"
+    assert app._render_trigger_expander_control("attack-id") is True
+    state[app.profile_widget_key("attack-id", "name")] = "Renamed"
+    assert app._render_trigger_expander_control("attack-id") is True
+
+
+def test_result_rows_difference_uses_higher_dpr_baseline_for_all_rows() -> None:
+    from dnd_combat_simulator.app import (
+        ComparisonInputs,
+        _result_rows,
+        run_comparison_from_inputs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    comparison = run_comparison_from_inputs(
+        ComparisonInputs(
+            first_build=BuildConfig("Build A", 20, "1d4", 2),
+            second_build=BuildConfig("Build B", 20, "1d4+10", 1),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
+            seed=7,
+        )
+    )
+
+    rows = _result_rows(comparison)
+    label = "Difference (Build B − Build A)"
+    assert rows[0][label] == "9.00"
+    executions = next(
+        row for row in rows if row["Metric"] == "Average attack executions per combat"
+    )
+    assert executions[label] == "-1"
+
+
+def test_result_rows_tied_dpr_uses_build_a_baseline() -> None:
+    from dnd_combat_simulator.app import (
+        ComparisonInputs,
+        _result_rows,
+        run_comparison_from_inputs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    comparison = run_comparison_from_inputs(
+        ComparisonInputs(
+            first_build=BuildConfig("Build A", 20, "1d4", 1),
+            second_build=BuildConfig("Build B", 20, "1d4", 1),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
+            seed=7,
+        )
+    )
+
+    rows = _result_rows(comparison)
+    assert "Difference (Build A − Build B)" in rows[0]
+    assert rows[0]["Difference (Build A − Build B)"] == "0.00"
+
+
+def test_profile_breakdown_trigger_summaries_and_no_automatic_column() -> None:
+    from dnd_combat_simulator.app import _profile_breakdown_rows
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        TriggerType,
+        simulate_build,
+    )
+
+    source = AttackProfile("Source", 20, "1", 1, attack_id="src")
+    attack_trigger = AttackProfile(
+        "Followup",
+        20,
+        "1",
+        1,
+        attack_id="hit",
+        trigger_type=TriggerType.AFTER_SUCCESS,
+        trigger_source_attack_id="src",
+    )
+    sometimes = AttackProfile(
+        "Sometimes",
+        None,
+        "1",
+        1,
+        resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+        attack_id="sometimes",
+        trigger_type=TriggerType.SOMETIMES,
+        trigger_chance_percent=100,
+    )
+    result = simulate_build(
+        BuildConfig(
+            "Build", 20, "1", 1, attack_profiles=(source, attack_trigger, sometimes)
+        ),
+        ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=1,
+    )
+
+    rows = _profile_breakdown_rows(result)
+    assert rows[0]["Trigger"] == "Executes normally each round."
+    assert rows[1]["Trigger"] == "Triggered 1 times per combat after Source hits."
+    assert (
+        rows[2]["Trigger"]
+        == "Triggered 1 times per combat from a 100% once-per-round chance."
+    )
+    assert "source" not in rows[2]["Trigger"].lower()
+    assert all(
+        "Average automatic damage applications per combat" not in row for row in rows
+    )
+
+
+def test_result_rows_build_a_higher_dpr_uses_build_a_baseline() -> None:
+    from dnd_combat_simulator.app import (
+        ComparisonInputs,
+        _result_rows,
+        run_comparison_from_inputs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+
+    comparison = run_comparison_from_inputs(
+        ComparisonInputs(
+            first_build=BuildConfig("Build A", 20, "1d4+1", 1),
+            second_build=BuildConfig("Build B", 20, "1d4", 1),
+            scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=2),
+            seed=7,
+        )
+    )
+
+    rows = _result_rows(comparison)
+    assert rows[0]["Difference (Build A − Build B)"] == "1.00"
