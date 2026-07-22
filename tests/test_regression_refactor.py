@@ -95,8 +95,8 @@ def test_comparison_difference_is_build_a_minus_build_b_for_all_metrics():
     )
 
     assert comparison.higher_average_damage_build_name == "B"
-    assert comparison.difference.average_damage_per_round < 0
-    assert comparison.difference.hit_rate < 0
+    assert comparison.difference.average_damage_per_round > 0
+    assert comparison.difference.hit_rate > 0
 
 
 def test_compiled_damage_expression_matches_public_formula_for_same_seed():

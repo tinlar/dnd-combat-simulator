@@ -1354,7 +1354,14 @@ def _comparison_baseline(comparison: BuildComparisonResult):
 
 
 def _result_difference_column_label(comparison: BuildComparisonResult) -> str:
-    """Describe the fixed Build A minus Build B comparison direction."""
+    """Describe the higher-DPR baseline comparison direction."""
+    first_dpr = comparison.first_result.average_damage_per_round
+    second_dpr = comparison.second_result.average_damage_per_round
+    if second_dpr > first_dpr:
+        return (
+            "Difference "
+            f"({comparison.second_build.name} − {comparison.first_build.name})"
+        )
     return (
         f"Difference ({comparison.first_build.name} − {comparison.second_build.name})"
     )
@@ -1366,14 +1373,20 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
     second = comparison.second_result
     difference_label = _result_difference_column_label(comparison)
 
-    def damage_delta(first_value: float, second_value: float) -> str:
-        return format_positive_damage(first_value - second_value)
+    higher_build, higher_result, lower_build, lower_result = _comparison_baseline(
+        comparison
+    )
 
-    def decimal_delta(first_value: float, second_value: float) -> str:
-        return format_positive_compact_decimal(first_value - second_value)
+    def damage_gap(metric: str) -> str:
+        return format_positive_damage(
+            getattr(higher_result, metric) - getattr(lower_result, metric)
+        )
 
-    def rate_delta(first_value: float, second_value: float) -> str:
-        return format_positive_rate(first_value - second_value)
+    def nondamage_gap(first_value: float, second_value: float) -> str:
+        return format_positive_compact_decimal(abs(first_value - second_value))
+
+    def rate_gap(first_value: float, second_value: float) -> str:
+        return format_positive_rate(abs(first_value - second_value))
 
     return [
         {
@@ -1382,9 +1395,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_round
             ),
-            difference_label: damage_delta(
-                first.average_damage_per_round, second.average_damage_per_round
-            ),
+            difference_label: damage_gap("average_damage_per_round"),
         },
         {
             "Metric": "Average total damage per combat",
@@ -1394,10 +1405,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_total_damage_per_simulation
             ),
-            difference_label: damage_delta(
-                first.average_total_damage_per_simulation,
-                second.average_total_damage_per_simulation,
-            ),
+            difference_label: damage_gap("average_total_damage_per_simulation"),
         },
         {
             "Metric": "Expected damage per target resolution",
@@ -1407,10 +1415,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_per_target_per_round
             ),
-            difference_label: damage_delta(
-                first.average_damage_per_target_per_round,
-                second.average_damage_per_target_per_round,
-            ),
+            difference_label: damage_gap("average_damage_per_target_per_round"),
         },
         {
             "Metric": "Average attack executions per combat",
@@ -1420,7 +1425,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_attack_executions_per_combat(second)
             ),
-            difference_label: decimal_delta(
+            difference_label: nondamage_gap(
                 _average_attack_executions_per_combat(first),
                 _average_attack_executions_per_combat(second),
             ),
@@ -1433,7 +1438,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_attack_executions_per_round(second)
             ),
-            difference_label: decimal_delta(
+            difference_label: nondamage_gap(
                 _average_attack_executions_per_round(first),
                 _average_attack_executions_per_round(second),
             ),
@@ -1446,7 +1451,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_targets_damaged_per_combat(second)
             ),
-            difference_label: decimal_delta(
+            difference_label: nondamage_gap(
                 _average_targets_damaged_per_combat(first),
                 _average_targets_damaged_per_combat(second),
             ),
@@ -1459,7 +1464,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_compact_decimal(
                 _average_targets_damaged_per_round(second)
             ),
-            difference_label: decimal_delta(
+            difference_label: nondamage_gap(
                 _average_targets_damaged_per_round(first),
                 _average_targets_damaged_per_round(second),
             ),
@@ -1468,7 +1473,7 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             "Metric": "Critical hit percentage",
             comparison.first_build.name: format_rate(first.critical_hit_rate),
             comparison.second_build.name: format_rate(second.critical_hit_rate),
-            difference_label: rate_delta(
+            difference_label: rate_gap(
                 first.critical_hit_rate, second.critical_hit_rate
             ),
         },
@@ -1478,8 +1483,8 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.first_round_burst_damage
             ),
-            difference_label: damage_delta(
-                first.first_round_burst_damage, second.first_round_burst_damage
+            difference_label: format_positive_damage(
+                abs(first.first_round_burst_damage - second.first_round_burst_damage)
             ),
         },
         {
@@ -1490,9 +1495,11 @@ def _result_rows(comparison: BuildComparisonResult) -> list[dict[str, str]]:
             comparison.second_build.name: format_damage(
                 second.average_damage_after_round_1
             ),
-            difference_label: damage_delta(
-                first.average_damage_after_round_1,
-                second.average_damage_after_round_1,
+            difference_label: format_positive_damage(
+                abs(
+                    first.average_damage_after_round_1
+                    - second.average_damage_after_round_1
+                )
             ),
         },
         {
@@ -1534,14 +1541,14 @@ def _round_breakdown_rows(comparison: BuildComparisonResult) -> list[dict[str, s
                 f"{comparison.first_build.name} avg dmg resolutions": format_damage(
                     first_round.average_targets_affected
                 ),
-                f"{comparison.first_build.name} avg individual damage": format_damage(
-                    first_round.average_individual_damage
+                f"{comparison.first_build.name} exp dmg / resolution": format_damage(
+                    first_round.average_damage_per_target_resolution
                 ),
                 f"{comparison.second_build.name} avg dmg resolutions": format_damage(
                     second_round.average_targets_affected
                 ),
-                f"{comparison.second_build.name} avg individual damage": format_damage(
-                    second_round.average_individual_damage
+                f"{comparison.second_build.name} exp dmg / resolution": format_damage(
+                    second_round.average_damage_per_target_resolution
                 ),
                 f"{comparison.first_build.name} crit %": format_rate(
                     first_round.critical_hit_rate
@@ -1784,7 +1791,7 @@ def _single_round_breakdown_rows(result: SimulationResult) -> list[dict[str, str
                 round_result.average_targets_affected
             ),
             "Expected Damage / Resolution": format_damage(
-                round_result.average_individual_damage
+                round_result.average_damage_per_target_resolution
             ),
             "Hit percentage": format_rate(round_result.hit_rate),
             "Critical hit percentage": format_rate(round_result.critical_hit_rate),

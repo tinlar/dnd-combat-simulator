@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from random import Random
 
-from dnd_combat_simulator.dice import RandomNumberGenerator, roll_damage_formula
+from dnd_combat_simulator.dice import (
+    DamageExpression,
+    RandomNumberGenerator,
+    parse_damage_expression,
+    roll_compiled_damage_expression,
+)
 
 
 class AttackRollMode(StrEnum):
@@ -232,26 +237,46 @@ def roll_attack_d20(
     )
 
 
-def _roll_noncritical_damage(
-    *, damage_dice: str, rng, features: frozenset[AttackFeature] = frozenset()
+def _damage_feature_values(features: frozenset[AttackFeature]) -> frozenset[str]:
+    return frozenset(feature.value for feature in features)
+
+
+def _roll_compiled_noncritical_damage(
+    *, expression: DamageExpression, rng, damage_features: frozenset[str] = frozenset()
 ) -> int:
-    return roll_damage_formula(
-        damage_dice, rng=rng, features=frozenset(feature.value for feature in features)
+    return roll_compiled_damage_expression(
+        expression, rng=rng, features=damage_features
     )
 
 
-def resolve_weapon_attack(
+def _roll_noncritical_damage(
+    *, damage_dice: str, rng, features: frozenset[AttackFeature] = frozenset()
+) -> int:
+    return _roll_compiled_noncritical_damage(
+        expression=parse_damage_expression(damage_dice),
+        rng=rng,
+        damage_features=_damage_feature_values(features),
+    )
+
+
+def resolve_compiled_weapon_attack(
     *,
     attack_bonus: int,
     target_armor_class: int,
-    damage_dice: str,
+    damage_expression: DamageExpression,
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
     rng: RandomNumberGenerator | None = None,
     features: frozenset[AttackFeature] = frozenset(),
+    damage_features: frozenset[str] | None = None,
 ) -> AttackResult:
-    """Resolve one DnD weapon attack."""
+    """Resolve one attack using a precompiled damage expression."""
     random_number_generator = rng if rng is not None else Random()
     attack_features = frozenset(AttackFeature(feature) for feature in features)
+    feature_values = (
+        _damage_feature_values(attack_features)
+        if damage_features is None
+        else damage_features
+    )
     attack_roll = roll_attack_d20(
         attack_roll_mode, rng=random_number_generator, features=attack_features
     )
@@ -265,18 +290,18 @@ def resolve_weapon_attack(
 
     damage_dealt = 0
     if hit:
-        damage_dealt = roll_damage_formula(
-            damage_dice,
+        damage_dealt = roll_compiled_damage_expression(
+            damage_expression,
             critical=critical_hit,
             rng=random_number_generator,
-            features=frozenset(feature.value for feature in attack_features),
+            features=feature_values,
         )
     elif AttackFeature.POTENT_CANTRIP in attack_features:
         damage_dealt = (
-            _roll_noncritical_damage(
-                damage_dice=damage_dice,
+            _roll_compiled_noncritical_damage(
+                expression=damage_expression,
                 rng=random_number_generator,
-                features=attack_features,
+                damage_features=feature_values,
             )
             // 2
         )
@@ -292,16 +317,37 @@ def resolve_weapon_attack(
     )
 
 
-def resolve_saving_throw_damage(
+def resolve_weapon_attack(
+    *,
+    attack_bonus: int,
+    target_armor_class: int,
+    damage_dice: str,
+    attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
+) -> AttackResult:
+    """Resolve one DnD weapon attack."""
+    return resolve_compiled_weapon_attack(
+        attack_bonus=attack_bonus,
+        target_armor_class=target_armor_class,
+        damage_expression=parse_damage_expression(damage_dice),
+        attack_roll_mode=attack_roll_mode,
+        rng=rng,
+        features=features,
+    )
+
+
+def resolve_compiled_saving_throw_damage(
     *,
     save_dc: int,
     enemy_save_bonus: int,
-    damage_dice: str,
+    damage_expression: DamageExpression,
     successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
     rng: RandomNumberGenerator | None = None,
     features: frozenset[AttackFeature] = frozenset(),
+    damage_features: frozenset[str] | None = None,
 ) -> SavingThrowResult:
-    """Resolve one saving throw based damage event."""
+    """Resolve one saving throw using a precompiled damage expression."""
     if save_dc < 1:
         msg = "Save DC must be a positive integer."
         raise ValueError(msg)
@@ -313,15 +359,20 @@ def resolve_saving_throw_damage(
 
     damage_dealt = 0
     saving_throw_features = frozenset(AttackFeature(feature) for feature in features)
+    feature_values = (
+        _damage_feature_values(saving_throw_features)
+        if damage_features is None
+        else damage_features
+    )
     if (
         failed_save
         or successful_save_damage is SuccessfulSaveDamage.HALF_DAMAGE
         or AttackFeature.POTENT_CANTRIP in saving_throw_features
     ):
-        full_damage = _roll_noncritical_damage(
-            damage_dice=damage_dice,
+        full_damage = _roll_compiled_noncritical_damage(
+            expression=damage_expression,
             rng=random_number_generator,
-            features=frozenset(AttackFeature(feature) for feature in features),
+            damage_features=feature_values,
         )
         damage_dealt = full_damage if failed_save else full_damage // 2
 
@@ -333,6 +384,26 @@ def resolve_saving_throw_damage(
         successful_save=successful_save,
         critical_hit=False,
         damage_dealt=max(0, damage_dealt),
+    )
+
+
+def resolve_saving_throw_damage(
+    *,
+    save_dc: int,
+    enemy_save_bonus: int,
+    damage_dice: str,
+    successful_save_damage: SuccessfulSaveDamage = SuccessfulSaveDamage.NO_DAMAGE,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[AttackFeature] = frozenset(),
+) -> SavingThrowResult:
+    """Resolve one saving throw based damage event."""
+    return resolve_compiled_saving_throw_damage(
+        save_dc=save_dc,
+        enemy_save_bonus=enemy_save_bonus,
+        damage_expression=parse_damage_expression(damage_dice),
+        successful_save_damage=successful_save_damage,
+        rng=rng,
+        features=features,
     )
 
 
