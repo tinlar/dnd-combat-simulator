@@ -306,16 +306,20 @@ def test_single_build_rows_include_required_complete_results() -> None:
     )
 
     metric_names = {row["Metric"] for row in _single_result_rows(result)}
-    assert "Average total damage per round" in metric_names
-    assert "Average total damage across the combat" in metric_names
-    assert "Average damage per target per round" in metric_names
+    assert "Average total damage per combat" in metric_names
+    assert "Average damage per round" in metric_names
+    assert "Average damage per affected target" in metric_names
+    assert "Average attack executions per combat" in metric_names
+    assert "Average attack executions per round" in metric_names
+    assert "Average targets damaged per combat" in metric_names
+    assert "Average targets damaged per round" in metric_names
     assert "Round 1 burst damage" in metric_names
     assert "Average damage after round 1" in metric_names
     assert "Highest-damage round" in metric_names
-    assert "Minimum total damage" in metric_names
-    assert "Maximum total damage" in metric_names
-    assert "Total attack uses" in metric_names
-    assert "Target instances damaged" in metric_names
+    assert "Minimum total damage" not in metric_names
+    assert "Maximum total damage" not in metric_names
+    assert "Total attack uses" not in metric_names
+    assert "Target instances damaged" not in metric_names
     assert len(_single_round_breakdown_rows(result)) == 2
     profile_row = _profile_breakdown_rows(result)[0]
     assert profile_row["Attack profile"] == "Attack"
