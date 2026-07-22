@@ -703,7 +703,7 @@ def test_multiple_uses_active_rounds_and_multi_target_totals() -> None:
     ]
     assert result.total_attacks_made == 2
     assert result.total_target_resolutions == 4
-    assert result.average_damage_per_target_per_round == 2.5
+    assert result.average_damage_per_target_per_round == 1.25
 
 
 def test_affected_targets_must_be_positive_integer() -> None:
@@ -799,7 +799,7 @@ def test_automatic_damage_multiple_uses_targets_and_separate_rolls() -> None:
     assert result.total_target_resolutions == 6
     assert result.automatic_damage_applications == 6
     assert result.average_total_damage_per_simulation == 27
-    assert result.average_damage_per_target_per_round == 13.5
+    assert result.average_damage_per_target_per_round == 4.5
     assert rng.calls == [(1, 6)] * 6
 
 
@@ -1362,7 +1362,7 @@ def test_attack_roll_only_features_rejected_for_saving_throw(feature: str) -> No
         )
 
 
-def test_multiple_attacks_against_one_target_combined_before_average() -> None:
+def test_multiple_attacks_against_one_target_counted_per_resolution() -> None:
     result = run_damage_simulations(
         attack_bonus=20,
         target_armor_class=1,
@@ -1375,12 +1375,12 @@ def test_multiple_attacks_against_one_target_combined_before_average() -> None:
 
     assert result.average_damage_per_round == 3
     assert result.round_results[0].average_damage == 3
-    assert result.round_results[0].average_targets_affected == 1
-    assert result.round_results[0].average_individual_damage == 3
-    assert result.average_damage_per_target_per_round == 3
+    assert result.round_results[0].average_targets_affected == 3
+    assert result.round_results[0].average_individual_damage == 1
+    assert result.average_damage_per_target_per_round == 1
 
 
-def test_multiple_attacks_split_across_several_targets_are_combined_per_target() -> (
+def test_multiple_attacks_split_across_several_targets_count_each_resolution() -> (
     None
 ):
     result = run_damage_simulations(
@@ -1394,9 +1394,9 @@ def test_multiple_attacks_split_across_several_targets_are_combined_per_target()
     )
 
     assert result.average_damage_per_round == 6
-    assert result.round_results[0].average_targets_affected == 2
-    assert result.round_results[0].average_individual_damage == 3
-    assert result.average_damage_per_target_per_round == 3
+    assert result.round_results[0].average_targets_affected == 6
+    assert result.round_results[0].average_individual_damage == 1
+    assert result.average_damage_per_target_per_round == 1
 
 
 def test_area_attack_targets_individual_damage_and_target_count() -> None:
@@ -1480,6 +1480,152 @@ def test_total_damage_damage_per_target_and_target_count_are_distinct() -> None:
 
     assert result.average_damage_per_round == 33
     assert result.round_results[0].average_damage == 33
-    assert result.round_results[0].average_targets_affected == 2
-    assert result.round_results[0].average_individual_damage == 16.5
-    assert result.average_damage_per_target_per_round == 16.5
+    assert result.round_results[0].average_targets_affected == 4
+    assert result.round_results[0].average_individual_damage == 8.25
+    assert result.average_damage_per_target_per_round == 8.25
+
+
+def _single_round_result_for_profiles(
+    profiles: tuple[AttackProfile, ...],
+    rng: PredictableRng | None = None,
+    target_armor_class: int = 99,
+):
+    return run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=target_armor_class,
+        damage_dice="1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=profiles,
+        rng=rng or PredictableRng([]),
+    ).round_results[0]
+
+
+def test_round_damage_counts_multiple_attacks_affecting_one_target_each() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Five strikes",
+                None,
+                "10",
+                5,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        )
+    )
+
+    assert round_result.average_targets_affected == 5
+    assert round_result.average_damage == 50
+    assert round_result.average_individual_damage == 10
+
+
+def test_round_damage_counts_one_attack_affecting_multiple_targets() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Burst",
+                None,
+                "7",
+                1,
+                affected_targets=3,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        )
+    )
+
+    assert round_result.average_targets_affected == 3
+    assert round_result.average_damage == 21
+    assert round_result.average_individual_damage == 7
+
+
+def test_round_damage_counts_multiple_attacks_affecting_multiple_targets() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Twin bursts",
+                None,
+                "4",
+                2,
+                affected_targets=3,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        )
+    )
+
+    assert round_result.average_targets_affected == 6
+    assert round_result.average_damage == 24
+    assert round_result.average_individual_damage == 4
+
+
+def test_round_damage_excludes_misses_and_zero_damage_resolutions() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Miss then zero then hit",
+                0,
+                "5",
+                1,
+                resolution_type=ResolutionType.ATTACK_ROLL,
+            ),
+            AttackProfile(
+                "Zero",
+                None,
+                "0",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+            AttackProfile(
+                "Hit",
+                None,
+                "8",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([2]),
+    )
+
+    assert round_result.average_targets_affected == 1
+    assert round_result.average_damage == 8
+    assert round_result.average_individual_damage == 8
+
+
+def test_round_damage_counts_successful_saves_that_still_receive_damage() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Half save",
+                None,
+                "5",
+                1,
+                resolution_type=ResolutionType.SAVING_THROW,
+                save_dc=10,
+                successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+            ),
+        ),
+        rng=PredictableRng([20]),
+    )
+
+    assert round_result.average_targets_affected == 1
+    assert round_result.average_damage == 2
+    assert round_result.average_individual_damage == 2
+
+
+def test_round_damage_does_not_deduplicate_repeated_attacks_against_same_target() -> None:
+    round_result = _single_round_result_for_profiles(
+        (
+            AttackProfile(
+                "Repeated target",
+                20,
+                "6",
+                3,
+                resolution_type=ResolutionType.ATTACK_ROLL,
+            ),
+        ),
+        rng=PredictableRng([10, 10, 10]),
+        target_armor_class=1,
+    )
+
+    assert round_result.average_targets_affected == 3
+    assert round_result.average_damage == 18
+    assert round_result.average_individual_damage == 6
