@@ -1977,20 +1977,21 @@ def trigger_expanded_state_key(profile_id: str) -> str:
     return f"{profile_id}-{TRIGGER_EXPANDED_KEY_SUFFIX}"
 
 
-def _render_trigger_expander_control(prefix: str) -> bool:
-    """Render an explicit trigger expand/collapse control and return its state."""
+def _trigger_settings_expander(prefix: str):
+    """Return the Trigger Settings expander with stable profile-specific state."""
     import streamlit as st
 
-    state = getattr(st, "session_state", {})
-    expanded_key = trigger_expanded_state_key(prefix)
-    state.setdefault(expanded_key, False)
-    button = getattr(st, "button", None)
-    if button is None:
-        return hasattr(st, "expander")
-    label = "Hide trigger settings" if state[expanded_key] else "Show trigger settings"
-    if button(label, key=f"{expanded_key}-toggle"):
-        state[expanded_key] = not bool(state[expanded_key])
-    return bool(state[expanded_key])
+    expander = getattr(st, "expander", None)
+    if expander is None:
+        return nullcontext()
+    try:
+        return expander(
+            "Trigger Settings",
+            expanded=False,
+            key=trigger_expanded_state_key(prefix),
+        )
+    except TypeError:
+        return expander("Trigger Settings", expanded=False)
 
 
 def _attack_profile_inputs(
@@ -2105,7 +2106,6 @@ def _attack_profile_inputs(
     _field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
 
     state = getattr(st, "session_state", {})
-    getattr(st, "markdown", lambda *args, **kwargs: None)("##### Trigger")
     trigger_type_label = state.get(profile_widget_key(prefix, "trigger_type"), "Always")
     trigger_type = {
         "Another attack succeeds": TriggerType.AFTER_SUCCESS,
@@ -2129,106 +2129,105 @@ def _attack_profile_inputs(
     trigger_chance_percent = (
         int(trigger_chance_text) if str(trigger_chance_text).isdigit() else None
     )
-    if _render_trigger_expander_control(prefix):
-        with _render_section_container():
-            trigger_type_label = st.selectbox(
-                "When",
-                options=[
-                    "Always",
-                    "Another attack succeeds",
-                    "Another attack fails",
-                    "Another attack critically hits",
-                    "Sometimes",
-                ],
-                index=0,
-                key=profile_widget_key(prefix, "trigger_type"),
-                help=(
-                    "Succeeds means an attack roll hits or a target fails "
-                    "its saving throw. Fails means an attack roll misses "
-                    "or a target succeeds on its saving throw. "
-                    "Critically hits only applies to attack-roll attacks."
-                ),
+    with _trigger_settings_expander(prefix):
+        trigger_type_label = st.selectbox(
+            "When",
+            options=[
+                "Always",
+                "Another attack succeeds",
+                "Another attack fails",
+                "Another attack critically hits",
+                "Sometimes",
+            ],
+            index=0,
+            key=profile_widget_key(prefix, "trigger_type"),
+            help=(
+                "Succeeds means an attack roll hits or a target fails "
+                "its saving throw. Fails means an attack roll misses "
+                "or a target succeeds on its saving throw. "
+                "Critically hits only applies to attack-roll attacks."
+            ),
+        )
+        _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
+        trigger_type = {
+            "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+            "Another attack fails": TriggerType.AFTER_FAILURE,
+            "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+            "Sometimes": TriggerType.SOMETIMES,
+        }.get(trigger_type_label, TriggerType.ALWAYS)
+        trigger_source_attack_id = None
+        trigger_frequency = TriggerFrequency.PER_SUCCESS
+        trigger_chance_percent = None
+        if trigger_type is TriggerType.SOMETIMES:
+            chance_text = st.text_input(
+                "Percentage Chance",
+                value="100",
+                key=profile_widget_key(prefix, "trigger_chance_percent"),
+                help="Sometimes [Percentage Chance] % per round",
             )
-            _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
-            trigger_type = {
-                "Another attack succeeds": TriggerType.AFTER_SUCCESS,
-                "Another attack fails": TriggerType.AFTER_FAILURE,
-                "Another attack critically hits": TriggerType.AFTER_CRITICAL,
-                "Sometimes": TriggerType.SOMETIMES,
-            }.get(trigger_type_label, TriggerType.ALWAYS)
-            trigger_source_attack_id = None
-            trigger_frequency = TriggerFrequency.PER_SUCCESS
-            trigger_chance_percent = None
-            if trigger_type is TriggerType.SOMETIMES:
-                chance_text = st.text_input(
-                    "Percentage Chance",
-                    value="100",
-                    key=profile_widget_key(prefix, "trigger_chance_percent"),
-                    help="Sometimes [Percentage Chance] % per round",
+            if str(chance_text).isdigit():
+                trigger_chance_percent = int(chance_text)
+            _field_error(
+                errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
+            )
+            st.caption("Sometimes [Percentage Chance] % per round")
+        elif trigger_type is not TriggerType.ALWAYS:
+            source_options = _trigger_source_options(prefix)
+            option_ids = [attack_id for attack_id, _ in source_options]
+            source_key = profile_widget_key(prefix, "trigger_source_attack_id")
+            stored_source = st.session_state.get(source_key)
+            options_with_placeholder = [None, *option_ids]
+            selected_index = (
+                options_with_placeholder.index(stored_source)
+                if stored_source in option_ids
+                else 0
+            )
+            selected_source = st.selectbox(
+                "What",
+                options=options_with_placeholder,
+                format_func=lambda attack_id: (
+                    "Select an attack..."
+                    if attack_id is None
+                    else dict(source_options).get(attack_id, attack_id)
+                ),
+                index=selected_index,
+                key=source_key,
+            )
+            trigger_source_attack_id = (
+                selected_source if selected_source in option_ids else stored_source
+            )
+            if not option_ids:
+                st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
+            _field_error(errors_by_key, source_key)
+            source_resolution = ResolutionType.ATTACK_ROLL
+            if trigger_source_attack_id in option_ids:
+                source_resolution_label = st.session_state.get(
+                    profile_widget_key(trigger_source_attack_id, "resolution_type"),
+                    "Attack Roll",
                 )
-                if str(chance_text).isdigit():
-                    trigger_chance_percent = int(chance_text)
-                _field_error(
-                    errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
-                )
-                st.caption("Sometimes [Percentage Chance] % per round")
-            elif trigger_type is not TriggerType.ALWAYS:
-                source_options = _trigger_source_options(prefix)
-                option_ids = [attack_id for attack_id, _ in source_options]
-                source_key = profile_widget_key(prefix, "trigger_source_attack_id")
-                stored_source = st.session_state.get(source_key)
-                options_with_placeholder = [None, *option_ids]
-                selected_index = (
-                    options_with_placeholder.index(stored_source)
-                    if stored_source in option_ids
-                    else 0
-                )
-                selected_source = st.selectbox(
-                    "What",
-                    options=options_with_placeholder,
-                    format_func=lambda attack_id: (
-                        "Select an attack..."
-                        if attack_id is None
-                        else dict(source_options).get(attack_id, attack_id)
+                source_resolution = {
+                    "Attack Roll": ResolutionType.ATTACK_ROLL,
+                    "Saving Throw": ResolutionType.SAVING_THROW,
+                    "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+                }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
+            frequency_labels = _trigger_frequency_labels(source_resolution)
+            if trigger_source_attack_id in option_ids:
+                frequency_label = st.radio(
+                    "Frequency",
+                    options=list(frequency_labels),
+                    key=profile_widget_key(prefix, "trigger_frequency"),
+                    help=(
+                        "Every successful resolution triggers once per "
+                        "qualifying target. "
+                        "Once per round caps the trigger to one use in each round. "
+                        "Once per combat caps it to one use in the "
+                        "simulated combat."
                     ),
-                    index=selected_index,
-                    key=source_key,
                 )
-                trigger_source_attack_id = (
-                    selected_source if selected_source in option_ids else stored_source
-                )
-                if not option_ids:
-                    st.warning(NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE)
-                _field_error(errors_by_key, source_key)
-                source_resolution = ResolutionType.ATTACK_ROLL
-                if trigger_source_attack_id in option_ids:
-                    source_resolution_label = st.session_state.get(
-                        profile_widget_key(trigger_source_attack_id, "resolution_type"),
-                        "Attack Roll",
-                    )
-                    source_resolution = {
-                        "Attack Roll": ResolutionType.ATTACK_ROLL,
-                        "Saving Throw": ResolutionType.SAVING_THROW,
-                        "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
-                    }.get(source_resolution_label, ResolutionType.ATTACK_ROLL)
-                frequency_labels = _trigger_frequency_labels(source_resolution)
-                if trigger_source_attack_id in option_ids:
-                    frequency_label = st.radio(
-                        "Frequency",
-                        options=list(frequency_labels),
-                        key=profile_widget_key(prefix, "trigger_frequency"),
-                        help=(
-                            "Every successful resolution triggers once per "
-                            "qualifying target. "
-                            "Once per round caps the trigger to one use in each round. "
-                            "Once per combat caps it to one use in the "
-                            "simulated combat."
-                        ),
-                    )
-                    trigger_frequency = {
-                        frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
-                        frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
-                    }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
+                trigger_frequency = {
+                    frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
+                    frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
+                }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
     features = _feature_inputs(prefix, resolution_type, int(affected_targets))
     return AttackProfile(
         name=attack_name,

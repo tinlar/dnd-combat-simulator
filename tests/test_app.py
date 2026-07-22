@@ -2475,28 +2475,45 @@ def test_sometimes_validation_rejects_invalid_percentage_values(percent):
     )
 
 
-def test_trigger_expansion_changes_only_on_explicit_toggle(monkeypatch) -> None:
+def test_trigger_settings_uses_stable_expander_key_without_button(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
     from dnd_combat_simulator import app
 
-    state = {app.profile_widget_key("attack-id", "trigger_type"): "Sometimes"}
-    clicks = iter([False, True, False])
+    calls = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def expander(label, **kwargs):
+        calls.append((label, kwargs))
+        return Context()
+
     monkeypatch.setitem(
         sys.modules,
         "streamlit",
         SimpleNamespace(
-            session_state=state,
-            button=lambda *args, **kwargs: next(clicks),
+            expander=expander,
+            button=lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("trigger settings must not render a button")
+            ),
         ),
     )
 
-    assert app._render_trigger_expander_control("attack-id") is False
-    state[app.profile_widget_key("attack-id", "trigger_chance_percent")] = "25"
-    assert app._render_trigger_expander_control("attack-id") is True
-    state[app.profile_widget_key("attack-id", "name")] = "Renamed"
-    assert app._render_trigger_expander_control("attack-id") is True
+    with app._trigger_settings_expander("attack-id"):
+        pass
+
+    assert calls == [
+        (
+            "Trigger Settings",
+            {"expanded": False, "key": app.trigger_expanded_state_key("attack-id")},
+        )
+    ]
 
 
 def test_result_rows_difference_uses_higher_dpr_baseline_for_all_rows() -> None:
