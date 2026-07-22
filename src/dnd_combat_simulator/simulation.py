@@ -93,6 +93,7 @@ class AttackProfileResult:
     failed_save_rate: float = 0
     successful_save_rate: float = 0
     total_target_resolutions: int = field(default=0, compare=False)
+    total_targets_affected: int = field(default=0, compare=False)
     average_damage_per_target_per_round: float = field(default=0, compare=False)
     automatic_damage_applications: int = field(default=0, compare=False)
     average_automatic_damage_per_application: float = field(default=0, compare=False)
@@ -103,6 +104,8 @@ class AttackProfileResult:
     average_triggered_profile_uses_per_simulation: float = field(
         default=0, compare=False
     )
+    average_executions_per_combat: float = field(default=0, compare=False)
+    average_executions_per_round: float = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,7 @@ class SimulationResult:
     failed_save_rate: float = 0
     successful_save_rate: float = 0
     total_target_resolutions: int = field(default=0, compare=False)
+    total_targets_affected: int = field(default=0, compare=False)
     average_damage_per_target_per_round: float = field(default=0, compare=False)
     automatic_damage_applications: int = field(default=0, compare=False)
     average_automatic_damage_per_application: float = field(default=0, compare=False)
@@ -745,6 +749,7 @@ def run_damage_simulations(
                 else 0
             ),
             total_target_resolutions=profile_target_resolutions[index],
+            total_targets_affected=profile_targets_affected_total[index],
             average_damage_per_target_per_round=(
                 profile_individual_damage_total[index]
                 / profile_targets_affected_total[index]
@@ -760,6 +765,10 @@ def run_damage_simulations(
             triggered_profile_uses=profile_triggered_uses[index],
             average_triggered_profile_uses_per_simulation=(
                 profile_triggered_uses[index] / simulations
+            ),
+            average_executions_per_combat=profile_attacks[index] / simulations,
+            average_executions_per_round=(
+                profile_attacks[index] / total_rounds if total_rounds else 0
             ),
             average_automatic_damage_per_application=(
                 profile_damage_totals[index]
@@ -845,8 +854,11 @@ def run_damage_simulations(
         if total_saving_throw_resolutions
         else 0,
         total_target_resolutions=total_target_resolutions,
+        total_targets_affected=sum(profile_targets_affected_total.values()),
         average_damage_per_target_per_round=(
-            sum(result.average_individual_damage for result in round_results) / rounds
+            total_damage_all_simulations / sum(profile_targets_affected_total.values())
+            if sum(profile_targets_affected_total.values())
+            else 0
         ),
         automatic_damage_applications=total_automatic_damage_applications,
         average_automatic_damage_per_application=(
