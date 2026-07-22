@@ -256,8 +256,8 @@ def test_compare_builds_reports_differences_and_higher_damage_build() -> None:
     )
 
     assert comparison.higher_average_damage_build_name == "Greatsword"
-    assert comparison.difference.average_damage_per_round == pytest.approx(-0.6)
-    assert comparison.difference.average_total_damage == pytest.approx(-1.2)
+    assert comparison.difference.average_damage_per_round == pytest.approx(0.6)
+    assert comparison.difference.average_total_damage == pytest.approx(1.2)
     assert comparison.difference.hit_rate == 0
     assert comparison.difference.critical_hit_rate == 0
 
@@ -1423,7 +1423,7 @@ def test_area_attack_targets_individual_damage_and_target_count() -> None:
 
     assert result.average_damage_per_round == 14
     assert result.round_results[0].average_targets_affected == 2
-    assert result.round_results[0].average_individual_damage == 7
+    assert result.round_results[0].average_damage_per_target_resolution == 3.5
     assert result.average_damage_per_target_per_round == 3.5
 
 
@@ -1481,7 +1481,9 @@ def test_total_damage_damage_per_target_and_target_count_are_distinct() -> None:
     assert result.average_damage_per_round == 33
     assert result.round_results[0].average_damage == 33
     assert result.round_results[0].average_targets_affected == 4
-    assert result.round_results[0].average_individual_damage == 8.25
+    assert result.round_results[
+        0
+    ].average_damage_per_target_resolution == pytest.approx(8.25)
     assert result.average_damage_per_target_per_round == 8.25
 
 
@@ -1535,7 +1537,7 @@ def test_round_damage_counts_one_attack_affecting_multiple_targets() -> None:
 
     assert round_result.average_targets_affected == 3
     assert round_result.average_damage == 21
-    assert round_result.average_individual_damage == 7
+    assert round_result.average_damage_per_target_resolution == 7
 
 
 def test_round_damage_counts_multiple_attacks_affecting_multiple_targets() -> None:
@@ -1587,7 +1589,7 @@ def test_round_damage_excludes_misses_and_zero_damage_resolutions() -> None:
 
     assert round_result.average_targets_affected == 1
     assert round_result.average_damage == 8
-    assert round_result.average_individual_damage == 8
+    assert round_result.average_damage_per_target_resolution == pytest.approx(8 / 3)
 
 
 def test_round_damage_counts_successful_saves_that_still_receive_damage() -> None:

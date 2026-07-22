@@ -165,7 +165,7 @@ def test_result_rows_show_side_by_side_comparison() -> None:
     assert rows[0]["Metric"] == "Average damage per round"
     assert rows[0]["Build A"] == "1.50"
     assert rows[0]["Build B"] == "2.50"
-    assert rows[0]["Difference (Build A − Build B)"] == "-1.00"
+    assert rows[0]["Difference (Build B − Build A)"] == "1.00"
     assert all(row["Metric"] != "Full Damage Success Rate" for row in rows)
 
 
@@ -2534,8 +2534,8 @@ def test_result_rows_difference_uses_higher_dpr_baseline_for_all_rows() -> None:
     )
 
     rows = _result_rows(comparison)
-    label = "Difference (Build A − Build B)"
-    assert rows[0][label] == "-9.00"
+    label = "Difference (Build B − Build A)"
+    assert rows[0][label] == "9.00"
     executions = next(
         row for row in rows if row["Metric"] == "Average attack executions per combat"
     )

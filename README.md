@@ -236,3 +236,13 @@ ruff format .
 6. Anyone who opens that URL receives the same simulator configuration, including Scenario, Build A, and Build B values. They must click **Run Simulation** or **Compare Builds** to generate results from the restored inputs.
 
 Share links contain configuration inputs only, not saved simulation results. Existing legacy `?config=<compressed-token>` links remain supported indefinitely. If a database record for a short `?share=` link is missing or deleted, that short link cannot be restored.
+
+### Simulation benchmark command
+
+Run the repeatable simulation benchmark suite with:
+
+```bash
+python scripts/benchmark_simulation.py
+```
+
+Use `--json` to capture machine-readable results and `--baseline-json path/to/baseline.json` to compare against a saved run from another branch. Add `--include-large` to include the representative 100,000-simulation workload when local runtime is acceptable.
