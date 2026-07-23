@@ -243,7 +243,9 @@ class SimulationResult:
         default_factory=tuple, compare=False
     )
     total_resource_blocked_executions: int = field(default=0, compare=False)
-    average_resource_blocked_executions_per_combat: float = field(default=0, compare=False)
+    average_resource_blocked_executions_per_combat: float = field(
+        default=0, compare=False
+    )
     resource_limited_combat_rate: float = field(default=0, compare=False)
 
 
@@ -1030,7 +1032,9 @@ def run_damage_simulations(
                         combat_had_resource_block = True
                         for unavailable_resource_index in unavailable_resource_indexes:
                             resource_skipped_totals[unavailable_resource_index] += 1
-                            resources_blocked_this_combat.add(unavailable_resource_index)
+                            resources_blocked_this_combat.add(
+                                unavailable_resource_index
+                            )
                         continue
                     _consume_resources(
                         plan.resource_costs,

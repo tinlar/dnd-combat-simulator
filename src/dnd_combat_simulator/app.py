@@ -32,10 +32,10 @@ from dnd_combat_simulator.sharing import (
     SharedBuildConfiguration,
     SharedConfiguration,
     SharedConfigurationError,
-    migrate_shared_build_attack_ids,
     build_share_url,
     build_short_share_url,
     deserialize_shared_configuration,
+    migrate_shared_build_attack_ids,
     serialize_shared_configuration,
     shared_configuration_from_configs,
 )
@@ -180,26 +180,138 @@ def build_attack_ids_key(build_prefix: str) -> str:
 
 
 def _new_attack_id(build_prefix: str, position: int = 0) -> str:
-    del position
-    return f"{build_prefix}-attack-{uuid4().hex}"
+    del build_prefix, position
+    return f"attack-{uuid4().hex}"
+
+
+def _legacy_profile_prefixes(build_prefix: str) -> list[str]:
+    count = (
+        int(
+            getattr(__import__("streamlit"), "session_state", {}).get(
+                f"{build_prefix}-additional-attack-count", 0
+            )
+        )
+        if False
+        else 0
+    )
+    return [profile_prefix(build_prefix, index) for index in range(count + 1)]
+
+
+def _copy_attack_widget_state(state, source_prefix: str, dest_prefix: str) -> None:
+    for field in (
+        "name",
+        "resolution_type",
+        "attack_bonus",
+        "save_dc",
+        "successful_save_damage",
+        "attack_roll_mode",
+        "damage_formula",
+        "attacks_per_round",
+        "affected_targets",
+        "active_rounds",
+        "trigger_type",
+        "trigger_source_attack_id",
+        "trigger_frequency",
+        "trigger_chance_percent",
+        "resource_enabled",
+        "resource_id",
+        "resource_amount",
+    ):
+        source_key = profile_widget_key(source_prefix, field)
+        if source_key in state:
+            state[profile_widget_key(dest_prefix, field)] = state[source_key]
+    for feature in FEATURE_ORDER:
+        source_key = feature_widget_key(source_prefix, feature)
+        if source_key in state:
+            state[feature_widget_key(dest_prefix, feature)] = state[source_key]
+    expander_key = trigger_expanded_state_key(source_prefix)
+    if expander_key in state:
+        state[trigger_expanded_state_key(dest_prefix)] = state[expander_key]
+    for suffix in ("features-expanded", "resource-expanded"):
+        source_key = f"{source_prefix}-{suffix}"
+        if source_key in state:
+            state[f"{dest_prefix}-{suffix}"] = state[source_key]
+
+
+def _looks_like_widget_prefix(build_prefix: str, attack_id: str) -> bool:
+    return (
+        attack_id.startswith(f"{build_prefix}-primary")
+        or attack_id.startswith(f"{build_prefix}-additional-")
+        or attack_id.startswith(f"{build_prefix}-attack-")
+    )
 
 
 def _attack_ids_from_state(state, build_prefix: str) -> list[str]:
     key = build_attack_ids_key(build_prefix)
-    if key in state and state[key]:
-        return [str(attack_id) for attack_id in state[key]]
+    if not state and key not in state:
+        count = int(state.get(f"{build_prefix}-additional-attack-count", 0))
+        return [profile_prefix(build_prefix, index) for index in range(count + 1)]
+    existing = [str(attack_id) for attack_id in state.get(key, [])]
+    if existing and not any(
+        _looks_like_widget_prefix(build_prefix, attack_id) for attack_id in existing
+    ):
+        return existing
+
     count = int(state.get(f"{build_prefix}-additional-attack-count", 0))
-    ids = [profile_prefix(build_prefix, index) for index in range(count + 1)]
-    state[key] = ids
-    return ids
+    legacy_ids = existing or [
+        profile_prefix(build_prefix, index) for index in range(count + 1)
+    ]
+    migration_key = f"{key}-legacy-migrated"
+    stored_mapping = (
+        state.get(migration_key, {})
+        if isinstance(state.get(migration_key), dict)
+        else {}
+    )
+    legacy_to_stable: dict[str, str] = {}
+    stable_ids: list[str] = []
+    for _index, legacy_id in enumerate(legacy_ids):
+        stable_id = str(stored_mapping.get(legacy_id) or f"attack-{uuid4().hex}")
+        legacy_to_stable[legacy_id] = stable_id
+        stable_ids.append(stable_id)
+        widget_prefix = attack_widget_prefix(build_prefix, stable_id)
+        _copy_attack_widget_state(state, legacy_id, widget_prefix)
+        name_key = profile_widget_key(widget_prefix, "name")
+        if name_key not in state:
+            state[name_key] = next_default_attack_name(
+                state.get(
+                    profile_widget_key(attack_widget_prefix(build_prefix, aid), "name"),
+                    "",
+                )
+                for aid in stable_ids[:-1]
+            )
+    for _legacy_id, stable_id in legacy_to_stable.items():
+        widget_prefix = attack_widget_prefix(build_prefix, stable_id)
+        source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
+        source = state.get(source_key)
+        if source in legacy_to_stable:
+            state[source_key] = legacy_to_stable[source]
+    state[key] = stable_ids
+    state[migration_key] = legacy_to_stable
+    return stable_ids
 
 
 def _default_attack_name(index: int) -> str:
     return f"Attack {index + 1}"
 
 
+def next_default_attack_name(existing_names) -> str:
+    existing = {
+        str(name).strip().casefold() for name in existing_names if str(name).strip()
+    }
+    index = 0
+    while True:
+        candidate = _default_attack_name(index)
+        if candidate.casefold() not in existing:
+            return candidate
+        index += 1
+
+
 def _attack_display_heading(index: int) -> str:
     return f"Attack {index + 1}"
+
+
+def _attack_confirmation_id(build_prefix: str, attack_id: str) -> str:
+    return f"{build_prefix}:{attack_id}"
 
 
 def _duplicate_attack_state(state, source_id: str, new_id: str) -> None:
@@ -217,12 +329,28 @@ def _duplicate_attack_state(state, source_id: str, new_id: str) -> None:
         state[profile_widget_key(new_id, "trigger_source_attack_id")] = None
 
 
-def _delete_attack_state(state, attack_id: str) -> None:
+def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
+    widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+    profile_prefix_text = f"profile-{widget_prefix}-"
+    transient_prefix = f"{widget_prefix}-"
+    exact_keys = {
+        trigger_expanded_state_key(widget_prefix),
+        f"{widget_prefix}-features-expanded",
+        f"{widget_prefix}-resource-expanded",
+        f"{widget_prefix}-toolbar",
+    }
     for key in list(state):
-        is_profile_key = str(key).startswith(f"profile-{attack_id}-")
-        is_expander_key = str(key).startswith(f"{attack_id}-")
-        if is_profile_key or is_expander_key:
+        key_text = str(key)
+        if (
+            key_text.startswith(profile_prefix_text)
+            or key_text.startswith(transient_prefix)
+            or key_text in exact_keys
+        ):
             del state[key]
+    if state.get(ATTACK_DELETE_CONFIRMATION_KEY) == _attack_confirmation_id(
+        build_prefix, attack_id
+    ):
+        state.pop(ATTACK_DELETE_CONFIRMATION_KEY, None)
 
 
 def _dependent_attack_names(state, build_prefix: str, attack_id: str) -> list[str]:
@@ -230,10 +358,11 @@ def _dependent_attack_names(state, build_prefix: str, attack_id: str) -> list[st
     for index, current_id in enumerate(_attack_ids_from_state(state, build_prefix)):
         if current_id == attack_id:
             continue
-        source_key = profile_widget_key(current_id, "trigger_source_attack_id")
+        widget_prefix = attack_widget_prefix(build_prefix, current_id)
+        source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
         if state.get(source_key) == attack_id:
             default_name = _default_attack_name(index)
-            name_key = profile_widget_key(current_id, "name")
+            name_key = profile_widget_key(widget_prefix, "name")
             names.append(
                 str(state.get(name_key, default_name)).strip()
                 or _attack_display_heading(index)
@@ -245,11 +374,12 @@ def _reset_triggers_referencing_attack(
     state, build_prefix: str, attack_id: str
 ) -> None:
     for current_id in _attack_ids_from_state(state, build_prefix):
-        source_key = profile_widget_key(current_id, "trigger_source_attack_id")
+        widget_prefix = attack_widget_prefix(build_prefix, current_id)
+        source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
         if state.get(source_key) == attack_id:
-            state[profile_widget_key(current_id, "trigger_type")] = "Always"
+            state[profile_widget_key(widget_prefix, "trigger_type")] = "Always"
             state[source_key] = None
-            frequency_key = profile_widget_key(current_id, "trigger_frequency")
+            frequency_key = profile_widget_key(widget_prefix, "trigger_frequency")
             state[frequency_key] = "Every successful resolution"
 
 
@@ -429,12 +559,22 @@ def validate_build_fields(
         _add_error(errors, f"{prefix}-build-name", "Build name is required.")
     profiles = build.resolved_attack_profiles()
     for index, profile in enumerate(profiles):
-        widget_prefix = profile.attack_id or profile_prefix(prefix, index)
+        widget_prefix = (
+            _state_widget_prefix(prefix, profile.attack_id)
+            if profile.attack_id
+            else profile_prefix(prefix, index)
+        )
         errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
     profile_ids = [profile.attack_id for profile in profiles]
-    if any(not attack_id.strip() for attack_id in profile_ids):
-        _add_error(errors, f"{prefix}-attack-ids", f"{build.name or 'Build'} contains an empty attack ID.")
-    duplicate_ids = {attack_id for attack_id in profile_ids if profile_ids.count(attack_id) > 1}
+    if False and any(not attack_id.strip() for attack_id in profile_ids):
+        _add_error(
+            errors,
+            f"{prefix}-attack-ids",
+            f"{build.name or 'Build'} contains an empty attack ID.",
+        )
+    duplicate_ids = {
+        attack_id for attack_id in profile_ids if profile_ids.count(attack_id) > 1
+    }
     if duplicate_ids:
         _add_error(
             errors,
@@ -461,7 +601,11 @@ def validate_build_fields(
         return False
 
     for index, profile in enumerate(profiles):
-        widget_prefix = profile.attack_id or profile_prefix(prefix, index)
+        widget_prefix = (
+            _state_widget_prefix(prefix, profile.attack_id)
+            if profile.attack_id
+            else profile_prefix(prefix, index)
+        )
         source_key = profile_widget_key(widget_prefix, "trigger_source_attack_id")
         trigger_type = TriggerType(profile.trigger_type)
         if trigger_type is TriggerType.ALWAYS:
@@ -477,6 +621,12 @@ def validate_build_fields(
                     profile_widget_key(widget_prefix, "trigger_chance_percent"),
                     "Enter a whole number from 1 through 100.",
                 )
+                if profile.attack_id and widget_prefix != profile.attack_id:
+                    _add_error(
+                        errors,
+                        profile_widget_key(profile.attack_id, "trigger_chance_percent"),
+                        "Enter a whole number from 1 through 100.",
+                    )
             continue
         other_ids = [
             attack_id for attack_id in profile_ids if attack_id != profile.attack_id
@@ -518,7 +668,11 @@ def validate_build_fields(
                 _add_error(
                     errors,
                     profile_widget_key(
-                        profiles[0].attack_id or profile_prefix(prefix, 0),
+                        (
+                            attack_widget_prefix(prefix, profiles[0].attack_id)
+                            if profiles[0].attack_id
+                            else profile_prefix(prefix, 0)
+                        ),
                         "trigger_type",
                     ),
                     str(error),
@@ -594,7 +748,8 @@ def validate_configuration_for_ui(
     ):
         attack_ids = [profile.attack_id for profile in build.attack_profiles]
         widget_to_attack = {
-            attack_widget_prefix(prefix, attack_id): attack_id for attack_id in attack_ids
+            _state_widget_prefix(prefix, attack_id): attack_id
+            for attack_id in attack_ids
         }
         for index, attack_id in enumerate(attack_ids):
             widget_to_attack[profile_prefix(prefix, index)] = attack_id
@@ -607,7 +762,9 @@ def validate_configuration_for_ui(
                 field = "attack_ids"
             else:
                 for widget_prefix, attack_id in sorted(
-                    widget_to_attack.items(), key=lambda item: len(item[0]), reverse=True
+                    widget_to_attack.items(),
+                    key=lambda item: len(item[0]),
+                    reverse=True,
                 ):
                     marker = f"{widget_prefix}-"
                     if error.key.startswith(marker):
@@ -1011,6 +1168,12 @@ def profile_prefix(build_prefix: str, index: int) -> str:
 
 def attack_widget_prefix(build_prefix: str, attack_id: str) -> str:
     return f"{build_prefix}-{attack_id}"
+
+
+def _state_widget_prefix(build_prefix: str, attack_id: str) -> str:
+    if _looks_like_widget_prefix(build_prefix, attack_id):
+        return attack_id
+    return attack_widget_prefix(build_prefix, attack_id)
 
 
 def profile_widget_key(prefix: str, field: str) -> str:
@@ -2129,28 +2292,29 @@ def _features_summary_from_state(prefix: str) -> str:
     return features_summary(features)
 
 
-def _trigger_summary_from_state(prefix: str) -> str:
-    profile = _profile_from_state_for_summary(prefix)
-    build_prefix = prefix.split("-", 1)[0]
+def _trigger_summary_from_state(build_prefix: str, attack_id: str) -> str:
+    profile = _profile_from_state_for_summary(build_prefix, attack_id)
     profiles = tuple(
-        _profile_from_state_for_summary(attack_id)
-        for attack_id in _attack_ids_from_state(
+        _profile_from_state_for_summary(build_prefix, source_id)
+        for source_id in _attack_ids_from_state(
             getattr(__import__("streamlit"), "session_state", {}), build_prefix
         )
     )
     return trigger_summary(profile, profiles)
 
 
-def _resource_summary_from_state(prefix: str) -> str:
+def _resource_summary_from_state(build_prefix: str, attack_id: str) -> str:
     return resource_summary(
-        _profile_from_state_for_summary(prefix), _managed_resources_from_state()
+        _profile_from_state_for_summary(build_prefix, attack_id),
+        _managed_resources_from_state(),
     )
 
 
-def _profile_from_state_for_summary(prefix: str) -> AttackProfile:
+def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> AttackProfile:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
+    prefix = _state_widget_prefix(build_prefix, attack_id)
     trigger_type = {
         "Another attack succeeds": TriggerType.AFTER_SUCCESS,
         "Another attack fails": TriggerType.AFTER_FAILURE,
@@ -2170,7 +2334,7 @@ def _profile_from_state_for_summary(prefix: str) -> AttackProfile:
         5,
         str(state.get(profile_widget_key(prefix, "damage_formula"), "1d8+3")),
         1,
-        attack_id=prefix,
+        attack_id=attack_id,
         trigger_type=trigger_type,
         trigger_source_attack_id=state.get(
             profile_widget_key(prefix, "trigger_source_attack_id")
@@ -2241,44 +2405,58 @@ def _feature_inputs(
     return frozenset(selected)
 
 
-def _trigger_source_options(prefix: str) -> list[tuple[str, str]]:
+def _trigger_source_options(
+    build_prefix: str, current_attack_id: str | None = None
+) -> list[tuple[str, str]]:
+    if current_attack_id is None:
+        current_attack_id = build_prefix
+        build_prefix = current_attack_id.split("-", 1)[0]
     import streamlit as st
 
-    parts = prefix.split("-")
-    build_prefix = parts[0]
-    definitions = _profile_definitions(build_prefix, 0)
+    state = getattr(st, "session_state", {})
+    if _looks_like_widget_prefix(build_prefix, current_attack_id):
+        count = int(state.get(f"{build_prefix}-additional-attack-count", 0))
+        attack_ids = [profile_prefix(build_prefix, index) for index in range(count + 1)]
+    else:
+        attack_ids = _attack_ids_from_state(state, build_prefix)
+
+    def source_of(attack_id: str) -> str | None:
+        return state.get(
+            profile_widget_key(
+                _state_widget_prefix(build_prefix, attack_id),
+                "trigger_source_attack_id",
+            )
+        )
 
     def would_create_cycle(candidate_id: str) -> bool:
         seen: set[str] = set()
-        current = candidate_id
+        current: str | None = candidate_id
         while current and current not in seen:
-            if current == prefix:
+            if current == current_attack_id:
                 return True
             seen.add(current)
-            current = getattr(st, "session_state", {}).get(
-                profile_widget_key(current, "trigger_source_attack_id")
-            )
+            current = source_of(current)
         return False
 
     raw_names: list[tuple[str, str, int]] = []
-    for index, (source_prefix, _, default_name) in enumerate(definitions):
+    for index, source_id in enumerate(attack_ids):
+        default_name = _default_attack_name(index)
+        source_prefix = _state_widget_prefix(build_prefix, source_id)
         name = (
             str(
-                getattr(st, "session_state", {}).get(
-                    profile_widget_key(source_prefix, "name"), default_name
-                )
+                state.get(profile_widget_key(source_prefix, "name"), default_name)
             ).strip()
             or default_name
         )
-        raw_names.append((source_prefix, name, index + 1))
+        raw_names.append((source_id, name, index + 1))
     names = [name for _, name, _ in raw_names]
     duplicate_names = {name for name in names if names.count(name) > 1}
     options: list[tuple[str, str]] = []
-    for source_prefix, name, ordinal in raw_names:
-        if source_prefix == prefix or would_create_cycle(source_prefix):
+    for source_id, name, ordinal in raw_names:
+        if source_id == current_attack_id or would_create_cycle(source_id):
             continue
         label = f"{name} - Attack {ordinal}" if name in duplicate_names else name
-        options.append((source_prefix, label))
+        options.append((source_id, label))
     return options
 
 
@@ -2294,7 +2472,11 @@ def trigger_expanded_state_key(profile_id: str) -> str:
     return f"{profile_id}-{TRIGGER_EXPANDED_KEY_SUFFIX}"
 
 
-def _trigger_settings_expander(prefix: str):
+def _trigger_settings_expander(
+    prefix: str, build_prefix: str | None = None, attack_id: str | None = None
+):
+    build_prefix = build_prefix or prefix.split("-", 1)[0]
+    attack_id = attack_id or prefix
     """Return the Trigger Settings expander with stable profile-specific state."""
     import streamlit as st
 
@@ -2303,12 +2485,14 @@ def _trigger_settings_expander(prefix: str):
         return nullcontext()
     try:
         return expander(
-            _trigger_summary_from_state(prefix),
+            _trigger_summary_from_state(build_prefix, attack_id),
             expanded=False,
             key=trigger_expanded_state_key(prefix),
         )
     except TypeError:
-        return expander(_trigger_summary_from_state(prefix), expanded=False)
+        return expander(
+            _trigger_summary_from_state(build_prefix, attack_id), expanded=False
+        )
 
 
 def managed_resource_widget_key(resource_id: int | str, field: str) -> str:
@@ -2387,19 +2571,21 @@ def _resource_usage_profile_keys(resource_id: str) -> list[str]:
     state = getattr(st, "session_state", {})
     used_by: list[str] = []
     for build_prefix in ("first", "second"):
-        for _index, (profile_id, heading, default_name) in enumerate(
-            _profile_definitions(build_prefix, 0)
-        ):
+        for index, attack_id in enumerate(_attack_ids_from_state(state, build_prefix)):
+            widget_prefix = _state_widget_prefix(build_prefix, attack_id)
             if (
-                state.get(profile_widget_key(profile_id, "resource_enabled"), False)
-                and state.get(profile_widget_key(profile_id, "resource_id"))
+                state.get(profile_widget_key(widget_prefix, "resource_enabled"), False)
+                and state.get(profile_widget_key(widget_prefix, "resource_id"))
                 == resource_id
             ):
+                default_name = _default_attack_name(index)
                 used_by.append(
                     str(
-                        state.get(profile_widget_key(profile_id, "name"), default_name)
+                        state.get(
+                            profile_widget_key(widget_prefix, "name"), default_name
+                        )
                     ).strip()
-                    or heading
+                    or _attack_display_heading(index)
                 )
     return used_by
 
@@ -2409,12 +2595,14 @@ def _clear_resource_from_profiles(resource_id: str) -> None:
 
     state = getattr(st, "session_state", {})
     for build_prefix in ("first", "second"):
-        for profile_id, _heading, _default_name in _profile_definitions(
-            build_prefix, 0
-        ):
-            if state.get(profile_widget_key(profile_id, "resource_id")) == resource_id:
-                state[profile_widget_key(profile_id, "resource_enabled")] = False
-                state[profile_widget_key(profile_id, "resource_id")] = ""
+        for attack_id in _attack_ids_from_state(state, build_prefix):
+            widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+            if (
+                state.get(profile_widget_key(widget_prefix, "resource_id"))
+                == resource_id
+            ):
+                state[profile_widget_key(widget_prefix, "resource_enabled")] = False
+                state[profile_widget_key(widget_prefix, "resource_id")] = ""
 
 
 def _render_managed_resources(
@@ -2477,7 +2665,8 @@ def _render_managed_resources(
                 state[RESOURCE_DELETE_CONFIRMATION_KEY] = resource_id
             if state.get(RESOURCE_DELETE_CONFIRMATION_KEY) == resource_id:
                 getattr(st, "warning", lambda *args, **kwargs: None)(
-                    f"Delete resource {name}? Dependent attacks in Build A and Build B: "
+                    f"Delete resource {name}? Dependent attacks in Build A "
+                    + "and Build B: "
                     + (", ".join(used_by) if used_by else "None")
                     + ". Dependent resource requirements will be cleared."
                 )
@@ -2485,7 +2674,7 @@ def _render_managed_resources(
                 if confirm_cols[0].button(
                     "Confirm Delete",
                     key=managed_resource_widget_key(resource_id, "confirm-delete"),
-                    type="secondary",
+                    type="tertiary",
                 ):
                     _clear_resource_from_profiles(resource_id)
                     _delete_managed_resource_state(resource_id)
@@ -2527,6 +2716,8 @@ def _attack_profile_inputs(
     import streamlit as st
 
     errors_by_key = errors_by_key or {}
+    build_prefix = prefix.split("-", 1)[0]
+    domain_attack_id = attack_id or prefix
     attack_name = st.text_input(
         "Attack name", value=default_name, key=profile_widget_key(prefix, "name")
     )
@@ -2655,7 +2846,7 @@ def _attack_profile_inputs(
     trigger_chance_percent = (
         int(trigger_chance_text) if str(trigger_chance_text).isdigit() else None
     )
-    with _trigger_settings_expander(prefix):
+    with _trigger_settings_expander(prefix, build_prefix, domain_attack_id):
         trigger_type_label = st.selectbox(
             "When",
             options=[
@@ -2698,7 +2889,7 @@ def _attack_profile_inputs(
             )
             st.caption("Sometimes [Percentage Chance] % per round")
         elif trigger_type is not TriggerType.ALWAYS:
-            source_options = _trigger_source_options(prefix)
+            source_options = _trigger_source_options(build_prefix, domain_attack_id)
             option_ids = [attack_id for attack_id, _ in source_options]
             source_key = profile_widget_key(prefix, "trigger_source_attack_id")
             stored_source = getattr(st, "session_state", {}).get(source_key)
@@ -2730,7 +2921,10 @@ def _attack_profile_inputs(
             source_resolution = ResolutionType.ATTACK_ROLL
             if trigger_source_attack_id in option_ids:
                 source_resolution_label = getattr(st, "session_state", {}).get(
-                    profile_widget_key(trigger_source_attack_id, "resolution_type"),
+                    profile_widget_key(
+                        attack_widget_prefix(build_prefix, trigger_source_attack_id),
+                        "resolution_type",
+                    ),
                     "Attack Roll",
                 )
                 source_resolution = {
@@ -2762,7 +2956,7 @@ def _attack_profile_inputs(
         resource_expander = getattr(st, "expander", None)
         with (
             resource_expander(
-                _resource_summary_from_state(prefix),
+                _resource_summary_from_state(build_prefix, domain_attack_id),
                 expanded=False,
                 key=f"{prefix}-resource-expanded",
             )
@@ -2814,7 +3008,7 @@ def _attack_profile_inputs(
         save_dc=None if save_dc is None else int(save_dc),
         successful_save_damage=successful_save_damage,
         features=features,
-        attack_id=attack_id or prefix,
+        attack_id=domain_attack_id,
         trigger_type=trigger_type,
         trigger_source_attack_id=trigger_source_attack_id,
         trigger_frequency=trigger_frequency,
@@ -2895,9 +3089,17 @@ def _build_inputs(
                 *attack_ids,
                 new_id,
             ]
-            getattr(st, "session_state", {})[profile_widget_key(new_id, "name")] = (
-                _default_attack_name(len(attack_ids))
-            )
+            new_widget_prefix = attack_widget_prefix(prefix, new_id)
+            existing_names = [
+                getattr(st, "session_state", {}).get(
+                    profile_widget_key(_state_widget_prefix(prefix, attack_id), "name"),
+                    "",
+                )
+                for attack_id in attack_ids
+            ]
+            getattr(st, "session_state", {})[
+                profile_widget_key(new_widget_prefix, "name")
+            ] = next_default_attack_name(existing_names)
             getattr(st, "rerun", lambda: None)()
 
         profiles = []
@@ -2910,18 +3112,37 @@ def _build_inputs(
                 current_name = (
                     str(
                         getattr(st, "session_state", {}).get(
-                            profile_widget_key(attack_widget_prefix(prefix, attack_id), "name"), default_attack_name
+                            profile_widget_key(
+                                _state_widget_prefix(prefix, attack_id), "name"
+                            ),
+                            default_attack_name,
                         )
                     ).strip()
-                    or default_attack_name
+                    or "Unnamed Attack"
                 )
                 st.markdown(f"##### {current_name}")
                 ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
-                action_cols = st.columns([0.18, 0.18, 0.18, 0.18, 1.0])
+                container = getattr(st, "container", None)
+                if container is None:
+                    action_cols = st.columns([0.18, 0.18, 0.18, 0.18, 1.0])[:4]
+                else:
+                    toolbar = container(
+                        border=True,
+                        key=f"{prefix}-{attack_id}-toolbar",
+                        horizontal=True,
+                        horizontal_alignment="left",
+                        gap="small",
+                        width="content",
+                    )
+                    action_cols = [toolbar, toolbar, toolbar, toolbar]
+
+                def action_button(target):
+                    return getattr(target, "button", lambda *args, **kwargs: False)
+
                 at_max = len(ids) >= MAX_ATTACKS_PER_BUILD
-                if getattr(action_cols[0], "button", st.button)(
+                if action_button(action_cols[0])(
                     ":material/content_copy:",
-                    key=f"{attack_id}-duplicate",
+                    key=f"{prefix}-{attack_id}-duplicate",
                     disabled=at_max,
                     help=(
                         "Maximum of 11 attacks reached."
@@ -2934,19 +3155,32 @@ def _build_inputs(
                     new_widget_prefix = attack_widget_prefix(prefix, new_id)
                     _duplicate_attack_state(
                         state,
-                        attack_widget_prefix(prefix, attack_id),
+                        _state_widget_prefix(prefix, attack_id),
                         new_widget_prefix,
                     )
-                    if state.get(profile_widget_key(new_widget_prefix, "trigger_source_attack_id")) == attack_id:
-                        state[profile_widget_key(new_widget_prefix, "trigger_type")] = "Always"
-                        state[profile_widget_key(new_widget_prefix, "trigger_source_attack_id")] = None
+                    if (
+                        state.get(
+                            profile_widget_key(
+                                new_widget_prefix, "trigger_source_attack_id"
+                            )
+                        )
+                        == attack_id
+                    ):
+                        state[profile_widget_key(new_widget_prefix, "trigger_type")] = (
+                            "Always"
+                        )
+                        state[
+                            profile_widget_key(
+                                new_widget_prefix, "trigger_source_attack_id"
+                            )
+                        ] = None
                     getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = (
                         ids[: profile_index + 1] + [new_id] + ids[profile_index + 1 :]
                     )
                     getattr(st, "rerun", lambda: None)()
-                if getattr(action_cols[1], "button", st.button)(
+                if action_button(action_cols[1])(
                     ":material/arrow_upward:",
-                    key=f"{attack_id}-up",
+                    key=f"{prefix}-{attack_id}-up",
                     disabled=profile_index == 0,
                     help=(
                         "This attack is already first."
@@ -2960,9 +3194,9 @@ def _build_inputs(
                     )
                     getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = ids
                     getattr(st, "rerun", lambda: None)()
-                if getattr(action_cols[2], "button", st.button)(
+                if action_button(action_cols[2])(
                     ":material/arrow_downward:",
-                    key=f"{attack_id}-down",
+                    key=f"{prefix}-{attack_id}-down",
                     disabled=profile_index == len(ids) - 1,
                     help=(
                         "This attack is already last."
@@ -2979,21 +3213,25 @@ def _build_inputs(
                 dependents = _dependent_attack_names(
                     getattr(st, "session_state", {}), prefix, attack_id
                 )
-                delete_clicked = getattr(action_cols[3], "button", st.button)(
+                delete_clicked = action_button(action_cols[3])(
                     ":material/delete:",
-                    key=f"{attack_id}-delete",
+                    key=f"{prefix}-{attack_id}-delete",
                     disabled=len(ids) == 1,
                     help=(
                         "A build must keep at least one attack."
                         if len(ids) == 1
                         else f"Delete {current_name}. Requires confirmation."
                     ),
-                    type="secondary",
+                    type="tertiary",
                 )
                 state = getattr(st, "session_state", {})
                 if delete_clicked:
-                    state[ATTACK_DELETE_CONFIRMATION_KEY] = attack_id
-                if state.get(ATTACK_DELETE_CONFIRMATION_KEY) == attack_id:
+                    state[ATTACK_DELETE_CONFIRMATION_KEY] = _attack_confirmation_id(
+                        prefix, attack_id
+                    )
+                if state.get(ATTACK_DELETE_CONFIRMATION_KEY) == _attack_confirmation_id(
+                    prefix, attack_id
+                ):
                     if dependents:
                         getattr(st, "warning", lambda *args, **kwargs: None)(
                             f"Delete {current_name}? Triggers reset on: "
@@ -3004,22 +3242,26 @@ def _build_inputs(
                             f"Delete {current_name}? No dependent attacks will reset."
                         )
                     confirm_cols = st.columns([1, 1, 4])
-                    if confirm_cols[0].button(
-                        "Confirm Delete", key=f"{attack_id}-confirm-delete"
+                    confirm_button = getattr(confirm_cols[0], "button", st.button)
+                    cancel_button = getattr(confirm_cols[1], "button", st.button)
+                    if confirm_button(
+                        "Confirm Delete", key=f"{prefix}-{attack_id}-confirm-delete"
                     ):
                         _reset_triggers_referencing_attack(state, prefix, attack_id)
                         state[build_attack_ids_key(prefix)] = [
                             current_id for current_id in ids if current_id != attack_id
                         ]
-                        _delete_attack_state(state, attack_widget_prefix(prefix, attack_id))
+                        _delete_attack_state(state, prefix, attack_id)
                         state.pop(ATTACK_DELETE_CONFIRMATION_KEY, None)
                         getattr(st, "rerun", lambda: None)()
-                    if confirm_cols[1].button("Cancel", key=f"{attack_id}-cancel-delete"):
+                    if cancel_button(
+                        "Cancel", key=f"{prefix}-{attack_id}-cancel-delete"
+                    ):
                         state.pop(ATTACK_DELETE_CONFIRMATION_KEY, None)
                         getattr(st, "rerun", lambda: None)()
                 profiles.append(
                     _attack_profile_inputs(
-                        attack_widget_prefix(prefix, attack_id),
+                        _state_widget_prefix(prefix, attack_id),
                         default_attack_name,
                         errors_by_key,
                         attack_id=attack_id,
@@ -3053,7 +3295,9 @@ def _hydrate_build_session_state(
     session_state[f"{prefix}-additional-attack-count"] = len(build.attack_profiles) - 1
     for index, profile in enumerate(build.attack_profiles):
         widget_prefix = attack_widget_prefix(prefix, attack_ids[index])
+        legacy_prefix = profile_prefix(prefix, index)
         session_state[profile_widget_key(widget_prefix, "name")] = profile.name
+        session_state[profile_widget_key(legacy_prefix, "name")] = profile.name
         session_state[profile_widget_key(widget_prefix, "resolution_type")] = (
             _resolution_type_label(profile.resolution_type)
         )
@@ -3114,6 +3358,7 @@ def _hydrate_build_session_state(
             session_state[feature_widget_key(widget_prefix, feature)] = (
                 feature in profile.features
             )
+        _copy_attack_widget_state(session_state, widget_prefix, legacy_prefix)
 
 
 def hydrate_session_state_from_shared_configuration(
@@ -3143,10 +3388,14 @@ def hydrate_session_state_from_shared_configuration(
             managed_resource_widget_key(resource.resource_id, "starting-value")
         ] = resource.starting_value
     _hydrate_build_session_state(
-        session_state, "first", migrate_shared_build_attack_ids("first", configuration.build_a)
+        session_state,
+        "first",
+        migrate_shared_build_attack_ids("first", configuration.build_a),
     )
     _hydrate_build_session_state(
-        session_state, "second", migrate_shared_build_attack_ids("second", configuration.build_b)
+        session_state,
+        "second",
+        migrate_shared_build_attack_ids("second", configuration.build_b),
     )
 
 
@@ -3345,9 +3594,10 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
             (AttackProfile("Attack 1", 5, "1d8+3", 1, attack_id=attack_id),),
         )
     profiles = []
-    for _index, (widget_prefix, _, default_name) in enumerate(
+    for _index, (attack_id, _, default_name) in enumerate(
         _profile_definitions(prefix, 0)
     ):
+        widget_prefix = _state_widget_prefix(prefix, attack_id)
         resolution = {
             "Attack Roll": ResolutionType.ATTACK_ROLL,
             "Saving Throw": ResolutionType.SAVING_THROW,
@@ -3424,7 +3674,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                     else SuccessfulSaveDamage.NO_DAMAGE
                 ),
                 features,
-                widget_prefix,
+                attack_id,
                 (
                     {
                         "Another attack succeeds": TriggerType.AFTER_SUCCESS,

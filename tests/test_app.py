@@ -2767,3 +2767,149 @@ def test_result_rows_all_numeric_differences_are_nonnegative() -> None:
     label = "Difference (Build A − Build B)"
 
     assert all("-" not in row[label] for row in rows if row[label] != "—")
+
+
+def test_stable_id_build_from_state_reconstructs_widget_prefixed_values(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
+    from dnd_combat_simulator.simulation import TriggerFrequency, TriggerType
+
+    a1 = "attack-shared"
+    a2 = "attack-second"
+    wp1 = app.attack_widget_prefix("first", a1)
+    wp2 = app.attack_widget_prefix("first", a2)
+    state = {
+        "first-build-name": "Stable Build",
+        app.build_attack_ids_key("first"): [a2, a1],
+        app.profile_widget_key(wp1, "name"): "Source",
+        app.profile_widget_key(wp1, "resolution_type"): "Saving Throw",
+        app.profile_widget_key(wp1, "save_dc"): 15,
+        app.profile_widget_key(wp1, "successful_save_damage"): "Half damage",
+        app.profile_widget_key(wp1, "damage_formula"): "2d6",
+        app.profile_widget_key(wp1, "attacks_per_round"): 2,
+        app.profile_widget_key(wp1, "affected_targets"): 3,
+        app.profile_widget_key(wp1, "active_rounds"): "1-2",
+        app.feature_widget_key(wp1, AttackFeature.POTENT_CANTRIP): True,
+        app.profile_widget_key(wp2, "name"): "Dependent",
+        app.profile_widget_key(wp2, "resolution_type"): "Attack Roll",
+        app.profile_widget_key(wp2, "attack_bonus"): 7,
+        app.profile_widget_key(wp2, "damage_formula"): "1d8+4",
+        app.profile_widget_key(wp2, "attacks_per_round"): 1,
+        app.profile_widget_key(wp2, "affected_targets"): 1,
+        app.profile_widget_key(wp2, "attack_roll_mode"): "Advantage",
+        app.profile_widget_key(wp2, "trigger_type"): "Another attack succeeds",
+        app.profile_widget_key(wp2, "trigger_source_attack_id"): a1,
+        app.profile_widget_key(wp2, "trigger_frequency"): "Once per combat",
+        app.profile_widget_key(wp2, "resource_enabled"): True,
+        app.profile_widget_key(wp2, "resource_id"): "resource-a",
+        app.profile_widget_key(wp2, "resource_amount"): 2,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    build = app._build_from_state("first", "Build A")
+
+    assert [profile.attack_id for profile in build.attack_profiles] == [a2, a1]
+    dependent, source = build.attack_profiles
+    assert dependent.name == "Dependent"
+    assert dependent.attack_bonus == 7
+    assert dependent.attack_roll_mode.value == "advantage"
+    assert dependent.trigger_type is TriggerType.AFTER_SUCCESS
+    assert dependent.trigger_source_attack_id == a1
+    assert dependent.trigger_frequency is TriggerFrequency.ONCE_PER_COMBAT
+    assert dependent.resource_costs[0].resource_id == "resource-a"
+    assert source.name == "Source"
+    assert source.resolution_type is ResolutionType.SAVING_THROW
+    assert source.save_dc == 15
+    assert source.active_rounds == "1-2"
+    assert AttackFeature.POTENT_CANTRIP in source.features
+
+
+def test_delete_attack_state_is_build_scoped_for_matching_domain_ids(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    attack_id = "attack-same"
+    first_prefix = app.attack_widget_prefix("first", attack_id)
+    second_prefix = app.attack_widget_prefix("second", attack_id)
+    state = {
+        app.profile_widget_key(first_prefix, "name"): "First",
+        app.profile_widget_key(second_prefix, "name"): "Second",
+        f"{first_prefix}-resource-expanded": True,
+        f"{second_prefix}-resource-expanded": True,
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    app._delete_attack_state(state, "first", attack_id)
+
+    assert app.profile_widget_key(first_prefix, "name") not in state
+    assert f"{first_prefix}-resource-expanded" not in state
+    assert state[app.profile_widget_key(second_prefix, "name")] == "Second"
+    assert state[f"{second_prefix}-resource-expanded"] is True
+
+
+def test_trigger_options_use_domain_ids_and_build_scoped_names(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    source = "attack-shared"
+    current = "attack-current"
+    other_build_same = app.attack_widget_prefix("second", source)
+    state = {
+        app.build_attack_ids_key("first"): [current, source],
+        app.build_attack_ids_key("second"): [source],
+        app.profile_widget_key(
+            app.attack_widget_prefix("first", source), "name"
+        ): "Renamed Source",
+        app.profile_widget_key(other_build_same, "name"): "Wrong Build",
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    assert app._trigger_source_options("first", current) == [(source, "Renamed Source")]
+
+
+def test_resource_helpers_use_widget_prefixes_for_each_build(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    attack_id = "attack-same"
+    first_prefix = app.attack_widget_prefix("first", attack_id)
+    second_prefix = app.attack_widget_prefix("second", attack_id)
+    state = {
+        app.build_attack_ids_key("first"): [attack_id],
+        app.build_attack_ids_key("second"): [attack_id],
+        app.profile_widget_key(first_prefix, "name"): "First Attack",
+        app.profile_widget_key(first_prefix, "resource_enabled"): True,
+        app.profile_widget_key(first_prefix, "resource_id"): "resource-x",
+        app.profile_widget_key(second_prefix, "name"): "Second Attack",
+        app.profile_widget_key(second_prefix, "resource_enabled"): True,
+        app.profile_widget_key(second_prefix, "resource_id"): "resource-x",
+    }
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    assert app._resource_usage_profile_keys("resource-x") == [
+        "First Attack",
+        "Second Attack",
+    ]
+    app._clear_resource_from_profiles("resource-x")
+    assert state[app.profile_widget_key(first_prefix, "resource_id")] == ""
+    assert state[app.profile_widget_key(second_prefix, "resource_id")] == ""
+
+
+def test_next_default_attack_name_ignores_order_and_existing_case() -> None:
+    from dnd_combat_simulator.app import next_default_attack_name
+
+    assert next_default_attack_name(["Attack 2", "attack 1"]) == "Attack 3"
+    assert next_default_attack_name(["Custom", "Attack 1"]) == "Attack 2"
