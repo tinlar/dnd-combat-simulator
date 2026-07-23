@@ -3479,25 +3479,71 @@ def test_stage42_build_math_keys_and_state_round_trip(monkeypatch) -> None:
     assert rerestored.build_a.math_defaults != rerestored.build_b.math_defaults
 
 
-def test_stage4_build_math_controls_are_not_rendered() -> None:
+def test_stage43_build_math_controls_render_and_update() -> None:
+    import ui_test_api as app
     from streamlit.testing.v1 import AppTest
 
     at = AppTest.from_file("src/dnd_combat_simulator/app.py").run(timeout=10)
     assert not at.exception
-    text = "\n".join(str(node.value) for node in at.text)
+    page_text = "\n".join(
+        str(getattr(node, "value", ""))
+        for collection in (at.markdown, at.caption, at.text)
+        for node in collection
+    )
     assert any(title.value == APP_TITLE for title in at.title)
     assert any(button.label == "Run Simulation" for button in at.button)
-    forbidden = (
-        "Ability modifier",
-        "Proficiency bonus",
-        "Other attack bonus",
-        "Other damage bonus",
-        "Other Save DC bonus",
-        "Calculated attack bonus",
-        "Calculated damage modifier",
-        "Calculated Save DC",
-        "Use Build Attack Bonus",
-        "Use Build Save DC",
-        "Use Build Damage Modifier",
+    assert "Build Setup" in page_text
+    assert "Build defaults are saved with this build" in page_text
+    first_attack_id = at.session_state[app.build_attack_ids_key("first")][0]
+    first_attack_prefix = app.attack_widget_prefix("first", first_attack_id)
+    assert app.profile_widget_key(first_attack_prefix, "attack_bonus") in {
+        node.key for node in at.number_input
+    }
+
+    controls = {node.key: node for node in at.number_input}
+    assert (
+        controls[app.build_math_state_key("first", "ability_modifier")].label
+        == "Ability modifier"
     )
-    assert all(label not in text for label in forbidden)
+    assert (
+        controls[app.build_math_state_key("first", "proficiency_bonus")].label
+        == "Proficiency bonus"
+    )
+    assert (
+        controls[app.build_math_state_key("first", "attack_bonus_adjustment")].label
+        == "Other attack bonus"
+    )
+    assert (
+        controls[app.build_math_state_key("first", "damage_bonus_adjustment")].label
+        == "Other damage bonus"
+    )
+    assert (
+        controls[app.build_math_state_key("first", "save_dc_adjustment")].label
+        == "Other Save DC bonus"
+    )
+    assert [(node.label, node.value) for node in at.metric][:3] == [
+        ("Attack bonus", "+5"),
+        ("Damage modifier", "+3"),
+        ("Save DC", "13"),
+    ]
+
+    controls[app.build_math_state_key("first", "ability_modifier")].set_value(5)
+    controls[app.build_math_state_key("first", "proficiency_bonus")].set_value(4)
+    controls[app.build_math_state_key("first", "attack_bonus_adjustment")].set_value(1)
+    controls[app.build_math_state_key("first", "damage_bonus_adjustment")].set_value(2)
+    controls[app.build_math_state_key("first", "save_dc_adjustment")].set_value(1)
+    at.run(timeout=10)
+    assert not at.exception
+    assert [(node.label, node.value) for node in at.metric][:3] == [
+        ("Attack bonus", "+10"),
+        ("Damage modifier", "+7"),
+        ("Save DC", "18"),
+    ]
+    assert at.session_state[app.build_math_state_key("first", "ability_modifier")] == 5
+    assert (
+        controls[app.profile_widget_key(first_attack_prefix, "attack_bonus")].value == 5
+    )
+
+    next(button for button in at.button if button.label == "Run Simulation").click()
+    at.run(timeout=10)
+    assert not at.exception

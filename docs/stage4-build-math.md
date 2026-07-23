@@ -104,3 +104,67 @@ inheritance exists yet.
 Accounts, authentication, classes, subclasses, character levels, character
 sheets, inventories, spell lists, persistent build libraries, browser storage,
 and database storage remain out of scope.
+
+## Stage 4.3: Visible Build Setup controls
+
+Stage 4.3 exposes the existing `BuildMathDefaults` data in a compact, always-visible
+**Build Setup** section for each build. The section is rendered after **Build name**
+and before **Add Attack** and the attack-profile cards, so the build-level values
+are visible before users edit individual attacks.
+
+The editable controls use these exact user-facing labels:
+
+- **Ability modifier**
+- **Proficiency bonus**
+- **Other attack bonus**
+- **Other damage bonus**
+- **Other Save DC bonus**
+
+The calculated, read-only display values use these exact labels:
+
+- **Attack bonus**
+- **Damage modifier**
+- **Save DC**
+
+Fresh builds use `BuildMathDefaults()` values: ability modifier `+3`, proficiency
+bonus `+2`, and `+0` for each other bonus. The calculated displays therefore show
+attack bonus `+5`, damage modifier `+3`, and Save DC `13`. Signed values are shown
+for attack bonus and damage modifier, while Save DC is shown as a normal integer.
+
+The UI presents the same formulas supplied by the pure model:
+
+```text
+Attack bonus = ability modifier + proficiency bonus + other attack bonus
+Damage modifier = ability modifier + other damage bonus
+Save DC = 8 + ability modifier + proficiency bonus + other Save DC bonus
+```
+
+Build A and Build B are fully isolated. Each control binds to the Stage 4.2 stable
+session-state key returned by `build_math_state_key(build_prefix, field)`, such as
+`first-build-math-ability-modifier` or
+`second-build-math-save-dc-adjustment`. Comparison mode can be toggled off without
+erasing hidden Build B values, and toggling comparison back on restores those
+values from session state.
+
+Shared-link hydration remains session-state safe. If a stable key already exists,
+the widget binds to that key without also passing a competing default value. If a
+key is absent, the widget receives the corresponding `BuildMathDefaults()` field
+default. This preserves hydrated shared-link values and avoids Streamlit widget
+initialization warnings. Sharing again serializes the edited `BuildConfig.math_defaults`
+through the Stage 4.2 JSON shape without changing the shared configuration version
+or schema.
+
+Explicit attack values remain authoritative in Stage 4.3. Attack-profile controls
+for Attack Bonus, Save DC, Damage Formula, attacks per round, resolution type,
+attack-roll mode, features, triggers, and resource costs still provide the values
+used by the simulator. Editing Build Setup does not rewrite attack-profile session
+state, does not change simulation results, does not change random-number consumption,
+and does not alter trigger or managed-resource behavior.
+
+No inheritance is active in this stage. Stage 4.4 will address optional per-attack
+inheritance separately. This pull request does not add accounts, authentication,
+classes, subclasses, character levels, preset libraries, browser storage, database
+storage, or any new combat mechanics. It also does not change
+`SIMULATION_CACHE_VERSION`; Stage 4.2 already handled the cache schema update, and
+Stage 4.3 simply ensures the visible controls attach the edited defaults to
+`BuildConfig` so the existing canonical cache identity remains accurate.

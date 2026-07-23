@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from typing import Any
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -67,6 +69,7 @@ from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
     attack_widget_prefix,
     build_attack_ids_key,
+    build_math_state_key,
     feature_widget_key,
     managed_resource_widget_key,
     profile_prefix,
@@ -740,12 +743,149 @@ def _profile_definitions(
     )
 
 
+def _format_signed_modifier(value: int) -> str:
+    """Format a build-level modifier with an explicit sign."""
+    return f"{value:+d}"
+
+
+def _build_math_number_input(
+    container: Any,
+    *,
+    label: str,
+    key: str,
+    default: int,
+    help_text: str,
+) -> int:
+    """Render one session-state-safe integer build-math input."""
+    import streamlit as st
+
+    kwargs: dict[str, Any] = {
+        "label": label,
+        "key": key,
+        "step": 1,
+        "format": "%d",
+        "help": help_text,
+    }
+    if key not in getattr(st, "session_state", {}):
+        kwargs["value"] = default
+    value = container.number_input(**kwargs)
+    if type(value) is not int:
+        msg = f"{label} must be an integer."
+        raise ValueError(msg)
+    return value
+
+
+def _build_math_caption(body: str) -> None:
+    """Render a compact explanatory caption with fake-Streamlit compatibility."""
+    import streamlit as st
+
+    caption = getattr(st, "caption", st.markdown)
+    caption(body)
+
+
+def _build_math_metric(container: Any, label: str, value: str) -> None:
+    """Render one calculated build-math value."""
+    metric = getattr(container, "metric", None)
+    if metric is not None:
+        metric(label, value)
+        return
+    import streamlit as st
+
+    st.markdown(f"**{label}:** {value}")
+
+
+def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
+    """Render visible build-level math defaults for one build."""
+    import streamlit as st
+
+    default_values = BuildMathDefaults()
+    with _render_section_container():
+        st.markdown("##### Build Setup")
+        _build_math_caption(
+            "Build defaults are saved with this build. Attacks below still use their "
+            "own Attack Bonus, Save DC, and Damage Formula values."
+        )
+        first_row = st.columns(2)
+        ability_modifier = _build_math_number_input(
+            first_row[0],
+            label="Ability modifier",
+            key=build_math_state_key(build_prefix, "ability_modifier"),
+            default=default_values.ability_modifier,
+            help_text="Base ability modifier used by the calculated build defaults.",
+        )
+        proficiency_bonus = _build_math_number_input(
+            first_row[1],
+            label="Proficiency bonus",
+            key=build_math_state_key(build_prefix, "proficiency_bonus"),
+            default=default_values.proficiency_bonus,
+            help_text=(
+                "Proficiency bonus used by the calculated Attack Bonus and Save DC."
+            ),
+        )
+
+        second_row = st.columns(3)
+        attack_bonus_adjustment = _build_math_number_input(
+            second_row[0],
+            label="Other attack bonus",
+            key=build_math_state_key(build_prefix, "attack_bonus_adjustment"),
+            default=default_values.attack_bonus_adjustment,
+            help_text=(
+                "Additional bonus included only in the calculated build Attack Bonus."
+            ),
+        )
+        damage_bonus_adjustment = _build_math_number_input(
+            second_row[1],
+            label="Other damage bonus",
+            key=build_math_state_key(build_prefix, "damage_bonus_adjustment"),
+            default=default_values.damage_bonus_adjustment,
+            help_text=(
+                "Additional bonus included only in the calculated build "
+                "Damage Modifier."
+            ),
+        )
+        save_dc_adjustment = _build_math_number_input(
+            second_row[2],
+            label="Other Save DC bonus",
+            key=build_math_state_key(build_prefix, "save_dc_adjustment"),
+            default=default_values.save_dc_adjustment,
+            help_text="Additional bonus included only in the calculated build Save DC.",
+        )
+
+        defaults = BuildMathDefaults(
+            ability_modifier=ability_modifier,
+            proficiency_bonus=proficiency_bonus,
+            attack_bonus_adjustment=attack_bonus_adjustment,
+            damage_bonus_adjustment=damage_bonus_adjustment,
+            save_dc_adjustment=save_dc_adjustment,
+        )
+        metric_row = st.columns(3)
+        _build_math_metric(
+            metric_row[0],
+            "Attack bonus",
+            _format_signed_modifier(defaults.attack_bonus),
+        )
+        _build_math_metric(
+            metric_row[1],
+            "Damage modifier",
+            _format_signed_modifier(defaults.damage_modifier),
+        )
+        _build_math_metric(metric_row[2], "Save DC", str(defaults.save_dc))
+        _build_math_caption(
+            "Attack bonus = ability modifier + proficiency bonus + other attack "
+            "bonus. Damage modifier = ability modifier + other damage bonus. "
+            "Save DC = 8 + ability modifier + proficiency bonus + other Save DC bonus."
+        )
+        return defaults
+
+
 def _build_config_from_profiles(
     name: str,
     profiles: tuple[AttackProfile, ...],
+    math_defaults: BuildMathDefaults | None = None,
 ) -> BuildConfig:
     """Create a build config with every displayed profile attached."""
     primary = profiles[0]
+    resolved_defaults = BuildMathDefaults() if math_defaults is None else math_defaults
     return BuildConfig(
         name=name,
         attack_bonus=primary.attack_bonus or 0,
@@ -753,6 +893,7 @@ def _build_config_from_profiles(
         attacks_per_round=primary.attacks_per_round,
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
+        math_defaults=resolved_defaults,
     )
 
 
@@ -769,6 +910,7 @@ def _build_inputs(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )
         _field_error(errors_by_key, f"{prefix}-build-name")
+        math_defaults = _build_math_inputs(prefix)
         attack_ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
         if st.button(
             "Add Attack",
@@ -968,7 +1110,11 @@ def _build_inputs(
                     )
                 )
 
-    return _build_config_from_profiles(name, tuple(profiles))
+    return _build_config_from_profiles(
+        name=name,
+        profiles=tuple(profiles),
+        math_defaults=math_defaults,
+    )
 
 
 def _render_simulation_settings() -> tuple[int, int]:
