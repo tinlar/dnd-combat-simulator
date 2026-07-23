@@ -60,7 +60,6 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "resource_amount": "resource-amount",
         "use_build_attack_bonus": "use-build-attack-bonus",
         "use_build_save_dc": "use-build-save-dc",
-        "use_build_damage_modifier": "use-build-damage-modifier",
     }
     return f"{prefix}-{suffixes[field]}"
 
@@ -83,7 +82,6 @@ def build_math_state_key(build_prefix: str, field: str) -> str:
         "ability_modifier": "ability-modifier",
         "proficiency_bonus": "proficiency-bonus",
         "attack_bonus_adjustment": "attack-bonus-adjustment",
-        "damage_bonus_adjustment": "damage-bonus-adjustment",
         "save_dc_adjustment": "save-dc-adjustment",
     }
     return f"{build_prefix}-build-math-{suffixes[field]}"

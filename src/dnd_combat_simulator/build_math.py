@@ -15,7 +15,6 @@ class BuildMathDefaults:
     ability_modifier: int = 3
     proficiency_bonus: int = 2
     attack_bonus_adjustment: int = 0
-    damage_bonus_adjustment: int = 0
     save_dc_adjustment: int = 0
 
     def __post_init__(self: Self) -> None:
@@ -33,10 +32,6 @@ class BuildMathDefaults:
             + self.proficiency_bonus
             + self.attack_bonus_adjustment
         )
-
-    @property
-    def damage_modifier(self: Self) -> int:
-        return self.ability_modifier + self.damage_bonus_adjustment
 
     @property
     def save_dc(self: Self) -> int:

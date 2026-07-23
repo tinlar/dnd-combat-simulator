@@ -21,7 +21,6 @@ from dnd_combat_simulator.simulation import (
     ResourceCost,
     TriggerFrequency,
     TriggerType,
-    resolve_attack_profile_values,
 )
 from dnd_combat_simulator.ui.components import (
     CONFIGURATION_TOOLBAR_CSS,
@@ -170,9 +169,6 @@ def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> Attack
         ),
         use_build_save_dc=state.get(
             profile_widget_key(prefix, "use_build_save_dc"), False
-        ),
-        use_build_damage_modifier=state.get(
-            profile_widget_key(prefix, "use_build_damage_modifier"), False
         ),
     )
 
@@ -724,62 +720,21 @@ def _attack_profile_inputs(
         save_dc = None
 
     damage_key = profile_widget_key(prefix, "damage_formula")
-    damage_row = _compact_inline_row(f"{prefix}-damage-row", 5)
-    _row_text(damage_row[0], "**Damage**", width=120)
     if damage_key in session_state:
-        damage_dice = damage_row[1].text_input(
-            "Formula",
+        damage_dice = st.text_input(
+            "Damage Formula",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
-            width=200,
         )
     else:
-        damage_dice = damage_row[1].text_input(
-            "Formula",
+        damage_dice = st.text_input(
+            "Damage Formula",
             value="1d8",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
-            width=200,
         )
-    use_build_damage_modifier = _safe_checkbox(
-        damage_row[2],
-        "Add Build Modifier",
-        key=profile_widget_key(prefix, "use_build_damage_modifier"),
-        default=True,
-        width="content",
-    )
-    damage_modifier_key = (
-        f"{profile_widget_key(prefix, 'use_build_damage_modifier')}-value"
-    )
-    damage_modifier_value = (
-        resolved_math_defaults.damage_modifier if use_build_damage_modifier else 0
-    )
-    damage_row[3].number_input(
-        "Damage modifier value",
-        value=damage_modifier_value,
-        step=1,
-        key=damage_modifier_key,
-        disabled=use_build_damage_modifier,
-        label_visibility="collapsed",
-        width=90,
-    )
-    preview_profile = AttackProfile(
-        name=attack_name or default_name,
-        attack_bonus=None if attack_bonus is None else int(attack_bonus),
-        damage_dice=damage_dice,
-        attacks_per_round=1,
-        resolution_type=resolution_type,
-        save_dc=None if save_dc is None else int(save_dc),
-        use_build_attack_bonus=use_build_attack_bonus,
-        use_build_save_dc=use_build_save_dc,
-        use_build_damage_modifier=use_build_damage_modifier,
-    )
-    resolved_values = resolve_attack_profile_values(
-        preview_profile, resolved_math_defaults
-    )
-    _row_text(damage_row[4], f"Effective: {resolved_values.damage_formula}")
     if not _field_error(errors_by_key, profile_widget_key(prefix, "damage_formula")):
         current_damage_errors = _validate_profile_fields(
             AttackProfile(
@@ -787,7 +742,6 @@ def _attack_profile_inputs(
                 attack_bonus=0,
                 damage_dice=damage_dice,
                 attacks_per_round=1,
-                use_build_damage_modifier=use_build_damage_modifier,
             ),
             prefix=prefix,
         )
@@ -1040,7 +994,6 @@ def _attack_profile_inputs(
         resource_costs=resource_costs,
         use_build_attack_bonus=use_build_attack_bonus,
         use_build_save_dc=use_build_save_dc,
-        use_build_damage_modifier=use_build_damage_modifier,
     )
 
 
@@ -1151,7 +1104,7 @@ def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
             ),
         )
 
-        second_row = st.columns(3)
+        second_row = st.columns(2)
         attack_bonus_adjustment = _build_math_number_input(
             second_row[0],
             label="Other attack bonus",
@@ -1161,18 +1114,8 @@ def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
                 "Additional bonus included only in the calculated build Attack Bonus."
             ),
         )
-        damage_bonus_adjustment = _build_math_number_input(
-            second_row[1],
-            label="Other damage bonus",
-            key=build_math_state_key(build_prefix, "damage_bonus_adjustment"),
-            default=default_values.damage_bonus_adjustment,
-            help_text=(
-                "Additional bonus included only in the calculated build "
-                "Damage Modifier."
-            ),
-        )
         save_dc_adjustment = _build_math_number_input(
-            second_row[2],
+            second_row[1],
             label="Other Save DC bonus",
             key=build_math_state_key(build_prefix, "save_dc_adjustment"),
             default=default_values.save_dc_adjustment,
@@ -1183,25 +1126,19 @@ def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
             ability_modifier=ability_modifier,
             proficiency_bonus=proficiency_bonus,
             attack_bonus_adjustment=attack_bonus_adjustment,
-            damage_bonus_adjustment=damage_bonus_adjustment,
             save_dc_adjustment=save_dc_adjustment,
         )
-        metric_row = st.columns(3)
+        metric_row = st.columns(2)
         _build_math_metric(
             metric_row[0],
             "Attack bonus",
             _format_signed_modifier(defaults.attack_bonus),
         )
-        _build_math_metric(
-            metric_row[1],
-            "Damage modifier",
-            _format_signed_modifier(defaults.damage_modifier),
-        )
-        _build_math_metric(metric_row[2], "Save DC", str(defaults.save_dc))
+        _build_math_metric(metric_row[1], "Save DC", str(defaults.save_dc))
         _build_math_caption(
             "Attack bonus = ability modifier + proficiency bonus + other attack "
-            "bonus. Damage modifier = ability modifier + other damage bonus. "
-            "Save DC = 8 + ability modifier + proficiency bonus + other Save DC bonus."
+            "bonus. Save DC = 8 + ability modifier + proficiency bonus + "
+            "other Save DC bonus."
         )
         return defaults
 

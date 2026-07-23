@@ -16,7 +16,6 @@ _FIELD_NAMES = (
     "ability_modifier",
     "proficiency_bonus",
     "attack_bonus_adjustment",
-    "damage_bonus_adjustment",
     "save_dc_adjustment",
 )
 
@@ -29,11 +28,9 @@ def test_default_values_calculate_current_common_starting_values() -> None:
     assert defaults.ability_modifier == 3
     assert defaults.proficiency_bonus == 2
     assert defaults.attack_bonus_adjustment == 0
-    assert defaults.damage_bonus_adjustment == 0
     assert defaults.save_dc_adjustment == 0
 
     assert defaults.attack_bonus == 5
-    assert defaults.damage_modifier == 3
     assert defaults.save_dc == 13
 
 
@@ -42,12 +39,10 @@ def test_positive_adjustments_are_included_in_derived_values() -> None:
         ability_modifier=5,
         proficiency_bonus=4,
         attack_bonus_adjustment=1,
-        damage_bonus_adjustment=2,
         save_dc_adjustment=1,
     )
 
     assert defaults.attack_bonus == 10
-    assert defaults.damage_modifier == 7
     assert defaults.save_dc == 18
 
 
@@ -56,12 +51,10 @@ def test_negative_values_are_valid_and_calculated() -> None:
         ability_modifier=-1,
         proficiency_bonus=2,
         attack_bonus_adjustment=-3,
-        damage_bonus_adjustment=-2,
         save_dc_adjustment=-4,
     )
 
     assert defaults.attack_bonus == -2
-    assert defaults.damage_modifier == -3
     assert defaults.save_dc == 5
 
 
@@ -70,12 +63,10 @@ def test_zero_values_are_valid_and_calculated() -> None:
         ability_modifier=0,
         proficiency_bonus=0,
         attack_bonus_adjustment=0,
-        damage_bonus_adjustment=0,
         save_dc_adjustment=0,
     )
 
     assert defaults.attack_bonus == 0
-    assert defaults.damage_modifier == 0
     assert defaults.save_dc == 8
 
 
@@ -267,12 +258,10 @@ def test_build_math_inputs_render_default_controls(
         ("Ability modifier", 3),
         ("Proficiency bonus", 2),
         ("Other attack bonus", 0),
-        ("Other damage bonus", 0),
         ("Other Save DC bonus", 0),
     ]
     assert fake.metrics == [
         ("Attack bonus", "+5"),
-        ("Damage modifier", "+3"),
         ("Save DC", "13"),
     ]
     assert all(entry["step"] == 1 for entry in fake.number_inputs)
@@ -288,7 +277,6 @@ def test_build_math_inputs_use_existing_session_values_without_competing_default
         build_math_state_key("first", "ability_modifier"): -1,
         build_math_state_key("first", "proficiency_bonus"): 0,
         build_math_state_key("first", "attack_bonus_adjustment"): 999,
-        build_math_state_key("first", "damage_bonus_adjustment"): -5,
         build_math_state_key("first", "save_dc_adjustment"): 10,
     }
 
@@ -298,13 +286,11 @@ def test_build_math_inputs_use_existing_session_values_without_competing_default
         ability_modifier=-1,
         proficiency_bonus=0,
         attack_bonus_adjustment=999,
-        damage_bonus_adjustment=-5,
         save_dc_adjustment=10,
     )
     assert all("value" not in entry for entry in fake.number_inputs)
     assert fake.metrics == [
         ("Attack bonus", "+998"),
-        ("Damage modifier", "-6"),
         ("Save DC", "17"),
     ]
 

@@ -70,7 +70,6 @@ class SharedAttackProfileConfiguration:
     resource_costs: tuple[ResourceCost, ...] = ()
     use_build_attack_bonus: bool = False
     use_build_save_dc: bool = False
-    use_build_damage_modifier: bool = False
 
     @classmethod
     def from_attack_profile(
@@ -96,7 +95,6 @@ class SharedAttackProfileConfiguration:
             resource_costs=profile.resource_costs,
             use_build_attack_bonus=profile.use_build_attack_bonus,
             use_build_save_dc=profile.use_build_save_dc,
-            use_build_damage_modifier=profile.use_build_damage_modifier,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -120,7 +118,6 @@ class SharedAttackProfileConfiguration:
             resource_costs=self.resource_costs,
             use_build_attack_bonus=self.use_build_attack_bonus,
             use_build_save_dc=self.use_build_save_dc,
-            use_build_damage_modifier=self.use_build_damage_modifier,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -149,7 +146,6 @@ class SharedAttackProfileConfiguration:
             ],
             "use_build_attack_bonus": self.use_build_attack_bonus,
             "use_build_save_dc": self.use_build_save_dc,
-            "use_build_damage_modifier": self.use_build_damage_modifier,
         }
 
 
@@ -464,7 +460,6 @@ def _build_math_defaults_to_json_dict(defaults: BuildMathDefaults) -> dict[str, 
         "ability_modifier": defaults.ability_modifier,
         "proficiency_bonus": defaults.proficiency_bonus,
         "attack_bonus_adjustment": defaults.attack_bonus_adjustment,
-        "damage_bonus_adjustment": defaults.damage_bonus_adjustment,
         "save_dc_adjustment": defaults.save_dc_adjustment,
     }
 
@@ -476,7 +471,6 @@ def _build_math_defaults_from_json(raw: object, ctx: str) -> BuildMathDefaults:
         "ability_modifier",
         "proficiency_bonus",
         "attack_bonus_adjustment",
-        "damage_bonus_adjustment",
         "save_dc_adjustment",
     ):
         value = _expect(obj, field_name, int, f"{ctx} math_defaults")
@@ -485,6 +479,15 @@ def _build_math_defaults_from_json(raw: object, ctx: str) -> BuildMathDefaults:
         return BuildMathDefaults(**values)
     except ValueError as error:
         raise SharedConfigurationError(f"{ctx} math_defaults: {error}") from error
+
+
+def _append_legacy_damage_modifier(formula: str, modifier: int) -> str:
+    formula = formula.strip()
+    if modifier > 0:
+        return f"{formula}+{modifier}"
+    if modifier < 0:
+        return f"{formula}{modifier}"
+    return formula
 
 
 def _configuration_from_json(raw: object) -> SharedConfiguration:
@@ -520,13 +523,27 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
     profiles_raw = _expect(obj, "attack_profiles", list, name)
     if len(profiles_raw) > MAX_ATTACK_PROFILES_PER_BUILD:
         raise SharedConfigurationError(f"{name} has too many attack profiles.")
+    raw_profile_objects = [
+        _required_dict(p, f"{name} profile {i}") for i, p in enumerate(profiles_raw, 1)
+    ]
+    legacy_damage_modifier = 0
+    math_defaults = (
+        BuildMathDefaults()
+        if "math_defaults" not in obj
+        else _build_math_defaults_from_json(obj["math_defaults"], name)
+    )
+    if "math_defaults" in obj and isinstance(obj["math_defaults"], dict):
+        md = obj["math_defaults"]
+        if isinstance(md.get("damage_bonus_adjustment"), int) and not isinstance(
+            md.get("damage_bonus_adjustment"), bool
+        ):
+            legacy_damage_modifier = (
+                math_defaults.ability_modifier + md["damage_bonus_adjustment"]
+            )
     profiles = tuple(
         _profile_from_json(p, f"{name} profile {i}")
         for i, p in enumerate(profiles_raw, 1)
     )
-    raw_profile_objects = [
-        _required_dict(p, f"{name} profile {i}") for i, p in enumerate(profiles_raw, 1)
-    ]
     needs_generated_ids = any(
         profile.trigger_type is not TriggerType.ALWAYS for profile in profiles
     ) and any(not profile.attack_id for profile in profiles)
@@ -550,12 +567,14 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
                 source_id = profiles[legacy_index].attack_id
             elif isinstance(legacy_name, str) and names.count(legacy_name) == 1:
                 source_id = profiles[names.index(legacy_name)].attack_id
+        if raw_profile.get("use_build_damage_modifier") is True:
+            profile = replace(
+                profile,
+                damage_formula=_append_legacy_damage_modifier(
+                    profile.damage_formula, legacy_damage_modifier
+                ),
+            )
         migrated.append(replace(profile, trigger_source_attack_id=source_id))
-    math_defaults = (
-        BuildMathDefaults()
-        if "math_defaults" not in obj
-        else _build_math_defaults_from_json(obj["math_defaults"], name)
-    )
     return migrate_shared_build_attack_ids(
         name,
         SharedBuildConfiguration(
@@ -619,7 +638,6 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
         ),
         _optional_bool(obj, "use_build_attack_bonus", ctx),
         _optional_bool(obj, "use_build_save_dc", ctx),
-        _optional_bool(obj, "use_build_damage_modifier", ctx),
     )
 
 
@@ -710,7 +728,6 @@ def _validate_profile(
     for field_name in (
         "use_build_attack_bonus",
         "use_build_save_dc",
-        "use_build_damage_modifier",
     ):
         if type(getattr(profile, field_name)) is not bool:
             raise SharedConfigurationError(f"{label} has invalid inheritance fields.")

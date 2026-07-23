@@ -310,9 +310,9 @@ def test_math_defaults_participate_in_canonical_cache_identity_and_not_results()
 
     scenario = _scenario()
     base = _build("A")
-    changed_a = replace(base, math_defaults=BuildMathDefaults(5, 4, 2, 3, 1))
+    changed_a = replace(base, math_defaults=BuildMathDefaults(5, 4, 2, 1))
     second = _build("B")
-    changed_b = replace(second, math_defaults=BuildMathDefaults(-1, 0, -2, -3, -4))
+    changed_b = replace(second, math_defaults=BuildMathDefaults(-1, 0, -2, -4))
 
     base_request = canonical_single_build_request(SingleBuildInputs(base, scenario, 1))
     changed_request = canonical_single_build_request(

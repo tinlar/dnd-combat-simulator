@@ -88,13 +88,11 @@ class AttackProfile:
     resource_costs: tuple[ResourceCost, ...] = field(default_factory=tuple)
     use_build_attack_bonus: bool = False
     use_build_save_dc: bool = False
-    use_build_damage_modifier: bool = False
 
     def __post_init__(self) -> None:
         for field_name in (
             "use_build_attack_bonus",
             "use_build_save_dc",
-            "use_build_damage_modifier",
         ):
             if type(getattr(self, field_name)) is not bool:
                 raise ValueError(f"{field_name} must be a boolean")
@@ -112,12 +110,6 @@ def resolve_attack_profile_values(
 ) -> ResolvedAttackProfileValues:
     """Return effective attack math without mutating the stored profile."""
     damage_formula = profile.damage_dice.strip()
-    if profile.use_build_damage_modifier:
-        modifier = math_defaults.damage_modifier
-        if modifier > 0:
-            damage_formula = f"{damage_formula}+{modifier}"
-        elif modifier < 0:
-            damage_formula = f"{damage_formula}{modifier}"
     resolution_type = ResolutionType(profile.resolution_type)
     attack_bonus = (
         math_defaults.attack_bonus
@@ -656,7 +648,6 @@ def _validate_attack_profile(
     for field_name in (
         "use_build_attack_bonus",
         "use_build_save_dc",
-        "use_build_damage_modifier",
     ):
         if type(getattr(profile, field_name)) is not bool:
             raise ValueError(f"{label} {field_name} must be a boolean.")
@@ -711,12 +702,6 @@ def _validate_attack_profile(
         elif profile.save_dc < 1:
             msg = f"{label} Save DC must be a positive integer."
             raise ValueError(msg)
-    if profile.use_build_damage_modifier:
-        parse_damage_expression(
-            resolve_attack_profile_values(
-                profile, resolved_math_defaults
-            ).damage_formula
-        )
 
 
 def _validate_build(
