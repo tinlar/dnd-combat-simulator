@@ -410,21 +410,27 @@ def _render_managed_resources(
     return tuple(resources)
 
 
-def _safe_checkbox(st: Any, label: str, *, key: str, default: bool) -> bool:
+def _safe_checkbox(
+    st: Any, label: str, *, key: str, default: bool, width: str | int = "content"
+) -> bool:
     import sys
 
     streamlit_module = sys.modules.get("streamlit")
     state = getattr(st, "session_state", getattr(streamlit_module, "session_state", {}))
     if not isinstance(state, Mapping):
         state = getattr(streamlit_module, "session_state", {})
-    kwargs: dict[str, object] = {"key": key}
+    kwargs: dict[str, object] = {"key": key, "width": width}
     if key not in state:
         kwargs["value"] = default
     checkbox = getattr(st, "checkbox", None)
     if checkbox is None:
         value = state.get(key, default)
     else:
-        value = checkbox(label, **kwargs)
+        try:
+            value = checkbox(label, **kwargs)
+        except TypeError:
+            kwargs.pop("width", None)
+            value = checkbox(label, **kwargs)
     if type(value) is not bool:
         msg = f"{key} must be a boolean"
         raise ValueError(msg)
@@ -470,20 +476,71 @@ def _attack_profile_inputs(
     }[resolution_type_label]
     _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
 
-    def _row_text(column: Any, text: str) -> None:
+    def _row_text(column: Any, text: str, *, width: str | int = "auto") -> None:
         writer = getattr(column, "markdown", None) or getattr(st, "markdown", None)
         if writer is not None:
-            writer(text)
+            try:
+                writer(text, width=width)
+            except TypeError:
+                writer(text)
 
-    def _compact_row_columns(widths: list[float]) -> list[Any]:
+    def _compact_inline_row(key: str, field_count: int) -> list[Any]:
+        markdown = getattr(st, "markdown", None)
+        if markdown is not None:
+            markdown(
+                f"""
+                <style>
+                .st-key-{key} {{
+                    align-items: center;
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 10px;
+                    justify-content: flex-start;
+                    margin-bottom: 8px;
+                    max-width: 100%;
+                    width: fit-content;
+                }}
+                .st-key-{key} > div {{
+                    flex: 0 0 auto;
+                    width: fit-content;
+                }}
+                .st-key-{key} p {{
+                    margin-bottom: 0;
+                }}
+                .st-key-{key} [data-testid="stWidgetLabel"] {{
+                    min-height: 0;
+                }}
+                .st-key-{key} input:disabled {{
+                    opacity: 0.72;
+                    -webkit-text-fill-color: currentColor;
+                }}
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+        container = getattr(st, "container", None)
+        if container is not None:
+            try:
+                row = container(
+                    key=key,
+                    horizontal=True,
+                    horizontal_alignment="left",
+                    vertical_alignment="center",
+                    gap="small",
+                    width="content",
+                )
+                return [row for _ in range(field_count)]
+            except TypeError:
+                pass
+
         columns = st.columns
         try:
-            return list(columns(widths, gap="small", vertical_alignment="center"))
+            return list(columns(field_count, gap="small", vertical_alignment="center"))
         except TypeError:
             try:
-                return list(columns(widths, gap="small"))
+                return list(columns(field_count, gap="small"))
             except TypeError:
-                return list(columns(len(widths)))
+                return list(columns(field_count))
 
     use_build_attack_bonus = bool(
         session_state.get(profile_widget_key(prefix, "use_build_attack_bonus"), True)
@@ -494,13 +551,14 @@ def _attack_profile_inputs(
 
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus_key = profile_widget_key(prefix, "attack_bonus")
-        attack_row = _compact_row_columns([1.1, 1.9, 0.65, 1.4, 6.0])
-        _row_text(attack_row[0], "**Attack Bonus**")
+        attack_row = _compact_inline_row(f"{prefix}-attack-bonus-row", 4)
+        _row_text(attack_row[0], "**Attack Bonus**", width=120)
         use_build_attack_bonus = _safe_checkbox(
             attack_row[1],
             "Use Build Default",
             key=profile_widget_key(prefix, "use_build_attack_bonus"),
             default=True,
+            width="content",
         )
         attack_bonus_custom_key = f"{attack_bonus_key}-custom-value"
         if use_build_attack_bonus:
@@ -518,6 +576,7 @@ def _attack_profile_inputs(
                 key=attack_bonus_key,
                 disabled=True,
                 label_visibility="collapsed",
+                width=90,
             )
         elif attack_bonus_custom_key in session_state:
             session_state[attack_bonus_key] = session_state[attack_bonus_custom_key]
@@ -526,6 +585,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
+                width=90,
             )
         elif attack_bonus_key in session_state:
             attack_bonus = attack_row[2].number_input(
@@ -533,6 +593,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
+                width=90,
             )
         else:
             attack_bonus = attack_row[2].number_input(
@@ -541,6 +602,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
+                width=90,
             )
         effective_attack_bonus = (
             resolved_math_defaults.attack_bonus
@@ -553,13 +615,14 @@ def _attack_profile_inputs(
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc_key = profile_widget_key(prefix, "save_dc")
-        save_row = _compact_row_columns([1.1, 1.9, 0.65, 1.4, 6.0])
-        _row_text(save_row[0], "**Save DC**")
+        save_row = _compact_inline_row(f"{prefix}-save-dc-row", 4)
+        _row_text(save_row[0], "**Save DC**", width=120)
         use_build_save_dc = _safe_checkbox(
             save_row[1],
             "Use Build Default",
             key=profile_widget_key(prefix, "use_build_save_dc"),
             default=True,
+            width="content",
         )
         save_dc_custom_key = f"{save_dc_key}-custom-value"
         if use_build_save_dc:
@@ -578,6 +641,7 @@ def _attack_profile_inputs(
                 key=save_dc_key,
                 disabled=True,
                 label_visibility="collapsed",
+                width=90,
             )
         elif save_dc_custom_key in session_state:
             session_state[save_dc_key] = session_state[save_dc_custom_key]
@@ -587,6 +651,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=save_dc_key,
                 label_visibility="collapsed",
+                width=90,
             )
         elif save_dc_key in session_state:
             save_dc = save_row[2].number_input(
@@ -595,6 +660,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=save_dc_key,
                 label_visibility="collapsed",
+                width=90,
             )
         else:
             save_dc = save_row[2].number_input(
@@ -604,6 +670,7 @@ def _attack_profile_inputs(
                 step=1,
                 key=save_dc_key,
                 label_visibility="collapsed",
+                width=90,
             )
         effective_save_dc = (
             resolved_math_defaults.save_dc if use_build_save_dc else int(save_dc)
@@ -615,8 +682,8 @@ def _attack_profile_inputs(
         save_dc = None
 
     damage_key = profile_widget_key(prefix, "damage_formula")
-    damage_row = _compact_row_columns([1.1, 1.6, 1.9, 0.65, 1.8, 4.0])
-    _row_text(damage_row[0], "**Damage**")
+    damage_row = _compact_inline_row(f"{prefix}-damage-row", 5)
+    _row_text(damage_row[0], "**Damage**", width=120)
     if damage_key in session_state:
         damage_dice = damage_row[1].text_input(
             "Damage Formula",
@@ -624,6 +691,7 @@ def _attack_profile_inputs(
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
             label_visibility="collapsed",
+            width=200,
         )
     else:
         damage_dice = damage_row[1].text_input(
@@ -633,12 +701,14 @@ def _attack_profile_inputs(
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
             label_visibility="collapsed",
+            width=200,
         )
     use_build_damage_modifier = _safe_checkbox(
         damage_row[2],
         "Add Build Modifier",
         key=profile_widget_key(prefix, "use_build_damage_modifier"),
         default=True,
+        width="content",
     )
     damage_modifier_key = (
         f"{profile_widget_key(prefix, 'use_build_damage_modifier')}-value"
@@ -653,6 +723,7 @@ def _attack_profile_inputs(
         key=damage_modifier_key,
         disabled=use_build_damage_modifier,
         label_visibility="collapsed",
+        width=90,
     )
     preview_profile = AttackProfile(
         name=attack_name or default_name,
