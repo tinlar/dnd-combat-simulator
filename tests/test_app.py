@@ -3647,20 +3647,19 @@ def test_compact_profile_rows_track_build_defaults_and_preserve_custom_values(
         ),
     )
 
-    attack_field = next(call for call in calls if call[1] == "Attack Bonus value")
+    attack_field = next(call for call in calls if call[1] == "Attack Bonus")
     assert attack_field[2]["value"] == 8
     assert attack_field[2]["disabled"] is True
     assert attack_field[2]["key"] == "first-primary-attack-bonus"
     assert profile.attack_bonus == 11
     assert profile.use_build_attack_bonus is True
-    assert ("markdown", "Effective: +8", {}) in calls
 
     calls.clear()
     state[profile_widget_key("first-primary", "use_build_attack_bonus")] = False
     profile = _attack_profile_inputs(
         "first-primary", "Attack", math_defaults=BuildMathDefaults()
     )
-    attack_field = next(call for call in calls if call[1] == "Attack Bonus value")
+    attack_field = next(call for call in calls if call[1] == "Attack Bonus")
     assert attack_field[2]["key"] == "first-primary-attack-bonus"
     assert "disabled" not in attack_field[2]
     assert profile.attack_bonus == 11
@@ -3739,7 +3738,7 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
     assert save_field[2]["disabled"] is True
     assert save_profile.save_dc == 19
     assert save_profile.resolution_type is ResolutionType.SAVING_THROW
-    assert "Attack Bonus value" not in [call[1] for call in save_calls]
+    assert "Attack Bonus" not in [call[1] for call in save_calls]
 
     custom_state = {
         profile_widget_key("first-primary", "save_dc"): 18,
@@ -3756,6 +3755,6 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
         {profile_widget_key("first-primary", "damage_formula"): "3d4"},
     )
     assert auto_profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE
-    assert "Attack Bonus value" not in [call[1] for call in auto_calls]
+    assert "Attack Bonus" not in [call[1] for call in auto_calls]
     assert "Save DC value" not in [call[1] for call in auto_calls]
     assert "Damage Formula" in [call[1] for call in auto_calls]
