@@ -263,6 +263,64 @@ export default function(component) {
 }
 """
 
+ATTACK_CARD_CSS = """
+<style>
+:root {
+    --attack-card-background: color-mix(
+        in srgb,
+        var(--st-secondary-background-color) 82%,
+        var(--st-primary-color) 18%
+    );
+    --attack-card-border: color-mix(
+        in srgb,
+        var(--st-border-color) 82%,
+        var(--st-primary-color) 18%
+    );
+    --attack-card-nested-background: color-mix(
+        in srgb,
+        var(--st-background-color) 88%,
+        var(--st-secondary-background-color) 12%
+    );
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --attack-card-background: color-mix(
+            in srgb,
+            var(--st-secondary-background-color) 90%,
+            var(--st-primary-color) 10%
+        );
+        --attack-card-border: color-mix(
+            in srgb,
+            var(--st-border-color) 76%,
+            var(--st-primary-color) 24%
+        );
+        --attack-card-nested-background: color-mix(
+            in srgb,
+            var(--st-background-color) 78%,
+            var(--st-secondary-background-color) 22%
+        );
+    }
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.attack-card-marker) {
+    background: var(--attack-card-background);
+    border-color: var(--attack-card-border);
+    box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.08);
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.attack-card-marker)
+    [data-testid="stExpander"] details {
+    background: var(--attack-card-nested-background);
+    border-color: var(--st-border-color);
+}
+
+.attack-card-marker {
+    display: none;
+}
+</style>
+"""
+
 ATTACK_TOOLBAR_CSS = """
 <style>
 [class*="st-key-first-attack-"][class*="-toolbar"],
@@ -484,6 +542,7 @@ def configure_page() -> None:
 
     st.set_page_config(page_title=APP_TITLE, page_icon="🎲", layout="wide")
     st.markdown(PAGE_WIDTH_CSS, unsafe_allow_html=True)
+    st.markdown(ATTACK_CARD_CSS, unsafe_allow_html=True)
     st.markdown(ATTACK_TOOLBAR_CSS, unsafe_allow_html=True)
 
 
