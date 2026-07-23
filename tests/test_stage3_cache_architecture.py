@@ -132,4 +132,9 @@ def test_stage3_architecture_source_rules() -> None:
         "import streamlit"
         not in Path("src/dnd_combat_simulator/ui/validation.py").read_text()
     )
-    assert "sys.modules" not in Path("src/dnd_combat_simulator/app.py").read_text()
+    app_source = Path("src/dnd_combat_simulator/app.py").read_text()
+    assert "sys.modules" not in app_source
+    assert "importlib" not in app_source
+    assert "globals()" not in app_source
+    assert "_sync_ui_module_globals" not in app_source
+    assert '__all__ = ("configure_page", "main")' in app_source

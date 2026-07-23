@@ -7,14 +7,6 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from dnd_combat_simulator.app import (
-    COMPARE_WIDGET_KEY,
-    LOADED_SHARED_CONFIG_TOKEN_KEY,
-    SCENARIO_WIDGET_KEYS,
-    feature_widget_key,
-    hydrate_session_state_from_shared_configuration,
-    profile_widget_key,
-)
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -39,6 +31,14 @@ from dnd_combat_simulator.simulation import (
     TriggerType,
     compare_builds,
     simulate_build,
+)
+from dnd_combat_simulator.ui.page import (
+    COMPARE_WIDGET_KEY,
+    LOADED_SHARED_CONFIG_TOKEN_KEY,
+    SCENARIO_WIDGET_KEYS,
+    feature_widget_key,
+    hydrate_session_state_from_shared_configuration,
+    profile_widget_key,
 )
 
 

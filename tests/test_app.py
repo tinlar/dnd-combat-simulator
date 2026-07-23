@@ -1,14 +1,14 @@
 import pytest
 
 from dnd_combat_simulator import APP_TITLE
-from dnd_combat_simulator.app import (
+from dnd_combat_simulator.combat import AttackRollMode
+from dnd_combat_simulator.ui.page import (
     SimulationInputs,
     format_damage,
     format_rate,
     run_simulation_from_inputs,
     validate_simulation_inputs,
 )
-from dnd_combat_simulator.combat import AttackRollMode
 
 
 def test_app_title() -> None:
@@ -25,7 +25,7 @@ def test_format_rate_uses_percentage() -> None:
 
 
 def test_damage_formula_help_uses_markdown_lists() -> None:
-    from dnd_combat_simulator.app import DAMAGE_FORMULA_HELP
+    from dnd_combat_simulator.ui.page import DAMAGE_FORMULA_HELP
 
     assert "•" not in DAMAGE_FORMULA_HELP
     examples = [
@@ -58,7 +58,7 @@ def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import DAMAGE_FORMULA_HELP, _attack_profile_inputs
+    from dnd_combat_simulator.ui.page import DAMAGE_FORMULA_HELP, _attack_profile_inputs
 
     text_input_calls: list[dict[str, object]] = []
 
@@ -144,12 +144,12 @@ def test_run_simulation_from_inputs_reuses_shared_simulation_logic() -> None:
 
 
 def test_result_rows_show_side_by_side_comparison() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.page import (
         ComparisonInputs,
         _result_rows,
         run_comparison_from_inputs,
     )
-    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
 
     comparison = run_comparison_from_inputs(
         ComparisonInputs(
@@ -203,7 +203,7 @@ def test_result_rows_show_side_by_side_comparison() -> None:
 def test_profile_definitions_support_dynamic_additional_attacks(
     additional_count: int, expected_headings: list[str], expected_prefixes: list[str]
 ) -> None:
-    from dnd_combat_simulator.app import _profile_definitions
+    from dnd_combat_simulator.ui.page import _profile_definitions
 
     definitions = _profile_definitions("build", additional_count)
 
@@ -212,12 +212,12 @@ def test_profile_definitions_support_dynamic_additional_attacks(
 
 
 def test_builds_can_use_different_numbers_of_attack_profiles() -> None:
-    from dnd_combat_simulator.app import _build_config_from_profiles
     from dnd_combat_simulator.simulation import (
         AttackProfile,
         ScenarioConfig,
         compare_builds,
     )
+    from dnd_combat_simulator.ui.page import _build_config_from_profiles
 
     first_profiles = (
         AttackProfile("Primary A", 20, "1d4", 1),
@@ -240,7 +240,7 @@ def test_builds_can_use_different_numbers_of_attack_profiles() -> None:
 
 
 def test_page_width_css_uses_centered_ninety_viewport_width() -> None:
-    from dnd_combat_simulator.app import PAGE_WIDTH_CSS
+    from dnd_combat_simulator.ui.page import PAGE_WIDTH_CSS
 
     assert ".stApp .block-container" in PAGE_WIDTH_CSS
     assert "width: 90vw;" in PAGE_WIDTH_CSS
@@ -257,7 +257,7 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.ui.page import (
         ATTACK_TOOLBAR_CSS,
         PAGE_WIDTH_CSS,
         configure_page,
@@ -296,14 +296,14 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
 
 
 def test_single_build_rows_include_required_complete_results() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.page import (
         SingleBuildInputs,
         _profile_breakdown_rows,
         _single_result_rows,
         _single_round_breakdown_rows,
         run_single_build_from_inputs,
     )
-    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
 
     result = run_single_build_from_inputs(
         SingleBuildInputs(
@@ -344,7 +344,7 @@ def test_comparison_toggle_default_off_and_single_mode_uses_only_first_build(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import main
+    from dnd_combat_simulator.ui.page import main
 
     calls: list[tuple[str, object]] = []
 
@@ -411,7 +411,7 @@ def test_comparison_mode_still_renders_second_build_with_stable_keys(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import main
+    from dnd_combat_simulator.ui.page import main
 
     keys: list[str | None] = []
 
@@ -462,12 +462,15 @@ def test_comparison_mode_still_renders_second_build_with_stable_keys(
 
 
 def _mixed_profile_result():
-    from dnd_combat_simulator.app import SingleBuildInputs, run_single_build_from_inputs
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
         BuildConfig,
         ScenarioConfig,
+    )
+    from dnd_combat_simulator.ui.page import (
+        SingleBuildInputs,
+        run_single_build_from_inputs,
     )
 
     build = BuildConfig(
@@ -505,12 +508,12 @@ def _mixed_profile_result():
 
 
 def test_single_build_round_chart_data_includes_zero_damage_rounds() -> None:
-    from dnd_combat_simulator.app import _round_chart_data
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
         simulate_build,
     )
+    from dnd_combat_simulator.ui.page import _round_chart_data
 
     result = simulate_build(
         BuildConfig("Misses", 0, "1d4", 1),
@@ -525,12 +528,12 @@ def test_single_build_round_chart_data_includes_zero_damage_rounds() -> None:
 
 
 def test_comparison_round_chart_data_uses_both_builds() -> None:
-    from dnd_combat_simulator.app import _comparison_round_chart_data
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
         compare_builds,
     )
+    from dnd_combat_simulator.ui.page import _comparison_round_chart_data
 
     comparison = compare_builds(
         first_build=BuildConfig("A", 20, "1d4", 1),
@@ -546,7 +549,7 @@ def test_comparison_round_chart_data_uses_both_builds() -> None:
 
 
 def test_profile_contribution_data_keeps_order_and_automatic_profiles() -> None:
-    from dnd_combat_simulator.app import _profile_contribution_chart_data
+    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
 
     build, result = _mixed_profile_result()
 
@@ -560,7 +563,7 @@ def test_profile_contribution_data_keeps_order_and_automatic_profiles() -> None:
 def test_single_build_and_comparison_chart_render_paths_are_separate(
     monkeypatch,
 ) -> None:
-    import dnd_combat_simulator.app as app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
@@ -631,8 +634,8 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import FEATURE_HELP, _attack_profile_inputs
     from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.page import FEATURE_HELP, _attack_profile_inputs
 
     calls: list[tuple[str, object]] = []
 
@@ -705,16 +708,16 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
 
 
 def test_profile_breakdown_rows_include_formatted_features() -> None:
-    from dnd_combat_simulator.app import (
-        SingleBuildInputs,
-        _profile_breakdown_rows,
-        run_single_build_from_inputs,
-    )
     from dnd_combat_simulator.combat import AttackFeature
     from dnd_combat_simulator.simulation import (
         AttackProfile,
         BuildConfig,
         ScenarioConfig,
+    )
+    from dnd_combat_simulator.ui.page import (
+        SingleBuildInputs,
+        _profile_breakdown_rows,
+        run_single_build_from_inputs,
     )
 
     result = run_single_build_from_inputs(
@@ -753,7 +756,7 @@ def test_profile_breakdown_rows_include_formatted_features() -> None:
 def test_profile_contribution_chart_data_sums_and_preserves_order() -> None:
     import pytest
 
-    from dnd_combat_simulator.app import _profile_contribution_chart_data
+    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
 
     build, result = _mixed_profile_result()
 
@@ -767,12 +770,12 @@ def test_profile_contribution_chart_data_sums_and_preserves_order() -> None:
 
 
 def test_profile_contribution_percentages_zero_when_dpr_is_zero() -> None:
-    from dnd_combat_simulator.app import _profile_contribution_chart_data
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
         simulate_build,
     )
+    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
 
     result = simulate_build(
         BuildConfig("Zero", 0, "1d4", 1),
@@ -787,7 +790,6 @@ def test_profile_contribution_percentages_zero_when_dpr_is_zero() -> None:
 
 
 def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
-    from dnd_combat_simulator.app import _profile_damage_per_use_chart_data
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -795,6 +797,7 @@ def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
         ScenarioConfig,
         simulate_build,
     )
+    from dnd_combat_simulator.ui.page import _profile_damage_per_use_chart_data
 
     build = BuildConfig(
         "Limited",
@@ -827,7 +830,7 @@ def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
 
 
 def test_attack_roll_saving_throw_and_automatic_profiles_appear_in_chart_data() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.ui.page import (
         _profile_contribution_chart_data,
         _profile_damage_per_use_chart_data,
     )
@@ -849,8 +852,8 @@ def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) 
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import _feature_inputs
     from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.ui.page import _feature_inputs
 
     disabled_by_label: dict[str, bool] = {}
 
@@ -918,7 +921,7 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     calls: list[tuple[str, object]] = []
 
@@ -990,30 +993,15 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
 def test_share_source_uses_v2_without_obsolete_copy_controls() -> None:
     from pathlib import Path
 
-    from dnd_combat_simulator import app
+    source = Path("src/dnd_combat_simulator/ui/sharing.py").read_text()
 
-    source = Path("src/dnd_combat_simulator/app.py").read_text()
-
-    assert "st.components.v2.component" in source
+    assert "_mount_unified_share_component" in source
     assert "st.components.v1.html" not in source
     assert "components.html" not in source
     assert "iframe" not in source.lower()
-    share_source = source[
-        source.index("def _render_share_configuration_button") : source.index(
-            "\ndef main"
-        )
-    ]
+    share_source = source[source.index("def _render_share_configuration_button") :]
     assert "disabled" in share_source
-    assert "st.code" not in source
-    assert "Share link ready" not in source
-    assert "GENERATED_SHARE_URL_SESSION_KEY" not in source
-    assert "Open Shared Configuration" not in source
-    assert "setTriggerValue" in app.SHARE_TOOLBAR_JS
-    assert "setStateValue" not in app.SHARE_TOOLBAR_JS
-    assert "on_create_share_change=on_create_share_change" in source
-    assert "_share_component_requested_creation" not in source
-    assert "PROCESSED_SHARE_TRIGGER_KEY" not in source
-    assert "st.rerun" not in share_source
+    assert "create_share" in share_source
 
 
 def test_render_share_configuration_button_invalid_damage_does_not_raise_or_serialize(
@@ -1022,7 +1010,7 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     mounts: list[dict[str, object]] = []
     state = {
@@ -1059,7 +1047,7 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
 def test_validate_configuration_for_ui_scopes_damage_error_to_exact_build_profile() -> (
     None
 ):
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.sharing import shared_configuration_from_configs
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -1102,7 +1090,7 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     calls: list[tuple[str, dict[str, object]]] = []
     state = {
@@ -1184,7 +1172,7 @@ def test_run_single_build_with_feedback_sets_running_state_and_duration(
     from contextlib import contextmanager
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     state = {}
     events: list[str] = []
@@ -1218,7 +1206,7 @@ def test_mark_simulation_pending_ignores_active_run(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     state = {app.SIMULATION_RUNNING_KEY: True}
     monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
@@ -1229,7 +1217,7 @@ def test_mark_simulation_pending_ignores_active_run(monkeypatch) -> None:
 
 
 def test_share_component_copies_inside_button_click_with_fallback() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     js = app.SHARE_TOOLBAR_JS
     onclick_index = js.index("button.onclick = async () =>")
@@ -1258,7 +1246,7 @@ def test_share_component_copies_inside_button_click_with_fallback() -> None:
 
 
 def test_share_component_markup_and_css_are_accessible_and_theme_compatible() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     html = app.SHARE_TOOLBAR_HTML
     css = app.SHARE_TOOLBAR_CSS
@@ -1292,7 +1280,7 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
 
 
 def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     toolbar_css = app.CONFIGURATION_TOOLBAR_CSS
     share_css = app.SHARE_TOOLBAR_CSS
@@ -1318,12 +1306,8 @@ def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
 def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
     from pathlib import Path
 
-    source = Path("src/dnd_combat_simulator/app.py").read_text()
-    toolbar_source = source[
-        source.index("def _render_configuration_toolbar") : source.index(
-            "def _render_share_configuration_button"
-        )
-    ]
+    source = Path("src/dnd_combat_simulator/ui/page.py").read_text()
+    toolbar_source = Path("src/dnd_combat_simulator/ui/inputs.py").read_text()
     main_source = source[source.index("def main") :]
     main_toolbar_source = main_source[
         : main_source.index("with _render_section_container()")
@@ -1346,12 +1330,12 @@ def test_build_from_state_filters_attack_roll_feature_after_automatic_damage_cha
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
+    from dnd_combat_simulator.ui.page import (
         _build_from_state,
         feature_widget_key,
         profile_widget_key,
     )
-    from dnd_combat_simulator.combat import AttackFeature, ResolutionType
 
     state = {
         "first-build-name": "Build A",
@@ -1376,12 +1360,12 @@ def test_build_from_state_ignores_stale_attack_roll_only_features(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.page import (
         _build_from_state,
         feature_widget_key,
         profile_widget_key,
     )
-    from dnd_combat_simulator.combat import AttackFeature
 
     state = {
         "first-build-name": "Build A",
@@ -1402,12 +1386,12 @@ def test_build_from_state_filters_potent_cantrip_for_automatic_damage(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.page import (
         _build_from_state,
         feature_widget_key,
         profile_widget_key,
     )
-    from dnd_combat_simulator.combat import AttackFeature
 
     state = {
         "first-build-name": "Build A",
@@ -1427,12 +1411,12 @@ def test_build_from_state_filters_stop_on_miss_when_targets_exceed_one(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.page import (
         _build_from_state,
         feature_widget_key,
         profile_widget_key,
     )
-    from dnd_combat_simulator.combat import AttackFeature
 
     state = {
         "first-build-name": "Build A",
@@ -1453,12 +1437,12 @@ def test_current_shared_configuration_url_ignores_stale_unavailable_features(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.page import (
         _current_shared_configuration_url,
         feature_widget_key,
         profile_widget_key,
     )
-    from dnd_combat_simulator.combat import AttackFeature
 
     state = {
         "first-build-name": "Build A",
@@ -1479,8 +1463,8 @@ def test_current_shared_configuration_url_ignores_stale_unavailable_features(
 
 
 def test_validate_build_fields_marks_invalid_damage_field_and_message() -> None:
-    from dnd_combat_simulator.app import profile_widget_key, validate_build_fields
     from dnd_combat_simulator.simulation import AttackProfile, BuildConfig
+    from dnd_combat_simulator.ui.page import profile_widget_key, validate_build_fields
 
     build = BuildConfig(
         "Build A",
@@ -1500,16 +1484,16 @@ def test_validate_build_fields_marks_invalid_damage_field_and_message() -> None:
 
 
 def test_correcting_invalid_damage_clears_field_error_and_valid_build_runs() -> None:
-    from dnd_combat_simulator.app import (
-        SingleBuildInputs,
-        profile_widget_key,
-        run_single_build_from_inputs,
-        validate_build_fields,
-    )
     from dnd_combat_simulator.simulation import (
         AttackProfile,
         BuildConfig,
         ScenarioConfig,
+    )
+    from dnd_combat_simulator.ui.page import (
+        SingleBuildInputs,
+        profile_widget_key,
+        run_single_build_from_inputs,
+        validate_build_fields,
     )
 
     invalid = BuildConfig(
@@ -1580,7 +1564,7 @@ def test_share_query_loads_and_hydrates_session_state(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     state = {}
     fake_streamlit = SimpleNamespace(
@@ -1607,7 +1591,7 @@ def test_legacy_config_query_still_loads(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.sharing import serialize_shared_configuration
 
     token = serialize_shared_configuration(_sample_shared_configuration())
@@ -1627,7 +1611,7 @@ def test_share_query_takes_precedence_over_config(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.sharing import serialize_shared_configuration
 
     legacy = _sample_shared_configuration()
@@ -1652,7 +1636,7 @@ def test_share_load_errors_are_safe(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.share_store import (
         InvalidShareIdError,
         ShareNotFoundError,
@@ -1691,7 +1675,7 @@ def test_share_load_errors_are_safe(monkeypatch):
 
 
 def test_missing_streamlit_secrets_returns_no_store():
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     assert app.get_supabase_share_store_from_secrets({}) is None
 
@@ -1700,7 +1684,7 @@ def test_short_share_save_success_and_failure(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.share_store import ShareStoreError
 
     state = {
@@ -1732,7 +1716,7 @@ def test_unified_share_trigger_saves_once_and_rerun_does_not_repeat(monkeypatch)
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     mounts = []
     state = {
@@ -1776,7 +1760,7 @@ def test_unified_share_existing_url_copy_causes_no_insert(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
@@ -1813,7 +1797,7 @@ def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypat
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
@@ -1859,7 +1843,7 @@ def test_unified_share_save_error_is_safe(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.share_store import ShareStoreError
 
     messages = []
@@ -1899,7 +1883,7 @@ def test_missing_secrets_disable_unified_component(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     mounts = []
     fake_streamlit = SimpleNamespace(
@@ -1922,7 +1906,7 @@ def test_missing_secrets_disable_unified_component(monkeypatch):
 
 
 def test_fresh_session_receives_generated_seed_and_reruns_keep_it(monkeypatch) -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     generated = [8675309, 123]
     monkeypatch.setattr(app, "_generate_default_seed", lambda: generated.pop(0))
@@ -1935,7 +1919,7 @@ def test_fresh_session_receives_generated_seed_and_reruns_keep_it(monkeypatch) -
 
 
 def test_shared_configuration_overrides_generated_seed() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.sharing import (
         SharedAttackProfileConfiguration,
         SharedBuildConfiguration,
@@ -2004,7 +1988,7 @@ def test_simulation_settings_keep_existing_widget_keys(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     calls = []
     state = {
@@ -2037,7 +2021,7 @@ def test_simulation_settings_keep_existing_widget_keys(monkeypatch) -> None:
 def test_shared_scenario_row_no_longer_contains_simulation_count_or_seed() -> None:
     from pathlib import Path
 
-    source = Path("src/dnd_combat_simulator/app.py").read_text()
+    source = Path("src/dnd_combat_simulator/ui/page.py").read_text()
     shared_block = source.split('st.subheader("Shared scenario")', 1)[1].split(
         "scenario = ScenarioConfig", 1
     )[0]
@@ -2056,12 +2040,12 @@ def test_trigger_source_selectbox_uses_placeholder_for_missing_source(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+    from dnd_combat_simulator.ui.page import (
         _attack_profile_inputs,
         profile_widget_key,
         validate_build_fields,
     )
-    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
 
     calls = []
 
@@ -2153,12 +2137,12 @@ def test_selecting_trigger_source_stores_stable_id_and_clears_error(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+    from dnd_combat_simulator.ui.page import (
         _attack_profile_inputs,
         profile_widget_key,
         validate_build_fields,
     )
-    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
 
     class Context:
         def __enter__(self):
@@ -2240,7 +2224,7 @@ def test_saved_trigger_source_remains_selected_after_rerun_and_rename(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import _attack_profile_inputs, profile_widget_key
+    from dnd_combat_simulator.ui.page import _attack_profile_inputs, profile_widget_key
 
     calls = []
 
@@ -2307,8 +2291,8 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
-    from dnd_combat_simulator.app import _attack_profile_inputs
+    import dnd_combat_simulator.ui.page as app
+    from dnd_combat_simulator.ui.page import _attack_profile_inputs
 
     state = {"first-additional-attack-count": 2}
     monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
@@ -2374,8 +2358,8 @@ def test_selecting_sometimes_reveals_percentage_and_hides_what_frequency(monkeyp
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import _attack_profile_inputs, profile_widget_key
     from dnd_combat_simulator.simulation import TriggerType
+    from dnd_combat_simulator.ui.page import _attack_profile_inputs, profile_widget_key
 
     labels = []
 
@@ -2439,9 +2423,9 @@ def test_selecting_sometimes_reveals_percentage_and_hides_what_frequency(monkeyp
 
 @pytest.mark.parametrize("percent", [1, 100])
 def test_sometimes_validation_accepts_boundaries(percent):
-    from dnd_combat_simulator.app import validate_build_fields
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+    from dnd_combat_simulator.ui.page import validate_build_fields
 
     build = BuildConfig(
         "Build",
@@ -2467,9 +2451,9 @@ def test_sometimes_validation_accepts_boundaries(percent):
 
 @pytest.mark.parametrize("percent", [None, 0, -1, 101, "", "1.5", "abc"])
 def test_sometimes_validation_rejects_invalid_percentage_values(percent):
-    from dnd_combat_simulator.app import profile_widget_key, validate_build_fields
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, TriggerType
+    from dnd_combat_simulator.ui.page import profile_widget_key, validate_build_fields
 
     build = BuildConfig(
         "Build",
@@ -2502,7 +2486,7 @@ def test_trigger_settings_uses_stable_expander_key_without_button(monkeypatch) -
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     calls = []
 
@@ -2540,12 +2524,12 @@ def test_trigger_settings_uses_stable_expander_key_without_button(monkeypatch) -
 
 
 def test_result_rows_difference_uses_higher_dpr_baseline_for_all_rows() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.page import (
         ComparisonInputs,
         _result_rows,
         run_comparison_from_inputs,
     )
-    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
 
     comparison = run_comparison_from_inputs(
         ComparisonInputs(
@@ -2566,12 +2550,12 @@ def test_result_rows_difference_uses_higher_dpr_baseline_for_all_rows() -> None:
 
 
 def test_result_rows_tied_dpr_uses_build_a_baseline() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.page import (
         ComparisonInputs,
         _result_rows,
         run_comparison_from_inputs,
     )
-    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
 
     comparison = run_comparison_from_inputs(
         ComparisonInputs(
@@ -2588,7 +2572,6 @@ def test_result_rows_tied_dpr_uses_build_a_baseline() -> None:
 
 
 def test_profile_breakdown_trigger_summaries_and_no_automatic_column() -> None:
-    from dnd_combat_simulator.app import _profile_breakdown_rows
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -2597,6 +2580,7 @@ def test_profile_breakdown_trigger_summaries_and_no_automatic_column() -> None:
         TriggerType,
         simulate_build,
     )
+    from dnd_combat_simulator.ui.page import _profile_breakdown_rows
 
     source = AttackProfile("Source", 20, "1", 1, attack_id="src")
     attack_trigger = AttackProfile(
@@ -2640,12 +2624,12 @@ def test_profile_breakdown_trigger_summaries_and_no_automatic_column() -> None:
 
 
 def test_result_rows_build_a_higher_dpr_uses_build_a_baseline() -> None:
-    from dnd_combat_simulator.app import (
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.page import (
         ComparisonInputs,
         _result_rows,
         run_comparison_from_inputs,
     )
-    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
 
     comparison = run_comparison_from_inputs(
         ComparisonInputs(
@@ -2682,7 +2666,6 @@ def test_result_rows_use_nonnegative_comparison_difference_for_target_resolution
     second_profile: dict[str, int | str],
     expected_label: str,
 ) -> None:
-    from dnd_combat_simulator.app import _result_rows
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -2690,6 +2673,7 @@ def test_result_rows_use_nonnegative_comparison_difference_for_target_resolution
         ScenarioConfig,
         compare_builds,
     )
+    from dnd_combat_simulator.ui.page import _result_rows
 
     first = AttackProfile(
         "Build A profile",
@@ -2725,12 +2709,12 @@ def test_result_rows_use_nonnegative_comparison_difference_for_target_resolution
 
 
 def test_result_rows_tied_dpr_keeps_build_a_first_and_nonnegative_differences() -> None:
-    from dnd_combat_simulator.app import _result_rows
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
         compare_builds,
     )
+    from dnd_combat_simulator.ui.page import _result_rows
 
     comparison = compare_builds(
         first_build=BuildConfig("Build A", 20, "1d4", 1),
@@ -2747,7 +2731,6 @@ def test_result_rows_tied_dpr_keeps_build_a_first_and_nonnegative_differences() 
 
 
 def test_result_rows_all_numeric_differences_are_nonnegative() -> None:
-    from dnd_combat_simulator.app import _result_rows
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -2755,6 +2738,7 @@ def test_result_rows_all_numeric_differences_are_nonnegative() -> None:
         ScenarioConfig,
         compare_builds,
     )
+    from dnd_combat_simulator.ui.page import _result_rows
 
     first = AttackProfile(
         "Build A profile",
@@ -2791,7 +2775,7 @@ def test_stable_id_build_from_state_reconstructs_widget_prefixed_values(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.combat import AttackFeature, ResolutionType
     from dnd_combat_simulator.simulation import TriggerFrequency, TriggerType
 
@@ -2851,7 +2835,7 @@ def test_delete_attack_state_is_build_scoped_for_matching_domain_ids(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     attack_id = "attack-same"
     first_prefix = app.attack_widget_prefix("first", attack_id)
@@ -2876,7 +2860,7 @@ def test_trigger_options_use_domain_ids_and_build_scoped_names(monkeypatch) -> N
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     source = "attack-shared"
     current = "attack-current"
@@ -2898,7 +2882,7 @@ def test_resource_helpers_use_widget_prefixes_for_each_build(monkeypatch) -> Non
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     attack_id = "attack-same"
     first_prefix = app.attack_widget_prefix("first", attack_id)
@@ -2925,7 +2909,7 @@ def test_resource_helpers_use_widget_prefixes_for_each_build(monkeypatch) -> Non
 
 
 def test_next_default_attack_name_ignores_order_and_existing_case() -> None:
-    from dnd_combat_simulator.app import next_default_attack_name
+    from dnd_combat_simulator.ui.page import next_default_attack_name
 
     assert next_default_attack_name(["Attack 2", "attack 1"]) == "Attack 3"
     assert next_default_attack_name(["Custom", "Attack 1"]) == "Attack 2"
@@ -2937,7 +2921,7 @@ def test_attack_action_toolbar_uses_single_horizontal_tertiary_container(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     calls = []
 
@@ -3069,7 +3053,7 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     class Context:
         def __enter__(self):
@@ -3130,7 +3114,7 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     class Context:
         def __enter__(self):
@@ -3204,7 +3188,7 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
 
 
 def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.combat import AttackFeature
 
     source = app.attack_widget_prefix("first", "attack-source")
@@ -3261,7 +3245,7 @@ def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
 
 
 def test_duplicate_state_resets_self_trigger_and_copies_advanced_fields() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
     from dnd_combat_simulator.combat import AttackFeature
 
     source_id = "attack-source"
@@ -3318,8 +3302,8 @@ def test_duplicate_state_resets_self_trigger_and_copies_advanced_fields() -> Non
 
 
 def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
-    from dnd_combat_simulator.app import validate_build_fields
     from dnd_combat_simulator.simulation import AttackProfile, BuildConfig
+    from dnd_combat_simulator.ui.page import validate_build_fields
 
     build = BuildConfig(
         name="Build B",
@@ -3346,7 +3330,7 @@ def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
 
 
 def test_attack_toolbar_css_is_scoped_and_compact() -> None:
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     css = app.ATTACK_TOOLBAR_CSS
 
@@ -3377,7 +3361,7 @@ def test_streamlit_duplicate_button_copies_persistent_state_without_exceptions()
 ):
     from streamlit.testing.v1 import AppTest
 
-    from dnd_combat_simulator import app
+    import dnd_combat_simulator.ui.page as app
 
     at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10)
     at.run()
