@@ -1264,15 +1264,30 @@ CLONE_BUILD_A_CONFIRMATION_KEY = "clone-build-a-into-build-b-confirm"
 CLONE_BUILD_A_SUCCESS_KEY = "clone-build-a-into-build-b-success"
 
 
-def _render_clone_build_a_control() -> None:
+def _render_clone_build_a_button() -> None:
+    """Render Build B's compact whole-build clone button."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    if st.button(
+        "Clone A",
+        key="second-clone-build-a",
+        help="Copy all Build A settings into Build B.",
+        type="secondary",
+        width="content",
+    ):
+        state[CLONE_BUILD_A_CONFIRMATION_KEY] = True
+
+
+def _render_clone_build_a_control(*, render_button: bool = True) -> None:
     """Render Build B's whole-build clone control and confirmation actions."""
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     if state.pop(CLONE_BUILD_A_SUCCESS_KEY, False):
         st.success("Build A copied to Build B.")
-    if st.button("Clone Build A", key="second-clone-build-a"):
-        state[CLONE_BUILD_A_CONFIRMATION_KEY] = True
+    if render_button:
+        _render_clone_build_a_button()
     if not state.get(CLONE_BUILD_A_CONFIRMATION_KEY, False):
         return
     st.warning(
@@ -1301,9 +1316,15 @@ def _build_inputs(
 
     errors_by_key = errors_by_key or {}
     with _render_section_container():
-        st.markdown(f"#### {default_name}")
         if prefix == "second":
-            _render_clone_build_a_control()
+            header_cols = st.columns([5, 1], vertical_alignment="center")
+            with header_cols[0]:
+                st.markdown(f"#### {default_name}")
+            with header_cols[1]:
+                _render_clone_build_a_button()
+            _render_clone_build_a_control(render_button=False)
+        else:
+            st.markdown(f"#### {default_name}")
         name = st.text_input(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )
