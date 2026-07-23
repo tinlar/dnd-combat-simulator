@@ -303,29 +303,22 @@ ATTACK_CARD_CSS = """
     }
 }
 
-[class*="st-key-first-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"],
-[class*="st-key-second-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] {
-    background: var(--attack-card-background) !important;
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card"] {
+    background-color: var(--attack-card-background) !important;
     border-color: var(--attack-card-border) !important;
-    border-radius: 14px;
+    border-radius: 14px !important;
     box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.12);
 }
 
-[class*="st-key-first-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] > div,
-[class*="st-key-second-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-    background: var(--attack-card-background) !important;
-    border-radius: inherit;
-    padding: clamp(0.85rem, 1.4vw, 1.35rem);
-}
-
-[class*="st-key-first-attack-"][class*="-card"] [data-testid="stExpander"] details,
-[class*="st-key-second-attack-"][class*="-card"] [data-testid="stExpander"] details {
-    background: var(--attack-card-nested-background);
-    border-color: var(--st-border-color);
-}
-
-.attack-card-marker {
-    display: none;
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card"] [data-testid="stExpander"] details {
+    background-color: var(--attack-card-nested-background) !important;
+    border-color: var(--st-border-color) !important;
 }
 </style>
 """
