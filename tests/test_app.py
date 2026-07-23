@@ -55,7 +55,7 @@ def test_damage_formula_help_uses_markdown_lists() -> None:
         assert matches[0].startswith(f"- `{example}`")
 
 
-def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
+def test_damage_formula_help_icon_moves_to_inline_damage_label(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
@@ -63,10 +63,29 @@ def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
     from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
 
     text_input_calls: list[dict[str, object]] = []
+    popover_calls: list[dict[str, object]] = []
+    markdown_calls: list[str] = []
 
-    class Column:
+    class ContextColumn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def markdown(self, body, **kwargs):
+            markdown_calls.append(body)
+
+    class Column(ContextColumn):
+        def columns(self, spec, **kwargs):
+            return [self for _ in range(len(spec))]
+
         def number_input(self, label, **kwargs):
             return kwargs.get("value", 1)
+
+        def popover(self, label, **kwargs):
+            popover_calls.append({"label": label, **kwargs})
+            return self
 
         def text_input(self, label, **kwargs):
             text_input_calls.append({"label": label, **kwargs})
@@ -87,10 +106,18 @@ def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
 
     _attack_profile_inputs("test", "Attack")
 
-    damage_call = next(
-        call for call in text_input_calls if call["label"] == "Damage Formula"
-    )
-    assert damage_call["help"] == DAMAGE_FORMULA_HELP
+    damage_call = next(call for call in text_input_calls if call["label"] == "Formula")
+    assert "help" not in damage_call
+    assert popover_calls == [
+        {
+            "label": "?",
+            "help": "Damage formula dice syntax help",
+            "width": "content",
+            "use_container_width": False,
+            "key": "test-damage-formula-help",
+        }
+    ]
+    assert DAMAGE_FORMULA_HELP in markdown_calls
 
 
 @pytest.mark.parametrize(
@@ -3748,4 +3775,4 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
     assert auto_profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE
     assert "Attack Bonus value" not in [call[1] for call in auto_calls]
     assert "Save DC value" not in [call[1] for call in auto_calls]
-    assert "Damage Formula" in [call[1] for call in auto_calls]
+    assert "Formula" in [call[1] for call in auto_calls]

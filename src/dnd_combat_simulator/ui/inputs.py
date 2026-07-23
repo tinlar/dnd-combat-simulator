@@ -529,7 +529,11 @@ def _attack_profile_inputs(
                     gap="small",
                     width="content",
                 )
-                return [row for _ in range(field_count)]
+                if any(
+                    hasattr(row, method)
+                    for method in ("text_input", "number_input", "checkbox")
+                ):
+                    return [row for _ in range(field_count)]
             except TypeError:
                 pass
 
@@ -681,26 +685,65 @@ def _attack_profile_inputs(
         attack_bonus = None
         save_dc = None
 
+    def _damage_formula_help_icon(column: Any) -> None:
+        popover = getattr(column, "popover", None) or getattr(st, "popover", None)
+        if popover is not None:
+            with popover(
+                "?",
+                help="Damage formula dice syntax help",
+                width="content",
+                use_container_width=False,
+                key=f"{prefix}-damage-formula-help",
+            ) as help_area:
+                writer = getattr(help_area, "markdown", None) or getattr(
+                    st, "markdown", None
+                )
+                if writer is not None:
+                    writer(DAMAGE_FORMULA_HELP)
+            return
+        expander = getattr(column, "expander", None) or getattr(st, "expander", None)
+        if expander is not None:
+            with expander("? Damage formula help", expanded=False) as help_area:
+                writer = getattr(help_area, "markdown", None) or getattr(
+                    st, "markdown", None
+                )
+                if writer is not None:
+                    writer(DAMAGE_FORMULA_HELP)
+
+    def _damage_label_with_help(column: Any) -> None:
+        columns = getattr(column, "columns", None) or getattr(st, "columns", None)
+        if columns is None:
+            _row_text(column, "**Damage**", width=120)
+            return
+        try:
+            label_col, help_col = columns(
+                ["content", "content"], gap="small", vertical_alignment="center"
+            )
+        except TypeError:
+            try:
+                label_col, help_col = columns([1, 1], gap="small")
+            except TypeError:
+                _row_text(column, "**Damage**", width=120)
+                return
+        _row_text(label_col, "**Damage**", width="content")
+        _damage_formula_help_icon(help_col)
+
     damage_key = profile_widget_key(prefix, "damage_formula")
     damage_row = _compact_inline_row(f"{prefix}-damage-row", 5)
-    _row_text(damage_row[0], "**Damage**", width=120)
+    _damage_label_with_help(damage_row[0])
     if damage_key in session_state:
         damage_dice = damage_row[1].text_input(
-            "Damage Formula",
+            "Formula",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
-            help=DAMAGE_FORMULA_HELP,
             key=damage_key,
-            label_visibility="collapsed",
             width=200,
         )
     else:
         damage_dice = damage_row[1].text_input(
-            "Damage Formula",
+            "Formula",
             value="1d8",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
-            help=DAMAGE_FORMULA_HELP,
             key=damage_key,
-            label_visibility="collapsed",
             width=200,
         )
     use_build_damage_modifier = _safe_checkbox(
