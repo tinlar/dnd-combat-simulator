@@ -1,9 +1,12 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
+from textwrap import dedent
+
+from dnd_combat_simulator.combat import (
+    AttackFeature,
+)
 
 FEATURE_LABELS = {
     AttackFeature.ELVEN_ACCURACY: "Elven Accuracy",

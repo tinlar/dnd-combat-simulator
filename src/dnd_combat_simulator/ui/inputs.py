@@ -1,35 +1,81 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
-from dnd_combat_simulator.ui.widget_keys import *  # noqa: F403
-from dnd_combat_simulator.ui.state import *  # noqa: F403
+from contextlib import nullcontext
+
+from dnd_combat_simulator.combat import (
+    AttackFeature,
+    AttackRollMode,
+    ResolutionType,
+    SuccessfulSaveDamage,
+    is_feature_available,
+)
+from dnd_combat_simulator.simulation import (
+    AttackProfile,
+    BuildConfig,
+    ManagedResource,
+    ResourceCost,
+    TriggerFrequency,
+    TriggerType,
+)
+from dnd_combat_simulator.ui.components import (
+    CONFIGURATION_TOOLBAR_CSS,
+    _render_section_container,
+)
+from dnd_combat_simulator.ui.constants import (
+    ATTACK_DELETE_CONFIRMATION_KEY,
+    DAMAGE_FORMULA_HELP,
+    DAMAGE_FORMULA_PLACEHOLDER,
+    FEATURE_HELP,
+    FEATURE_LABELS,
+    FEATURE_ORDER,
+    MANAGED_RESOURCE_COUNT_KEY,
+    MANAGED_RESOURCE_EXPANDED_KEY,
+    MANAGED_RESOURCE_IDS_KEY,
+    MAX_ATTACKS_PER_BUILD,
+    NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
+    RESOURCE_DELETE_CONFIRMATION_KEY,
+    SCENARIO_WIDGET_KEYS,
+)
+from dnd_combat_simulator.ui.sharing import _render_share_configuration_button
 from dnd_combat_simulator.ui.state import (
+    _attack_confirmation_id,
     _attack_display_heading,
     _attack_ids_from_state,
-    _build_from_state,
     _clear_resource_from_profiles,
     _default_attack_name,
     _delete_attack_state,
     _delete_managed_resource_state,
     _dependent_attack_names,
     _duplicate_attack_state,
+    _looks_like_widget_prefix,
     _managed_resource_ids_from_state,
     _managed_resources_from_state,
     _new_attack_id,
     _new_resource_id,
     _reset_triggers_referencing_attack,
     _resource_usage_profile_keys,
+    features_summary,
+    next_default_attack_name,
+    resource_summary,
+    trigger_summary,
 )
-from dnd_combat_simulator.ui.validation import _field_error, _validate_profile_fields
-from dnd_combat_simulator.ui.components import (
-    _render_section_container,
-    CONFIGURATION_TOOLBAR_CSS,
+from dnd_combat_simulator.ui.validation import (
+    _field_error,
+    _render_error,
+    _validate_profile_fields,
 )
-from dnd_combat_simulator.ui.sharing import _render_share_configuration_button
+from dnd_combat_simulator.ui.widget_keys import (
+    _state_widget_prefix,
+    attack_widget_prefix,
+    build_attack_ids_key,
+    feature_widget_key,
+    managed_resource_widget_key,
+    profile_prefix,
+    profile_widget_key,
+    trigger_expanded_state_key,
+)
 
 
 def format_features(features: frozenset[AttackFeature]) -> str:
@@ -81,8 +127,10 @@ def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> Attack
         "Another attack fails": TriggerType.AFTER_FAILURE,
         "Another attack critically hits": TriggerType.AFTER_CRITICAL,
         "Sometimes": TriggerType.SOMETIMES,
-    }.get(state.get(profile_widget_key(prefix, "trigger_type")), TriggerType.ALWAYS)
-    resource_costs = ()
+    }.get(
+        str(state.get(profile_widget_key(prefix, "trigger_type"))), TriggerType.ALWAYS
+    )
+    resource_costs: tuple[ResourceCost, ...] = ()
     if state.get(profile_widget_key(prefix, "resource_enabled"), False):
         resource_costs = (
             ResourceCost(
@@ -104,7 +152,7 @@ def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> Attack
             "Once per round": TriggerFrequency.ONCE_PER_ROUND,
             "Once per combat": TriggerFrequency.ONCE_PER_COMBAT,
         }.get(
-            state.get(profile_widget_key(prefix, "trigger_frequency")),
+            str(state.get(profile_widget_key(prefix, "trigger_frequency"))),
             TriggerFrequency.PER_SUCCESS,
         ),
         trigger_chance_percent=(
@@ -483,7 +531,7 @@ def _attack_profile_inputs(
         "Once per round": TriggerFrequency.ONCE_PER_ROUND,
         "Once per combat": TriggerFrequency.ONCE_PER_COMBAT,
     }.get(
-        state.get(profile_widget_key(prefix, "trigger_frequency")),
+        str(state.get(profile_widget_key(prefix, "trigger_frequency"))),
         TriggerFrequency.PER_SUCCESS,
     )
     trigger_chance_text = state.get(

@@ -1,15 +1,49 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
-from dnd_combat_simulator.ui.widget_keys import *  # noqa: F403
+import logging
+from secrets import randbelow
+from uuid import uuid4
 
-
-def build_attack_ids_key(build_prefix: str) -> str:
-    return f"{build_prefix}-{ATTACK_IDS_KEY_SUFFIX}"
+from dnd_combat_simulator.combat import (
+    AttackFeature,
+    AttackRollMode,
+    ResolutionType,
+    SuccessfulSaveDamage,
+    available_features,
+)
+from dnd_combat_simulator.sharing import (
+    SharedBuildConfiguration,
+    SharedConfiguration,
+    migrate_shared_build_attack_ids,
+)
+from dnd_combat_simulator.simulation import (
+    AttackProfile,
+    BuildConfig,
+    ManagedResource,
+    ResourceCost,
+    TriggerFrequency,
+    TriggerType,
+)
+from dnd_combat_simulator.ui.constants import (
+    ATTACK_DELETE_CONFIRMATION_KEY,
+    COMPARE_WIDGET_KEY,
+    FEATURE_ORDER,
+    MANAGED_RESOURCE_COUNT_KEY,
+    MANAGED_RESOURCE_IDS_KEY,
+    SCENARIO_WIDGET_KEYS,
+)
+from dnd_combat_simulator.ui.widget_keys import (
+    _state_widget_prefix,
+    attack_widget_prefix,
+    build_attack_ids_key,
+    feature_widget_key,
+    managed_resource_widget_key,
+    profile_prefix,
+    profile_widget_key,
+    trigger_expanded_state_key,
+)
 
 
 def _new_attack_id(build_prefix: str, position: int = 0) -> str:
@@ -261,6 +295,15 @@ def resource_summary(
     cost = profile.resource_costs[0]
     name = names.get(cost.resource_id, f"Invalid resource ({cost.resource_id})")
     return f"Resource: {cost.amount} {name} per execution"
+
+
+def format_features(features: frozenset[AttackFeature]) -> str:
+    selected = [
+        feature.value.replace("_", " ").title()
+        for feature in FEATURE_ORDER
+        if feature in features
+    ]
+    return ", ".join(selected) if selected else "None"
 
 
 def features_summary(features: frozenset[AttackFeature]) -> str:
@@ -518,6 +561,49 @@ def hydrate_session_state_from_shared_configuration(
         session_state,
         "second",
         migrate_shared_build_attack_ids("second", configuration.build_b),
+    )
+
+
+def _profile_definitions(
+    build_prefix: str, additional_attack_count: int
+) -> tuple[tuple[str, str, str], ...]:
+    """Return stable attack IDs, headings, and default names for visible profiles."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    key = build_attack_ids_key(build_prefix)
+    if additional_attack_count and (
+        key not in state or len(state.get(key, [])) != additional_attack_count + 1
+    ):
+        attack_ids = [
+            profile_prefix(build_prefix, index)
+            for index in range(additional_attack_count + 1)
+        ]
+        state[key] = attack_ids
+    else:
+        attack_ids = _attack_ids_from_state(state, build_prefix)
+    if len(attack_ids) > 11:
+        msg = "Attack count must be no more than 11."
+        raise ValueError(msg)
+    return tuple(
+        (attack_id, _attack_display_heading(index), _default_attack_name(index))
+        for index, attack_id in enumerate(attack_ids)
+    )
+
+
+def _build_config_from_profiles(
+    name: str,
+    profiles: tuple[AttackProfile, ...],
+) -> BuildConfig:
+    """Create a build config with every displayed profile attached."""
+    primary = profiles[0]
+    return BuildConfig(
+        name=name,
+        attack_bonus=primary.attack_bonus or 0,
+        damage_dice=primary.damage_dice,
+        attacks_per_round=primary.attacks_per_round,
+        attack_roll_mode=primary.attack_roll_mode,
+        attack_profiles=profiles,
     )
 
 

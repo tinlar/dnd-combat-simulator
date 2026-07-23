@@ -1,17 +1,56 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
-from dnd_combat_simulator.ui.widget_keys import *  # noqa: F403
-from dnd_combat_simulator.ui.state import _build_from_state
+import logging
+
+from dnd_combat_simulator.combat import (
+    ResolutionType,
+    SuccessfulSaveDamage,
+)
+from dnd_combat_simulator.share_store import (
+    InvalidShareIdError,
+    ShareNotFoundError,
+    ShareStore,
+    ShareStoreError,
+    StoredShareConfigurationError,
+    SupabaseShareStore,
+)
+from dnd_combat_simulator.sharing import (
+    SharedConfiguration,
+    SharedConfigurationError,
+    build_share_url,
+    build_short_share_url,
+    deserialize_shared_configuration,
+    serialize_shared_configuration,
+    shared_configuration_from_configs,
+)
+from dnd_combat_simulator.simulation import (
+    ScenarioConfig,
+)
+from dnd_combat_simulator.ui.components import _mount_unified_share_component
+from dnd_combat_simulator.ui.constants import (
+    COMPARE_WIDGET_KEY,
+    GENERATED_SHARE_FINGERPRINT_KEY,
+    GENERATED_SHARE_URL_KEY,
+    INVALID_SHARED_CONFIG_MESSAGE_KEY,
+    LOADED_SHARE_ID_KEY,
+    LOADED_SHARED_CONFIG_MESSAGE_KEY,
+    LOADED_SHARED_CONFIG_TOKEN_KEY,
+    SCENARIO_WIDGET_KEYS,
+    SHARE_ERROR_MESSAGE_KEY,
+)
+from dnd_combat_simulator.ui.state import (
+    _build_from_state,
+    _managed_resources_from_state,
+    hydrate_session_state_from_shared_configuration,
+)
 from dnd_combat_simulator.ui.validation import (
     _configuration_errors_for_current_state,
     _validation_errors_for_configuration,
 )
-from dnd_combat_simulator.ui.components import _get_share_toolbar_component
+
+logger = logging.getLogger(__name__)
 
 
 def _resolution_type_label(resolution_type: ResolutionType) -> str:
@@ -117,6 +156,8 @@ def load_shared_configuration_from_query() -> None:
     if not resolved:
         return
     kind, value = resolved
+    if value is None:
+        return
     if kind == "share":
         if getattr(st, "session_state", {}).get(LOADED_SHARE_ID_KEY) == value:
             return

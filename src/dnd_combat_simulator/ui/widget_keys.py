@@ -1,10 +1,20 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
+from dnd_combat_simulator.combat import (
+    AttackFeature,
+)
+from dnd_combat_simulator.ui.constants import (
+    ATTACK_IDS_KEY_SUFFIX,
+    TRIGGER_EXPANDED_KEY_SUFFIX,
+)
+
+
+def _looks_like_widget_prefix(build_prefix: str, attack_id: str) -> bool:
+    return attack_id.startswith(f"{build_prefix}-primary") or attack_id.startswith(
+        f"{build_prefix}-additional-"
+    )
 
 
 def build_attack_ids_key(build_prefix: str) -> str:
