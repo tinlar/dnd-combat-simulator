@@ -3364,23 +3364,33 @@ def test_attack_toolbar_css_is_scoped_and_compact() -> None:
     assert '[class*="st-key-first-attack-"][class*="-toolbar"]' in css
     assert '[class*="st-key-second-attack-"][class*="-toolbar"]' in css
     assert '[class$="-toolbar"]' not in css
-    assert '[data-testid="stVerticalBlockBorderWrapper"]' in css
+    assert 'div[data-testid="stVerticalBlockBorderWrapper"] > div' not in css
+    assert "configuration-toolbar" not in css
+
+    assert '[data-testid="stVerticalBlockBorderWrapper"] {' in css
+    assert '[data-testid="stVerticalBlockBorderWrapper"] > div' in css
     assert '[data-testid="stVerticalBlock"]' in css
     assert '[data-testid="stHorizontalBlock"]' in css
-    assert "padding: 2px 4px" in css
-    assert "padding: 0" in css
-    assert "height: 36px" in css
-    assert "max-height: 36px" in css
+    assert '[data-testid="stElementContainer"]' in css
     assert 'button[kind="tertiary"]' in css
-    assert "min-height" not in css
-    assert "padding-top: 0" in css
-    assert "padding-bottom: 0" in css
+
+    assert "padding: 0 !important" in css
+    assert "padding: 2px 4px !important" in css
+    assert "gap: 2px !important" in css
+    assert "row-gap: 0 !important" in css
+    assert "width: 32px" in css
+    assert "min-width: 32px" in css
+    assert "height: 32px" in css
+    assert "min-height: 32px" in css
+    assert "max-height: 32px" in css
+    assert "height: 36px" not in css
+    assert "max-height: 36px" not in css
+
     assert "focus-visible" in css
     assert "disabled styling" in css
     assert "tooltips" in css
     assert "Confirm Delete" not in css
-    assert '\nbutton[kind="tertiary"]' not in css
-    assert "configuration-toolbar" not in css
+    assert chr(10) + 'button[kind="tertiary"]' not in css
 
 
 def test_streamlit_duplicate_button_copies_persistent_state_without_exceptions() -> (
