@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any
 
@@ -410,12 +411,19 @@ def _render_managed_resources(
 
 
 def _safe_checkbox(st: Any, label: str, *, key: str, default: bool) -> bool:
-    state = getattr(st, "session_state", {})
+    import sys
+
+    streamlit_module = sys.modules.get("streamlit")
+    state = getattr(
+        st, "session_state", getattr(streamlit_module, "session_state", {})
+    )
+    if not isinstance(state, Mapping):
+        state = getattr(streamlit_module, "session_state", {})
     kwargs: dict[str, object] = {"key": key}
     if key not in state:
         kwargs["value"] = default
     checkbox = getattr(st, "checkbox", None)
-    if checkbox is None or not hasattr(st, "session_state"):
+    if checkbox is None:
         value = state.get(key, default)
     else:
         value = checkbox(label, **kwargs)
@@ -463,84 +471,195 @@ def _attack_profile_inputs(
         "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
     }[resolution_type_label]
     _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
-    row_one = st.columns(2)
-    use_build_attack_bonus = _safe_checkbox(
-        st,
-        f"Use Build Attack Bonus ({resolved_math_defaults.attack_bonus:+d})",
-        key=profile_widget_key(prefix, "use_build_attack_bonus"),
-        default=True,
+    def _row_text(column: Any, text: str) -> None:
+        writer = getattr(column, "markdown", None) or getattr(st, "markdown", None)
+        if writer is not None:
+            writer(text)
+
+    use_build_attack_bonus = bool(
+        session_state.get(profile_widget_key(prefix, "use_build_attack_bonus"), True)
     )
-    use_build_save_dc = _safe_checkbox(
-        st,
-        f"Use Build Save DC ({resolved_math_defaults.save_dc})",
-        key=profile_widget_key(prefix, "use_build_save_dc"),
-        default=True,
+    use_build_save_dc = bool(
+        session_state.get(profile_widget_key(prefix, "use_build_save_dc"), True)
     )
+
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus_key = profile_widget_key(prefix, "attack_bonus")
-        if attack_bonus_key in session_state:
-            attack_bonus = row_one[0].number_input(
-                "Attack bonus",
+        attack_row = st.columns(4)
+        _row_text(attack_row[0], "**Attack Bonus**")
+        use_build_attack_bonus = _safe_checkbox(
+            attack_row[1],
+            "Use Build Default",
+            key=profile_widget_key(prefix, "use_build_attack_bonus"),
+            default=True,
+        )
+        attack_bonus_custom_key = f"{attack_bonus_key}-custom-value"
+        if use_build_attack_bonus:
+            attack_bonus = session_state.get(attack_bonus_custom_key, 5)
+            if attack_bonus_key in session_state:
+                previous_attack_bonus = session_state[attack_bonus_key]
+                if previous_attack_bonus != resolved_math_defaults.attack_bonus:
+                    attack_bonus = previous_attack_bonus
+                    session_state[attack_bonus_custom_key] = previous_attack_bonus
+            session_state[attack_bonus_key] = resolved_math_defaults.attack_bonus
+            attack_row[2].number_input(
+                "Attack Bonus value",
+                value=resolved_math_defaults.attack_bonus,
                 step=1,
                 key=attack_bonus_key,
-                disabled=use_build_attack_bonus,
+                disabled=True,
+                label_visibility="collapsed",
+            )
+        elif attack_bonus_custom_key in session_state:
+            session_state[attack_bonus_key] = session_state[attack_bonus_custom_key]
+            attack_bonus = attack_row[2].number_input(
+                "Attack Bonus value",
+                step=1,
+                key=attack_bonus_key,
+                label_visibility="collapsed",
+            )
+        elif attack_bonus_key in session_state:
+            attack_bonus = attack_row[2].number_input(
+                "Attack Bonus value",
+                step=1,
+                key=attack_bonus_key,
+                label_visibility="collapsed",
             )
         else:
-            attack_bonus = row_one[0].number_input(
-                "Attack bonus",
+            attack_bonus = attack_row[2].number_input(
+                "Attack Bonus value",
                 value=5,
                 step=1,
                 key=attack_bonus_key,
-                disabled=use_build_attack_bonus,
+                label_visibility="collapsed",
             )
+        effective_attack_bonus = (
+            resolved_math_defaults.attack_bonus
+            if use_build_attack_bonus
+            else int(attack_bonus)
+        )
+        _row_text(attack_row[3], f"Effective: {effective_attack_bonus:+d}")
         _field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc_key = profile_widget_key(prefix, "save_dc")
-        if save_dc_key in session_state:
-            save_dc = row_one[0].number_input(
-                "Save DC",
+        save_row = st.columns(4)
+        _row_text(save_row[0], "**Save DC**")
+        use_build_save_dc = _safe_checkbox(
+            save_row[1],
+            "Use Build Default",
+            key=profile_widget_key(prefix, "use_build_save_dc"),
+            default=True,
+        )
+        save_dc_custom_key = f"{save_dc_key}-custom-value"
+        if use_build_save_dc:
+            save_dc = session_state.get(save_dc_custom_key, 13)
+            if save_dc_key in session_state:
+                previous_save_dc = session_state[save_dc_key]
+                if previous_save_dc != resolved_math_defaults.save_dc:
+                    save_dc = previous_save_dc
+                    session_state[save_dc_custom_key] = previous_save_dc
+            session_state[save_dc_key] = resolved_math_defaults.save_dc
+            save_row[2].number_input(
+                "Save DC value",
+                min_value=1,
+                value=resolved_math_defaults.save_dc,
+                step=1,
+                key=save_dc_key,
+                disabled=True,
+                label_visibility="collapsed",
+            )
+        elif save_dc_custom_key in session_state:
+            session_state[save_dc_key] = session_state[save_dc_custom_key]
+            save_dc = save_row[2].number_input(
+                "Save DC value",
                 min_value=1,
                 step=1,
                 key=save_dc_key,
-                disabled=use_build_save_dc,
+                label_visibility="collapsed",
+            )
+        elif save_dc_key in session_state:
+            save_dc = save_row[2].number_input(
+                "Save DC value",
+                min_value=1,
+                step=1,
+                key=save_dc_key,
+                label_visibility="collapsed",
             )
         else:
-            save_dc = row_one[0].number_input(
-                "Save DC",
+            save_dc = save_row[2].number_input(
+                "Save DC value",
                 min_value=1,
                 value=13,
                 step=1,
                 key=save_dc_key,
-                disabled=use_build_save_dc,
+                label_visibility="collapsed",
             )
+        effective_save_dc = (
+            resolved_math_defaults.save_dc if use_build_save_dc else int(save_dc)
+        )
+        _row_text(save_row[3], f"Effective: {effective_save_dc}")
         _field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
     else:
         attack_bonus = None
         save_dc = None
-    use_build_damage_modifier = _safe_checkbox(
-        st,
-        f"Add Build Damage Modifier ({resolved_math_defaults.damage_modifier:+d})",
-        key=profile_widget_key(prefix, "use_build_damage_modifier"),
-        default=True,
-    )
+
     damage_key = profile_widget_key(prefix, "damage_formula")
+    damage_row = st.columns(5)
+    _row_text(damage_row[0], "**Damage**")
     if damage_key in session_state:
-        damage_dice = row_one[1].text_input(
+        damage_dice = damage_row[1].text_input(
             "Damage Formula",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
+            label_visibility="collapsed",
         )
     else:
-        damage_dice = row_one[1].text_input(
+        damage_dice = damage_row[1].text_input(
             "Damage Formula",
             value="1d8",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
             help=DAMAGE_FORMULA_HELP,
             key=damage_key,
+            label_visibility="collapsed",
         )
+    use_build_damage_modifier = _safe_checkbox(
+        damage_row[2],
+        "Add Build Modifier",
+        key=profile_widget_key(prefix, "use_build_damage_modifier"),
+        default=True,
+    )
+    damage_modifier_key = (
+        f"{profile_widget_key(prefix, 'use_build_damage_modifier')}-value"
+    )
+    damage_modifier_value = (
+        resolved_math_defaults.damage_modifier if use_build_damage_modifier else 0
+    )
+    damage_row[3].number_input(
+        "Damage modifier value",
+        value=damage_modifier_value,
+        step=1,
+        key=damage_modifier_key,
+        disabled=use_build_damage_modifier,
+        label_visibility="collapsed",
+    )
+    preview_profile = AttackProfile(
+        name=attack_name or default_name,
+        attack_bonus=None if attack_bonus is None else int(attack_bonus),
+        damage_dice=damage_dice,
+        attacks_per_round=1,
+        resolution_type=resolution_type,
+        save_dc=None if save_dc is None else int(save_dc),
+        use_build_attack_bonus=use_build_attack_bonus,
+        use_build_save_dc=use_build_save_dc,
+        use_build_damage_modifier=use_build_damage_modifier,
+    )
+    resolved_values = resolve_attack_profile_values(
+        preview_profile, resolved_math_defaults
+    )
+    _row_text(damage_row[4], f"Effective: {resolved_values.damage_formula}")
     if not _field_error(errors_by_key, profile_widget_key(prefix, "damage_formula")):
         current_damage_errors = _validate_profile_fields(
             AttackProfile(
@@ -556,26 +675,6 @@ def _attack_profile_inputs(
             if error.key == profile_widget_key(prefix, "damage_formula"):
                 _render_error(error.message)
                 break
-    preview_profile = AttackProfile(
-        name=attack_name or default_name,
-        attack_bonus=None if attack_bonus is None else int(attack_bonus),
-        damage_dice=damage_dice,
-        attacks_per_round=1,
-        resolution_type=resolution_type,
-        save_dc=None if save_dc is None else int(save_dc),
-        use_build_attack_bonus=use_build_attack_bonus,
-        use_build_save_dc=use_build_save_dc,
-        use_build_damage_modifier=use_build_damage_modifier,
-    )
-    resolved_values = resolve_attack_profile_values(
-        preview_profile, resolved_math_defaults
-    )
-    caption = getattr(st, "caption", lambda *args, **kwargs: None)
-    if resolution_type is ResolutionType.ATTACK_ROLL:
-        caption(f"Effective Attack Bonus: {resolved_values.attack_bonus or 0:+d}")
-    elif resolution_type is ResolutionType.SAVING_THROW:
-        caption(f"Effective Save DC: {resolved_values.save_dc or 0}")
-    caption(f"Effective Damage Formula: {resolved_values.damage_formula}")
 
     row_two = st.columns(3)
     attacks_per_round = row_two[0].number_input(
