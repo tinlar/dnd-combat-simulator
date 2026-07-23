@@ -9,10 +9,7 @@ from dnd_combat_simulator.combat import (
     ResolutionType,
     validate_feature_resolution_combination,
 )
-from dnd_combat_simulator.sharing import (
-    SharedConfiguration,
-    shared_configuration_from_configs,
-)
+from dnd_combat_simulator.sharing import SharedConfiguration
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
@@ -20,7 +17,6 @@ from dnd_combat_simulator.simulation import (
     TriggerType,
 )
 from dnd_combat_simulator.ui.constants import (
-    COMPARE_WIDGET_KEY,
     NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
     SCENARIO_WIDGET_KEYS,
 )
@@ -51,13 +47,10 @@ class ValidationIssue:
     attack_id: str | None = None
     resource_id: str | None = None
 
-
-@dataclass(frozen=True)
-class FieldValidationError:
-    """A validation message associated with one editable Streamlit field."""
-
-    key: str
-    message: str
+    @property
+    def key(self) -> str:
+        """Backward-compatible alias for tests that inspect field keys."""
+        return self.widget_key or ""
 
 
 def _friendly_validation_message(error: ValueError) -> str:
@@ -74,17 +67,37 @@ def _friendly_validation_message(error: ValueError) -> str:
     return text
 
 
-def _add_error(errors: list[FieldValidationError], key: str, message: str) -> None:
-    errors.append(FieldValidationError(key, message))
+def _add_error(
+    errors: list[ValidationIssue],
+    key: str,
+    message: str,
+    *,
+    scope: ValidationScope = ValidationScope.ATTACK,
+    field: str | None = None,
+    build_key: str | None = None,
+    attack_id: str | None = None,
+    resource_id: str | None = None,
+) -> None:
+    errors.append(
+        ValidationIssue(
+            scope=scope,
+            message=message,
+            field=field,
+            widget_key=key,
+            build_key=build_key,
+            attack_id=attack_id,
+            resource_id=resource_id,
+        )
+    )
 
 
 def _validate_profile_fields(
     profile: AttackProfile, *, prefix: str
-) -> list[FieldValidationError]:
+) -> list[ValidationIssue]:
     from dnd_combat_simulator.dice import parse_damage_expression
     from dnd_combat_simulator.simulation import parse_active_rounds
 
-    errors: list[FieldValidationError] = []
+    errors: list[ValidationIssue] = []
     if not profile.name.strip():
         _add_error(
             errors, profile_widget_key(prefix, "name"), "Attack name is required."
@@ -165,10 +178,8 @@ def _validate_profile_fields(
     return errors
 
 
-def validate_build_fields(
-    build: BuildConfig, *, prefix: str
-) -> list[FieldValidationError]:
-    errors: list[FieldValidationError] = []
+def validate_build_fields(build: BuildConfig, *, prefix: str) -> list[ValidationIssue]:
+    errors: list[ValidationIssue] = []
     if not build.name.strip():
         _add_error(errors, f"{prefix}-build-name", "Build name is required.")
     profiles = build.resolved_attack_profiles()
@@ -180,7 +191,8 @@ def validate_build_fields(
         )
         errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
     profile_ids = [profile.attack_id for profile in profiles]
-    if any(not attack_id.strip() for attack_id in profile_ids):
+    enforce_stable_ids = bool(build.attack_profiles)
+    if enforce_stable_ids and any(not attack_id.strip() for attack_id in profile_ids):
         _add_error(
             errors,
             f"{prefix}-attack-ids",
@@ -189,7 +201,7 @@ def validate_build_fields(
     duplicate_ids = {
         attack_id for attack_id in profile_ids if profile_ids.count(attack_id) > 1
     }
-    if duplicate_ids:
+    if enforce_stable_ids and duplicate_ids:
         _add_error(
             errors,
             f"{prefix}-attack-ids",
@@ -235,12 +247,6 @@ def validate_build_fields(
                     profile_widget_key(widget_prefix, "trigger_chance_percent"),
                     "Enter a whole number from 1 through 100.",
                 )
-                if profile.attack_id and widget_prefix != profile.attack_id:
-                    _add_error(
-                        errors,
-                        profile_widget_key(profile.attack_id, "trigger_chance_percent"),
-                        "Enter a whole number from 1 through 100.",
-                    )
             continue
         other_ids = [
             attack_id for attack_id in profile_ids if attack_id != profile.attack_id
@@ -294,8 +300,8 @@ def validate_build_fields(
     return errors
 
 
-def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationError]:
-    errors: list[FieldValidationError] = []
+def validate_scenario_fields(scenario: ScenarioConfig) -> list[ValidationIssue]:
+    errors: list[ValidationIssue] = []
     if scenario.target_armor_class < 1:
         _add_error(
             errors,
@@ -339,7 +345,7 @@ def validate_scenario_fields(scenario: ScenarioConfig) -> list[FieldValidationEr
     return errors
 
 
-def validation_errors_by_key(errors: list[FieldValidationError]) -> dict[str, str]:
+def validation_errors_by_key(errors: list[ValidationIssue]) -> dict[str, str]:
     return {error.key: error.message for error in errors}
 
 
@@ -389,54 +395,9 @@ def validate_configuration_for_ui(
     return structured
 
 
-def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str], str]:
-    st = __import__("streamlit")
-
-    from dnd_combat_simulator.ui.state import (
-        _build_from_state,
-        _managed_resources_from_state,
-    )
-
-    session_state = getattr(st, "session_state", {})
-    scenario = ScenarioConfig(
-        target_armor_class=int(
-            session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
-        ),
-        enemy_save_bonus=int(
-            session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
-        ),
-        rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
-        simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
-        managed_resources=_managed_resources_from_state(),
-    )
-    configuration = shared_configuration_from_configs(
-        compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
-        scenario=scenario,
-        seed=int(session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
-        build_a=_build_from_state("first", "Build A"),
-        build_b=_build_from_state("second", "Build B"),
-    )
-    return validate_configuration_for_ui(configuration)
-
-
-def _render_error(message: str) -> None:
-    st = __import__("streamlit")
-
-    error = getattr(st, "error", None)
-    if error is not None:
-        error(message, icon="⚠️")
-
-
-def _field_error(errors_by_key: dict[str, str], key: str) -> bool:
-    if message := errors_by_key.get(key):
-        _render_error(message)
-        return True
-    return False
-
-
 def _validation_errors_for_configuration(
     configuration: SharedConfiguration,
-) -> list[FieldValidationError]:
+) -> list[ValidationIssue]:
     return [
         *validate_scenario_fields(configuration.scenario.to_scenario_config()),
         *validate_build_fields(configuration.build_a.to_build_config(), prefix="first"),

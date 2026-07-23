@@ -1,338 +1,169 @@
-"""Streamlit application entry point."""
+"""Streamlit application entry point.
+
+Only ``main`` and ``configure_page`` are retained as intentional compatibility
+imports for external callers that historically imported the application entry
+point or page setup hook from this module. UI helper internals live in their
+owning ``dnd_combat_simulator.ui`` modules.
+"""
 
 from __future__ import annotations
 
-import importlib as _importlib
-import logging
+import time
 
-from dnd_combat_simulator import APP_TITLE
-from dnd_combat_simulator.sharing import SharedConfigurationError
-from dnd_combat_simulator.simulation import ScenarioConfig
-from dnd_combat_simulator.ui.components import _render_section_container, configure_page
+# Additional explicit legacy imports kept temporarily for older tests and notebooks;
+# they are intentionally excluded from __all__ so the public surface stays narrow.
+from dnd_combat_simulator.ui.components import (
+    _SHARE_TOOLBAR_COMPONENT,
+    ATTACK_TOOLBAR_CSS,
+    PAGE_WIDTH_CSS,
+    _mount_unified_share_component,
+    _render_section_container,
+    configure_page,
+)
 from dnd_combat_simulator.ui.constants import (
     COMPARE_WIDGET_KEY,
+    DAMAGE_FORMULA_HELP,
+    FEATURE_HELP,
+    LOADED_SHARED_CONFIG_TOKEN_KEY,
     SCENARIO_WIDGET_KEYS,
     SIMULATION_DURATION_MESSAGE_KEY,
     SIMULATION_PENDING_KEY,
+    SIMULATION_RUNNING_KEY,
 )
 from dnd_combat_simulator.ui.inputs import (
+    _attack_profile_inputs,
+    _build_config_from_profiles,
     _build_inputs,
+    _feature_inputs,
+    _profile_definitions,
+    _render_configuration_toolbar,
     _render_managed_resources,
+    _trigger_source_options,
+)
+from dnd_combat_simulator.ui.page import main
+from dnd_combat_simulator.ui.results import (
+    _comparison_round_chart_data,
+    _profile_breakdown_rows,
+    _profile_contribution_chart_data,
+    _profile_damage_per_use_chart_data,
+    _render_comparison_charts,
+    _render_comparison_results,
+    _render_single_build_charts,
+    _render_single_build_results,
+    _result_rows,
+    _round_chart_data,
+    _single_result_rows,
+    _single_round_breakdown_rows,
+    format_damage,
+    format_rate,
 )
 from dnd_combat_simulator.ui.run_control import (
     ComparisonInputs,
+    SimulationInputs,
     SingleBuildInputs,
+    _mark_simulation_pending,
     _render_run_simulation_button,
+    _run_comparison_with_feedback,
+    _run_single_build_with_feedback,
+    run_comparison_from_inputs,
+    run_simulation_from_inputs,
+    run_single_build_from_inputs,
+    validate_simulation_inputs,
 )
 from dnd_combat_simulator.ui.sharing import (
-    INVALID_SHARED_CONFIG_MESSAGE_KEY,
-    LOADED_SHARED_CONFIG_MESSAGE_KEY,
+    _current_shared_configuration_url,
+    _render_share_configuration_button,
+    get_streamlit_share_store,
+    load_shared_configuration_from_query,
+    validate_configuration_for_ui,
 )
-from dnd_combat_simulator.ui.state import _build_from_state
-from dnd_combat_simulator.ui.validation import (
-    _field_error,
-    _friendly_validation_message,
+from dnd_combat_simulator.ui.state import (
+    _build_from_state,
+    _copy_attack_widget_state,
+    _delete_attack_state,
+    _duplicate_attack_state,
+    _managed_resources_from_state,
+    hydrate_session_state_from_shared_configuration,
+    next_default_attack_name,
+)
+from dnd_combat_simulator.ui.validation import validate_build_fields
+from dnd_combat_simulator.ui.widget_keys import (
+    attack_widget_prefix,
+    build_attack_ids_key,
+    feature_widget_key,
+    managed_resource_widget_key,
+    profile_widget_key,
+)
+
+__all__ = ("main", "configure_page")
+
+_LEGACY_COMPATIBILITY_NAMES = (
+    ATTACK_TOOLBAR_CSS,
+    PAGE_WIDTH_CSS,
+    DAMAGE_FORMULA_HELP,
+    FEATURE_HELP,
+    COMPARE_WIDGET_KEY,
+    LOADED_SHARED_CONFIG_TOKEN_KEY,
+    SCENARIO_WIDGET_KEYS,
+    _attack_profile_inputs,
+    _build_config_from_profiles,
+    _feature_inputs,
+    _profile_definitions,
+    _comparison_round_chart_data,
+    _profile_breakdown_rows,
+    _profile_contribution_chart_data,
+    _profile_damage_per_use_chart_data,
+    _result_rows,
+    _round_chart_data,
+    _single_result_rows,
+    _single_round_breakdown_rows,
+    format_damage,
+    format_rate,
+    ComparisonInputs,
+    SimulationInputs,
+    SingleBuildInputs,
+    run_comparison_from_inputs,
+    run_simulation_from_inputs,
+    run_single_build_from_inputs,
+    validate_simulation_inputs,
+    _current_shared_configuration_url,
+    _build_from_state,
+    hydrate_session_state_from_shared_configuration,
+    next_default_attack_name,
     validate_build_fields,
-    validate_scenario_fields,
-    validation_errors_by_key,
+    feature_widget_key,
+    profile_widget_key,
+    time,
+    SIMULATION_DURATION_MESSAGE_KEY,
+    SIMULATION_PENDING_KEY,
+    SIMULATION_RUNNING_KEY,
+    _SHARE_TOOLBAR_COMPONENT,
+    _mount_unified_share_component,
+    _render_section_container,
+    _build_inputs,
+    _render_configuration_toolbar,
+    _render_managed_resources,
+    _trigger_source_options,
+    _render_comparison_charts,
+    _render_comparison_results,
+    _render_single_build_charts,
+    _render_single_build_results,
+    _mark_simulation_pending,
+    _render_run_simulation_button,
+    _run_comparison_with_feedback,
+    _run_single_build_with_feedback,
+    _render_share_configuration_button,
+    get_streamlit_share_store,
+    load_shared_configuration_from_query,
+    validate_configuration_for_ui,
+    _copy_attack_widget_state,
+    _delete_attack_state,
+    _duplicate_attack_state,
+    _managed_resources_from_state,
+    attack_widget_prefix,
+    build_attack_ids_key,
+    managed_resource_widget_key,
 )
-
-logger = logging.getLogger(__name__)
-
-_COMPATIBILITY_MODULE_NAMES = (
-    "components",
-    "constants",
-    "inputs",
-    "results",
-    "run_control",
-    "sharing",
-    "state",
-    "validation",
-    "widget_keys",
-)
-for _module_name in _COMPATIBILITY_MODULE_NAMES:
-    _module = _importlib.import_module(f"dnd_combat_simulator.ui.{_module_name}")
-    for _name, _value in vars(_module).items():
-        if not _name.startswith("__"):
-            globals().setdefault(_name, _value)
-
-del _importlib, _module, _module_name, _name, _value
-
-__all__ = tuple(
-    sorted(
-        name
-        for name in globals()
-        if name in {"main", "configure_page"} or not name.startswith("__")
-    )
-)
-
-
-# Compatibility wrappers keep monkeypatches on dnd_combat_simulator.app visible while
-# delegating implementation to focused UI modules.
-def _sync_ui_module_globals() -> None:
-    from dnd_combat_simulator.ui import components, results, run_control, sharing, state
-
-    for module in (components, results, run_control, sharing, state):
-        for name, value in globals().items():
-            if name in {
-                "_render_single_build_results",
-                "_render_comparison_results",
-                "_run_single_build_with_feedback",
-                "_run_comparison_with_feedback",
-                "ensure_session_random_seed",
-                "load_shared_configuration_from_query",
-                "_render_configuration_toolbar",
-                "_render_share_configuration_button",
-            }:
-                continue
-            if not name.startswith("__"):
-                vars(module)[name] = value
-
-
-def _render_single_build_results(build, result):
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import results as _results
-
-    return _results._render_single_build_results(build, result)
-
-
-def _render_comparison_results(*args):
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import results as _results
-
-    if len(args) == 1:
-        return _results._render_comparison_results(args[0])
-    return _results._render_comparison_results(*args)
-
-
-def _run_single_build_with_feedback(inputs):
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import run_control as _run_control
-
-    return _run_control._run_single_build_with_feedback(inputs)
-
-
-def _run_comparison_with_feedback(inputs):
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import run_control as _run_control
-
-    return _run_control._run_comparison_with_feedback(inputs)
-
-
-def ensure_session_random_seed(session_state):
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import state as _state
-
-    return _state.ensure_session_random_seed(session_state)
-
-
-def load_shared_configuration_from_query():
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import sharing as _sharing
-
-    return _sharing.load_shared_configuration_from_query()
-
-
-def _render_configuration_toolbar():
-    from dnd_combat_simulator.ui import inputs as _inputs
-
-    # Focused implementation uses st.container(
-    #     key="configuration-toolbar", width="content", horizontal=True,
-    #     vertical_alignment="center", gap=None
-    # ) and calls _render_simulation_settings() plus
-    # _render_share_configuration_button().
-    _sync_ui_module_globals()
-    return _inputs._render_configuration_toolbar()
-
-
-def _render_share_configuration_button():
-    import streamlit as st
-
-    _sync_ui_module_globals()
-    from dnd_combat_simulator.ui import sharing as _sharing
-
-    component_factory = st.components.v2.component
-    disabled = False
-    on_create_share_change = _sharing._render_share_configuration_button
-    callback_marker = "on_create_share_change=on_create_share_change"
-    if (
-        callback_marker
-        and on_create_share_change is None
-        and component_factory is None
-        and disabled
-    ):
-        return None
-    return _sharing._render_share_configuration_button()
-
-
-def main() -> None:
-    """Render the Streamlit simulation page."""
-    import streamlit as st
-
-    configure_page()
-    load_shared_configuration_from_query()
-    if getattr(st, "session_state", {}).pop(LOADED_SHARED_CONFIG_MESSAGE_KEY, False):
-        st.success("Shared configuration loaded.")
-    if message := getattr(st, "session_state", {}).pop(
-        INVALID_SHARED_CONFIG_MESSAGE_KEY, None
-    ):
-        getattr(st, "warning", lambda *args, **kwargs: None)(message)
-    st.title(APP_TITLE)
-    ensure_session_random_seed(getattr(st, "session_state", {}))
-    simulations, seed = _render_configuration_toolbar()
-
-    with _render_section_container():
-        st.subheader("Shared scenario")
-        scenario_row = st.columns(4)
-        target_armor_class = scenario_row[0].number_input(
-            "Target Armor Class",
-            min_value=1,
-            value=15,
-            step=1,
-            key=SCENARIO_WIDGET_KEYS["target_armor_class"],
-        )
-        enemy_save_bonus = scenario_row[1].number_input(
-            "Enemy Save Bonus",
-            value=3,
-            step=1,
-            key=SCENARIO_WIDGET_KEYS["enemy_save_bonus"],
-        )
-        rounds = scenario_row[2].number_input(
-            "Number of rounds",
-            min_value=1,
-            value=4,
-            step=1,
-            key=SCENARIO_WIDGET_KEYS["rounds"],
-        )
-        scenario_pre_errors = validation_errors_by_key(
-            validate_scenario_fields(
-                ScenarioConfig(
-                    target_armor_class=int(target_armor_class),
-                    enemy_save_bonus=int(enemy_save_bonus),
-                    rounds=int(rounds),
-                    simulations=int(simulations),
-                )
-            )
-        )
-        for key in (
-            SCENARIO_WIDGET_KEYS["target_armor_class"],
-            SCENARIO_WIDGET_KEYS["rounds"],
-            SCENARIO_WIDGET_KEYS["simulations"],
-        ):
-            _field_error(scenario_pre_errors, key)
-        managed_resources = _render_managed_resources(scenario_pre_errors)
-
-        compare_container = scenario_row[3]
-        compare_toggle = getattr(compare_container, "toggle", st.toggle)
-        compare_enabled = compare_toggle(
-            "Compare with another build",
-            value=False,
-            key=COMPARE_WIDGET_KEY,
-        )
-    if compare_enabled:
-        st.write(
-            "Build A and Build B are simulated independently against the same "
-            "scenario using the same seed. Managed resources are copied per build."
-        )
-    else:
-        st.write(
-            "Simulate one build against the selected combat scenario. Managed "
-            "resources apply to that build only."
-        )
-
-    scenario = ScenarioConfig(
-        target_armor_class=int(target_armor_class),
-        enemy_save_bonus=int(enemy_save_bonus),
-        rounds=int(rounds),
-        simulations=int(simulations),
-        managed_resources=managed_resources,
-    )
-
-    if compare_enabled:
-        pre_render_errors = validation_errors_by_key(
-            [
-                *validate_build_fields(
-                    _build_from_state("first", "Build A"), prefix="first"
-                ),
-                *validate_build_fields(
-                    _build_from_state("second", "Build B"), prefix="second"
-                ),
-            ]
-        )
-        build_columns = st.columns(2)
-        with build_columns[0]:
-            first_build = _build_inputs("first", "Build A", pre_render_errors)
-        with build_columns[1]:
-            second_build = _build_inputs("second", "Build B", pre_render_errors)
-
-        current_errors = [
-            *validate_scenario_fields(scenario),
-            *validate_build_fields(first_build, prefix="first"),
-            *validate_build_fields(second_build, prefix="second"),
-        ]
-        if current_errors:
-            getattr(st, "warning", lambda *args, **kwargs: None)(
-                "Fix the highlighted fields before running the simulation."
-            )
-            getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
-        if message := getattr(st, "session_state", {}).pop(
-            SIMULATION_DURATION_MESSAGE_KEY, None
-        ):
-            st.success(message)
-        if _render_run_simulation_button(bool(current_errors)):
-            inputs = ComparisonInputs(
-                first_build=first_build,
-                second_build=second_build,
-                scenario=scenario,
-                seed=int(seed),
-            )
-            try:
-                comparison = _run_comparison_with_feedback(inputs)
-            except (ValueError, SharedConfigurationError) as error:
-                logger.exception("Comparison simulation failed during Streamlit run.")
-                st.error(_friendly_validation_message(error))
-            else:
-                st.success(
-                    getattr(st, "session_state", {}).pop(
-                        SIMULATION_DURATION_MESSAGE_KEY
-                    )
-                )
-                _render_comparison_results(comparison)
-    else:
-        pre_render_errors = validation_errors_by_key(
-            validate_build_fields(_build_from_state("first", "Build A"), prefix="first")
-        )
-        first_build = _build_inputs("first", "Build A", pre_render_errors)
-
-        current_errors = [
-            *validate_scenario_fields(scenario),
-            *validate_build_fields(first_build, prefix="first"),
-        ]
-        if current_errors:
-            getattr(st, "warning", lambda *args, **kwargs: None)(
-                "Fix the highlighted fields before running the simulation."
-            )
-            getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
-        if message := getattr(st, "session_state", {}).pop(
-            SIMULATION_DURATION_MESSAGE_KEY, None
-        ):
-            st.success(message)
-
-        state = getattr(st, "session_state", {})
-        if _render_run_simulation_button(bool(current_errors)):
-            single_inputs = SingleBuildInputs(
-                build=first_build,
-                scenario=scenario,
-                seed=int(seed),
-            )
-            try:
-                result = _run_single_build_with_feedback(single_inputs)
-            except (ValueError, SharedConfigurationError) as error:
-                logger.exception("Single-build simulation failed during Streamlit run.")
-                st.error(_friendly_validation_message(error))
-            else:
-                st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
-                _render_single_build_results(first_build, result)
 
 
 if __name__ == "__main__":

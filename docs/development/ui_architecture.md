@@ -42,3 +42,26 @@ pytest -q
 pytest --cov=src/dnd_combat_simulator --cov-branch --cov-report=term-missing
 python scripts/benchmark_simulation.py --repeats 3
 ```
+
+## Stage 3.1 architecture notes
+
+`dnd_combat_simulator.app` is now an entry-point module. Its intentional public
+compatibility surface is the explicit `__all__` tuple containing only `main` and
+`configure_page`; detailed rendering is orchestrated from `ui.page` and owned by
+focused UI modules.
+
+Validation uses the canonical `ValidationIssue` structure for scenario, build,
+attack, resource, and sharing-facing checks. Streamlit rendering is separated
+from pure validation: `ui.validation` constructs issues, while
+`ui.validation_rendering` displays field-level messages from those structured
+issues.
+
+Canonical simulation requests are validated in `ui.run_control` before the
+Streamlit cache boundary is invoked, so invalid requests raise a concise
+`ValueError` and are not cached. Cache tests instrument the execution boundary to
+verify invalid requests and failures do not become successful cache entries.
+
+Stage 3.1 tests add bounded Hypothesis coverage for attack identity/order, dice
+seed determinism, and deterministic canonical request generation. Streamlit
+AppTest coverage remains focused on real app loading and duplicate-button state
+behavior in this environment.
