@@ -1,10 +1,10 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
+from contextlib import nullcontext
+
+from dnd_combat_simulator import APP_TITLE
 
 SHARE_TOOLBAR_HTML = """
 <div class="share-toolbar" role="group" aria-label="Share configuration">

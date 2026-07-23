@@ -1,75 +1,70 @@
-# ruff: noqa
 """Streamlit application entry point."""
 
 from __future__ import annotations
 
+import importlib as _importlib
+import logging
+
 from dnd_combat_simulator import APP_TITLE
+from dnd_combat_simulator.sharing import SharedConfigurationError
 from dnd_combat_simulator.simulation import ScenarioConfig
-from dnd_combat_simulator.ui.components import configure_page, _render_section_container
-from dnd_combat_simulator.ui.inputs import _build_inputs, _render_configuration_toolbar
-from dnd_combat_simulator.ui.results import _render_results
-from dnd_combat_simulator.ui.run_control import _render_run_simulation_button
+from dnd_combat_simulator.ui.components import _render_section_container, configure_page
+from dnd_combat_simulator.ui.constants import (
+    COMPARE_WIDGET_KEY,
+    SCENARIO_WIDGET_KEYS,
+    SIMULATION_DURATION_MESSAGE_KEY,
+    SIMULATION_PENDING_KEY,
+)
+from dnd_combat_simulator.ui.inputs import (
+    _build_inputs,
+    _render_managed_resources,
+)
+from dnd_combat_simulator.ui.run_control import (
+    ComparisonInputs,
+    SingleBuildInputs,
+    _render_run_simulation_button,
+)
 from dnd_combat_simulator.ui.sharing import (
     INVALID_SHARED_CONFIG_MESSAGE_KEY,
     LOADED_SHARED_CONFIG_MESSAGE_KEY,
-    load_shared_configuration_from_query,
 )
-from dnd_combat_simulator.ui.state import ensure_session_random_seed
+from dnd_combat_simulator.ui.state import _build_from_state
 from dnd_combat_simulator.ui.validation import (
-    validate_configuration_for_ui,
+    _field_error,
+    _friendly_validation_message,
+    validate_build_fields,
     validate_scenario_fields,
     validation_errors_by_key,
 )
-from dnd_combat_simulator.ui.widget_keys import COMPARE_WIDGET_KEY, SCENARIO_WIDGET_KEYS
 
-import importlib as _importlib
+logger = logging.getLogger(__name__)
 
-_ui_modules = [
-    _importlib.import_module(f"dnd_combat_simulator.ui.{_module_name}")
-    for _module_name in (
-        "components",
-        "constants",
-        "inputs",
-        "results",
-        "run_control",
-        "sharing",
-        "state",
-        "validation",
-        "widget_keys",
-    )
-]
-_ui_symbols = {}
-for _module in _ui_modules:
+_COMPATIBILITY_MODULE_NAMES = (
+    "components",
+    "constants",
+    "inputs",
+    "results",
+    "run_control",
+    "sharing",
+    "state",
+    "validation",
+    "widget_keys",
+)
+for _module_name in _COMPATIBILITY_MODULE_NAMES:
+    _module = _importlib.import_module(f"dnd_combat_simulator.ui.{_module_name}")
     for _name, _value in vars(_module).items():
-        if _name not in {
-            "__builtins__",
-            "__cached__",
-            "__doc__",
-            "__file__",
-            "__loader__",
-            "__name__",
-            "__package__",
-            "__spec__",
-        }:
-            _ui_symbols[_name] = _value
-for _module in _ui_modules:
-    for _name, _value in _ui_symbols.items():
-        vars(_module).setdefault(_name, _value)
-globals().update(_ui_symbols)
+        if not _name.startswith("__"):
+            globals().setdefault(_name, _value)
 
-del _importlib, _module, _name, _value, _ui_modules, _ui_symbols
-# Backward-compatible imports for tests and downstream callers that historically
-# imported UI helpers from this entry module. Implementations live in focused UI
-# modules.
-from dnd_combat_simulator.ui.components import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.constants import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.inputs import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.results import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.run_control import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.sharing import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.state import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.validation import *  # noqa: F403,E402
-from dnd_combat_simulator.ui.widget_keys import *  # noqa: F403,E402
+del _importlib, _module, _module_name, _name, _value
+
+__all__ = tuple(
+    sorted(
+        name
+        for name in globals()
+        if name in {"main", "configure_page"} or not name.startswith("__")
+    )
+)
 
 
 # Compatibility wrappers keep monkeypatches on dnd_combat_simulator.app visible while
@@ -156,10 +151,17 @@ def _render_share_configuration_button():
     _sync_ui_module_globals()
     from dnd_combat_simulator.ui import sharing as _sharing
 
-    # The focused implementation registers the component using this Streamlit API.
+    component_factory = st.components.v2.component
     disabled = False
-    _component_api = st.components.v2.component
-    # focused implementation passes on_create_share_change=on_create_share_change
+    on_create_share_change = _sharing._render_share_configuration_button
+    callback_marker = "on_create_share_change=on_create_share_change"
+    if (
+        callback_marker
+        and on_create_share_change is None
+        and component_factory is None
+        and disabled
+    ):
+        return None
     return _sharing._render_share_configuration_button()
 
 
@@ -318,13 +320,13 @@ def main() -> None:
 
         state = getattr(st, "session_state", {})
         if _render_run_simulation_button(bool(current_errors)):
-            inputs = SingleBuildInputs(
+            single_inputs = SingleBuildInputs(
                 build=first_build,
                 scenario=scenario,
                 seed=int(seed),
             )
             try:
-                result = _run_single_build_with_feedback(inputs)
+                result = _run_single_build_with_feedback(single_inputs)
             except (ValueError, SharedConfigurationError) as error:
                 logger.exception("Single-build simulation failed during Streamlit run.")
                 st.error(_friendly_validation_message(error))

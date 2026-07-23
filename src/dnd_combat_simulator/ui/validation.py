@@ -1,15 +1,55 @@
-# ruff: noqa
 """Focused Streamlit UI helpers."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
-from dnd_combat_simulator.ui.widget_keys import *  # noqa: F403
-from dnd_combat_simulator.ui.state import (
-    _attack_ids_from_state,
-    _managed_resource_ids_from_state,
+from dataclasses import dataclass
+from enum import StrEnum
+
+from dnd_combat_simulator.combat import (
+    ResolutionType,
+    validate_feature_resolution_combination,
 )
+from dnd_combat_simulator.sharing import (
+    SharedConfiguration,
+    shared_configuration_from_configs,
+)
+from dnd_combat_simulator.simulation import (
+    AttackProfile,
+    BuildConfig,
+    ScenarioConfig,
+    TriggerType,
+)
+from dnd_combat_simulator.ui.constants import (
+    COMPARE_WIDGET_KEY,
+    NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
+    SCENARIO_WIDGET_KEYS,
+)
+from dnd_combat_simulator.ui.widget_keys import (
+    _state_widget_prefix,
+    attack_widget_prefix,
+    managed_resource_widget_key,
+    profile_prefix,
+    profile_widget_key,
+)
+
+
+class ValidationScope(StrEnum):
+    SCENARIO = "scenario"
+    BUILD = "build"
+    ATTACK = "attack"
+    RESOURCE = "resource"
+    SHARED_CONFIGURATION = "shared_configuration"
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationIssue:
+    scope: ValidationScope
+    message: str
+    field: str | None = None
+    widget_key: str | None = None
+    build_key: str | None = None
+    attack_id: str | None = None
+    resource_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +206,7 @@ def validate_build_fields(
             if TriggerType(profile.trigger_type) is not TriggerType.ALWAYS
         }
         seen: set[str] = set()
-        cursor = source_id
+        cursor: str | None = source_id
         while cursor and cursor not in seen:
             if cursor == current_id:
                 return True
@@ -350,7 +390,12 @@ def validate_configuration_for_ui(
 
 
 def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str], str]:
-    import streamlit as st
+    st = __import__("streamlit")
+
+    from dnd_combat_simulator.ui.state import (
+        _build_from_state,
+        _managed_resources_from_state,
+    )
 
     session_state = getattr(st, "session_state", {})
     scenario = ScenarioConfig(
@@ -375,7 +420,7 @@ def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str
 
 
 def _render_error(message: str) -> None:
-    import streamlit as st
+    st = __import__("streamlit")
 
     error = getattr(st, "error", None)
     if error is not None:

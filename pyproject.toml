@@ -17,7 +17,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "hypothesis>=6.100",
+    "mypy>=1.10",
     "pytest>=8.2",
+    "pytest-cov>=5.0",
     "ruff>=0.5",
 ]
 
@@ -34,3 +37,30 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/dnd_combat_simulator"]
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+branch = true
+source = ["src/dnd_combat_simulator"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "dnd_combat_simulator.combat",
+    "dnd_combat_simulator.dice",
+    "dnd_combat_simulator.sharing",
+]
+disable_error_code = ["arg-type", "assignment", "dict-item", "misc", "var-annotated"]

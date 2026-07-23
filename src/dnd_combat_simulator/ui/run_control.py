@@ -1,10 +1,31 @@
-# ruff: noqa
-"""Focused Streamlit UI helpers."""
+"""Run-button state and deterministic simulation execution caching."""
 
 from __future__ import annotations
 
-from dnd_combat_simulator.ui._shared import *  # noqa: F403
-from dnd_combat_simulator.ui.constants import *  # noqa: F403
+import logging
+import time
+from dataclasses import dataclass, replace
+
+from dnd_combat_simulator.combat import AttackRollMode
+from dnd_combat_simulator.sharing import SharedConfigurationError
+from dnd_combat_simulator.simulation import (
+    BuildComparisonResult,
+    BuildConfig,
+    ScenarioConfig,
+    SimulationResult,
+    compare_builds,
+    run_damage_simulations,
+    simulate_build,
+)
+from dnd_combat_simulator.ui.constants import (
+    SIMULATION_DURATION_MESSAGE_KEY,
+    SIMULATION_PENDING_KEY,
+    SIMULATION_RUNNING_KEY,
+)
+
+logger = logging.getLogger(__name__)
+SIMULATION_CACHE_VERSION = 1
+SIMULATION_CACHE_MAX_ENTRIES = 64
 
 
 @dataclass(frozen=True)
@@ -40,12 +61,48 @@ class SingleBuildInputs:
     seed: int
 
 
-def validate_simulation_inputs(inputs: SimulationInputs) -> None:
-    """Validate Streamlit form inputs before running a simulation.
+@dataclass(frozen=True)
+class CanonicalSimulationRequest:
+    """Immutable cache identity for validated simulation execution."""
 
-    Raises:
-        ValueError: If an input cannot produce a usable damage simulation.
-    """
+    cache_version: int
+    comparison_enabled: bool
+    scenario: ScenarioConfig
+    first_build: BuildConfig
+    second_build: BuildConfig | None
+    simulations: int
+    seed: int
+
+
+def canonical_single_build_request(
+    inputs: SingleBuildInputs,
+) -> CanonicalSimulationRequest:
+    return CanonicalSimulationRequest(
+        cache_version=SIMULATION_CACHE_VERSION,
+        comparison_enabled=False,
+        scenario=inputs.scenario,
+        first_build=inputs.build,
+        second_build=None,
+        simulations=inputs.scenario.simulations,
+        seed=inputs.seed,
+    )
+
+
+def canonical_comparison_request(
+    inputs: ComparisonInputs,
+) -> CanonicalSimulationRequest:
+    return CanonicalSimulationRequest(
+        cache_version=SIMULATION_CACHE_VERSION,
+        comparison_enabled=True,
+        scenario=inputs.scenario,
+        first_build=inputs.first_build,
+        second_build=inputs.second_build,
+        simulations=inputs.scenario.simulations,
+        seed=inputs.seed,
+    )
+
+
+def validate_simulation_inputs(inputs: SimulationInputs) -> None:
     if not inputs.damage_dice.strip():
         msg = "Damage Formula is required. Use notation such as 1d8+4."
         raise ValueError(msg)
@@ -64,7 +121,6 @@ def validate_simulation_inputs(inputs: SimulationInputs) -> None:
 
 
 def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
-    """Validate inputs and run the shared simulation engine."""
     validate_simulation_inputs(inputs)
     return run_damage_simulations(
         attack_bonus=inputs.attack_bonus,
@@ -78,23 +134,64 @@ def run_simulation_from_inputs(inputs: SimulationInputs) -> SimulationResult:
     )
 
 
+def _execute_canonical_request_uncached(
+    request: CanonicalSimulationRequest,
+) -> SimulationResult | BuildComparisonResult:
+    logger.info("Executing simulation cache boundary")
+    scenario = replace(request.scenario, simulations=request.simulations)
+    if request.comparison_enabled:
+        if request.second_build is None:
+            msg = "Comparison request requires Build B."
+            raise ValueError(msg)
+        return compare_builds(
+            first_build=request.first_build,
+            second_build=request.second_build,
+            scenario=scenario,
+            seed=request.seed,
+        )
+    return simulate_build(request.first_build, scenario, request.seed)
+
+
+try:
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - streamlit is a runtime dependency
+    st = None  # type: ignore[assignment]
+
+if st is not None:
+    _cached_execute_canonical_request = st.cache_data(
+        show_spinner=False,
+        max_entries=SIMULATION_CACHE_MAX_ENTRIES,
+    )(_execute_canonical_request_uncached)
+else:
+    _cached_execute_canonical_request = _execute_canonical_request_uncached
+
+
+def execute_canonical_request(
+    request: CanonicalSimulationRequest,
+) -> SimulationResult | BuildComparisonResult:
+    if request.scenario.simulations < 1:
+        msg = "Number of simulations must be at least 1."
+        raise ValueError(msg)
+    return _cached_execute_canonical_request(request)
+
+
 def run_single_build_from_inputs(inputs: SingleBuildInputs) -> SimulationResult:
-    """Validate inputs and run the shared single-build simulation engine."""
-    return simulate_build(inputs.build, inputs.scenario, inputs.seed)
+    result = execute_canonical_request(canonical_single_build_request(inputs))
+    if not isinstance(result, SimulationResult):
+        msg = "Cached comparison result returned for single-build request."
+        raise TypeError(msg)
+    return result
 
 
 def run_comparison_from_inputs(inputs: ComparisonInputs) -> BuildComparisonResult:
-    """Validate inputs and run the shared comparison engine."""
-    return compare_builds(
-        first_build=inputs.first_build,
-        second_build=inputs.second_build,
-        scenario=inputs.scenario,
-        seed=inputs.seed,
-    )
+    result = execute_canonical_request(canonical_comparison_request(inputs))
+    if not isinstance(result, BuildComparisonResult):
+        msg = "Cached single-build result returned for comparison request."
+        raise TypeError(msg)
+    return result
 
 
 def _mark_simulation_pending() -> None:
-    """Request one simulation run unless another run is already active."""
     import streamlit as st
 
     state = getattr(st, "session_state", {})
@@ -104,20 +201,25 @@ def _mark_simulation_pending() -> None:
 
 
 def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResult:
-    """Run a single-build simulation with Streamlit-visible loading feedback."""
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     state[SIMULATION_RUNNING_KEY] = True
     start = time.perf_counter()
+    logger.info("Starting single-build simulation")
     try:
         with st.spinner("Calculating..."):
             result = run_single_build_from_inputs(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
+    except Exception:
+        state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
+        logger.exception("Unexpected single-build simulation failure")
+        raise
     else:
         elapsed = time.perf_counter() - start
+        logger.info("Completed single-build simulation in %.3f seconds", elapsed)
         state[SIMULATION_DURATION_MESSAGE_KEY] = (
             f"Simulation complete in {elapsed:.1f} seconds."
         )
@@ -128,20 +230,25 @@ def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResu
 
 
 def _run_comparison_with_feedback(inputs: ComparisonInputs) -> BuildComparisonResult:
-    """Run a build comparison with Streamlit-visible loading feedback."""
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     state[SIMULATION_RUNNING_KEY] = True
     start = time.perf_counter()
+    logger.info("Starting comparison simulation")
     try:
         with st.spinner("Calculating..."):
             result = run_comparison_from_inputs(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
+    except Exception:
+        state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
+        logger.exception("Unexpected comparison simulation failure")
+        raise
     else:
         elapsed = time.perf_counter() - start
+        logger.info("Completed comparison simulation in %.3f seconds", elapsed)
         state[SIMULATION_DURATION_MESSAGE_KEY] = (
             f"Simulation complete in {elapsed:.1f} seconds."
         )
@@ -152,7 +259,6 @@ def _run_comparison_with_feedback(inputs: ComparisonInputs) -> BuildComparisonRe
 
 
 def _render_run_simulation_button(disabled: bool) -> bool:
-    """Render the shared simulation button for single and comparison workflows."""
     import streamlit as st
 
     state = getattr(st, "session_state", {})
@@ -165,3 +271,19 @@ def _render_run_simulation_button(disabled: bool) -> bool:
     if clicked and not simulation_running and not disabled:
         state[SIMULATION_PENDING_KEY] = True
     return bool(state.get(SIMULATION_PENDING_KEY)) and not disabled
+
+
+__all__ = [
+    "SIMULATION_CACHE_VERSION",
+    "CanonicalSimulationRequest",
+    "ComparisonInputs",
+    "SingleBuildInputs",
+    "SimulationInputs",
+    "canonical_comparison_request",
+    "canonical_single_build_request",
+    "execute_canonical_request",
+    "run_comparison_from_inputs",
+    "run_simulation_from_inputs",
+    "run_single_build_from_inputs",
+    "validate_simulation_inputs",
+]
