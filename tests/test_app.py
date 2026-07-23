@@ -3388,18 +3388,10 @@ def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
 def test_attack_card_keys_include_position_tone_and_stable_attack_id() -> None:
     from dnd_combat_simulator.ui.inputs import _attack_card_key
 
-    assert _attack_card_key("first", "attack-a", 0) == (
-        "first-attack-a-card-tone-a"
-    )
-    assert _attack_card_key("first", "attack-b", 1) == (
-        "first-attack-b-card-tone-b"
-    )
-    assert _attack_card_key("first", "attack-c", 2) == (
-        "first-attack-c-card-tone-a"
-    )
-    assert _attack_card_key("second", "attack-z", 0) == (
-        "second-attack-z-card-tone-a"
-    )
+    assert _attack_card_key("first", "attack-a", 0) == ("first-attack-a-card-tone-a")
+    assert _attack_card_key("first", "attack-b", 1) == ("first-attack-b-card-tone-b")
+    assert _attack_card_key("first", "attack-c", 2) == ("first-attack-c-card-tone-a")
+    assert _attack_card_key("second", "attack-z", 0) == ("second-attack-z-card-tone-a")
 
 
 def test_attack_card_tone_assignment_follows_displayed_order_not_state() -> None:
@@ -3475,8 +3467,7 @@ def test_attack_card_css_targets_keyed_card_directly() -> None:
     assert "currentColor 88%," in css
     assert "var(--attack-card-tint) 12%" in css
     assert (
-        "color-mix(in srgb, var(--attack-card-tint) 6%, transparent) !important;"
-        in css
+        "color-mix(in srgb, var(--attack-card-tint) 6%, transparent) !important;" in css
     )
     assert (
         "color-mix(in srgb, var(--attack-card-tint) 24%, transparent) !important;"
@@ -3867,3 +3858,204 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
     assert "Attack Bonus" not in [call[1] for call in auto_calls]
     assert "Save DC value" not in [call[1] for call in auto_calls]
     assert "Damage Formula" in [call[1] for call in auto_calls]
+
+
+def _rich_clone_build(name="Build A"):
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+    from dnd_combat_simulator.combat import (
+        AttackFeature,
+        AttackRollMode,
+        ResolutionType,
+        SuccessfulSaveDamage,
+    )
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ManagedResource,
+        ResourceCost,
+        TriggerFrequency,
+        TriggerType,
+    )
+
+    source = AttackProfile(
+        "Opening Strike",
+        9,
+        "2d6+4",
+        2,
+        affected_targets=2,
+        attack_roll_mode=AttackRollMode.ADVANTAGE,
+        active_rounds="1-3",
+        resolution_type=ResolutionType.ATTACK_ROLL,
+        features=frozenset({AttackFeature.GREAT_WEAPON_FIGHTING}),
+        attack_id="opener",
+        trigger_frequency=TriggerFrequency.ONCE_PER_ROUND,
+        resource_costs=(ResourceCost("ki", 1),),
+        use_build_attack_bonus=True,
+        require_matching_damage_dice_to_continue=True,
+    )
+    triggered = AttackProfile(
+        "Flame Burst",
+        None,
+        "3d8",
+        1,
+        affected_targets=3,
+        resolution_type=ResolutionType.SAVING_THROW,
+        save_dc=17,
+        successful_save_damage=SuccessfulSaveDamage.HALF_DAMAGE,
+        features=frozenset({AttackFeature.POTENT_CANTRIP}),
+        attack_id="burst",
+        trigger_type=TriggerType.AFTER_CRITICAL,
+        trigger_source_attack_id="opener",
+        trigger_frequency=TriggerFrequency.ONCE_PER_COMBAT,
+        trigger_chance_percent=75,
+        resource_costs=(ResourceCost("slot", 2),),
+        use_build_save_dc=True,
+        inherit_triggering_critical=True,
+    )
+    return BuildConfig(
+        name,
+        9,
+        "2d6+4",
+        2,
+        AttackRollMode.ADVANTAGE,
+        attack_profiles=(source, triggered),
+        math_defaults=BuildMathDefaults(4, 3, 2, 1),
+        managed_resources=(
+            ManagedResource("ki", "Ki", 5),
+            ManagedResource("slot", "Slots", 3),
+        ),
+    )
+
+
+def _hydrate_build(state, prefix, build):
+    from dnd_combat_simulator.sharing import SharedBuildConfiguration
+    from dnd_combat_simulator.ui.state import _hydrate_build_session_state
+    from dnd_combat_simulator.ui.widget_keys import (
+        build_managed_resource_count_key,
+        build_managed_resource_ids_key,
+        managed_resource_widget_key,
+    )
+
+    shared = SharedBuildConfiguration.from_build_config(build)
+    state[build_managed_resource_ids_key(prefix)] = [
+        r.resource_id for r in shared.managed_resources
+    ]
+    state[build_managed_resource_count_key(prefix)] = len(shared.managed_resources)
+    for resource in shared.managed_resources:
+        state[managed_resource_widget_key(resource.resource_id, "name", prefix)] = (
+            resource.name
+        )
+        state[
+            managed_resource_widget_key(resource.resource_id, "starting-value", prefix)
+        ] = resource.starting_value
+    _hydrate_build_session_state(state, prefix, shared)
+
+
+def test_clone_build_a_cancel_leaves_build_b_unchanged(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.ui.inputs import _render_clone_build_a_control
+    from dnd_combat_simulator.ui.state import _build_from_state
+
+    state = {}
+    _hydrate_build(state, "first", _rich_clone_build("A"))
+    original_b = _rich_clone_build("Original B")
+    _hydrate_build(state, "second", original_b)
+    state["clone-build-a-into-build-b-confirm"] = True
+
+    class Col:
+        def button(self, label, **kwargs):
+            return label == "Cancel"
+
+    fake = SimpleNamespace(
+        session_state=state,
+        success=lambda *a, **k: None,
+        button=lambda *a, **k: False,
+        warning=lambda *a, **k: None,
+        columns=lambda *a, **k: [Col(), Col(), Col()],
+        rerun=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+    _render_clone_build_a_control()
+    assert _build_from_state("second", "Build B") == original_b
+
+
+def test_clone_build_a_confirm_completely_replaces_build_b_and_deep_copies(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.ui.state import (
+        _build_from_state,
+        clone_build_session_state,
+    )
+    from dnd_combat_simulator.ui.widget_keys import (
+        attack_widget_prefix,
+        build_attack_ids_key,
+        profile_widget_key,
+    )
+
+    state = {}
+    build_a = _rich_clone_build("A")
+    extra_b = _rich_clone_build("Old B")
+    _hydrate_build(state, "first", build_a)
+    _hydrate_build(state, "second", extra_b)
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    state[build_attack_ids_key("second")] = [
+        *state[build_attack_ids_key("second")],
+        "obsolete",
+    ]
+    state[profile_widget_key(attack_widget_prefix("second", "obsolete"), "name")] = (
+        "Obsolete"
+    )
+
+    clone_build_session_state(state, "first", "second")
+    cloned_b = _build_from_state("second", "Build B")
+
+    assert cloned_b == build_a
+    assert [p.attack_id for p in cloned_b.attack_profiles] == ["opener", "burst"]
+    assert (
+        cloned_b.attack_profiles[1].trigger_source_attack_id
+        == cloned_b.attack_profiles[0].attack_id
+    )
+    assert cloned_b.managed_resources == build_a.managed_resources
+    assert (
+        cloned_b.attack_profiles[0].resource_costs
+        == build_a.attack_profiles[0].resource_costs
+    )
+    assert "obsolete" not in state[build_attack_ids_key("second")]
+
+    state[profile_widget_key(attack_widget_prefix("second", "opener"), "name")] = (
+        "Edited B"
+    )
+    assert (
+        _build_from_state("first", "Build A").attack_profiles[0].name
+        == "Opening Strike"
+    )
+    assert _build_from_state("second", "Build B").attack_profiles[0].name == "Edited B"
+
+
+def test_clone_uses_central_shared_build_configuration_for_future_fields(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.sharing import SharedBuildConfiguration
+    from dnd_combat_simulator.ui import state as state_module
+
+    calls = []
+    original = state_module._build_from_json
+
+    def recording_build_from_json(raw, name):
+        calls.append((raw, name))
+        return original(raw, name)
+
+    state = {}
+    _hydrate_build(state, "first", _rich_clone_build("A"))
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    monkeypatch.setattr(state_module, "_build_from_json", recording_build_from_json)
+    state_module.clone_build_session_state(state, "first", "second")
+
+    expected = SharedBuildConfiguration.from_build_config(
+        state_module._build_from_state("first", "Build A")
+    ).to_json_dict()
+    assert calls == [(expected, "second")]
