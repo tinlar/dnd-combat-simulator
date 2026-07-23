@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from random import Random
 
 import pytest
@@ -111,12 +112,72 @@ def test_reordering_preserves_stable_ids_and_state(order: tuple[str, ...]) -> No
 
 def test_duplication_deletion_and_build_isolation() -> None:
     state = _state(("a", "b"))
-    _duplicate_attack_state(state, "first", "a", "c")
-    assert state[build_attack_ids_key("first")].count("c") == 1
-    assert "z" in state[build_attack_ids_key("second")]
-    _delete_attack_state(state, "first", "b")
-    assert "b" not in state[build_attack_ids_key("first")]
+    build_a_ids_key = build_attack_ids_key("first")
+    build_b_ids_key = build_attack_ids_key("second")
+    source_prefix = attack_widget_prefix("first", "a")
+    destination_prefix = attack_widget_prefix("first", "c")
+
+    copied = _duplicate_attack_state(
+        state,
+        source_prefix,
+        destination_prefix,
+        source_attack_id="a",
+        dest_attack_id="c",
+    )
+    state.update(copied)
+    state[build_a_ids_key] = ["a", "c", "b"]
+
+    assert state[build_a_ids_key].count("c") == 1
+    assert state[profile_widget_key(destination_prefix, "name")] == "a copy"
+    assert state[build_b_ids_key] == ["z"]
     assert attack_widget_prefix("first", "c") != attack_widget_prefix("second", "c")
+
+    state[build_a_ids_key] = [
+        attack_id for attack_id in state[build_a_ids_key] if attack_id != "b"
+    ]
+    _delete_attack_state(state, "first", "b")
+
+    assert "b" not in state[build_a_ids_key]
+    assert state[build_b_ids_key] == ["z"]
+    assert profile_widget_key(attack_widget_prefix("first", "b"), "name") not in state
+
+
+def test_stage33_helper_contracts_are_caller_owned() -> None:
+    state = _state(("a", "b"))
+    build_a_ids_key = build_attack_ids_key("first")
+    source_prefix = attack_widget_prefix("first", "a")
+    destination_prefix = attack_widget_prefix("first", "c")
+
+    copied = _duplicate_attack_state(
+        state,
+        source_prefix,
+        destination_prefix,
+        source_attack_id="a",
+        dest_attack_id="c",
+    )
+
+    assert copied == {profile_widget_key(destination_prefix, "name"): "a copy"}
+    assert state[build_a_ids_key] == ["a", "b"]
+    assert profile_widget_key(destination_prefix, "name") not in state
+
+    _delete_attack_state(state, "first", "b")
+
+    assert state[build_a_ids_key] == ["a", "b"]
+    assert profile_widget_key(attack_widget_prefix("first", "b"), "name") not in state
+    assert any(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in inspect.signature(
+            shared_configuration_from_configs
+        ).parameters.values()
+    )
+    with pytest.raises(TypeError):
+        shared_configuration_from_configs(  # type: ignore[call-arg]
+            True,
+            ScenarioConfig(target_armor_class=15, rounds=2, simulations=10),
+            123,
+            BuildConfig("A", 5, "1d6", 1),
+            BuildConfig("B", 5, "1d6", 1),
+        )
 
 
 def test_migration_and_sharing_round_trip_preserve_ids_and_references() -> None:
@@ -133,17 +194,28 @@ def test_migration_and_sharing_round_trip_preserve_ids_and_references() -> None:
         trigger_type=TriggerType.AFTER_SUCCESS,
         trigger_source_attack_id="a",
     )
+    build_a = BuildConfig("A", 5, "1d6", 1, attack_profiles=(first, second))
+    build_b = BuildConfig(
+        "B",
+        5,
+        "1d6",
+        1,
+        attack_profiles=(AttackProfile("C", 5, "1d6", 1, attack_id="c"),),
+    )
+    scenario = ScenarioConfig(
+        target_armor_class=15,
+        rounds=2,
+        simulations=10,
+        enemy_save_bonus=3,
+        managed_resources=(resource,),
+    )
+
     config = shared_configuration_from_configs(
-        BuildConfig("A", 5, "1d6", 1, attack_profiles=(first, second)),
-        BuildConfig(
-            "B",
-            5,
-            "1d6",
-            1,
-            attack_profiles=(AttackProfile("C", 5, "1d6", 1, attack_id="c"),),
-        ),
-        ScenarioConfig(15, 3, 2, 10, managed_resources=(resource,)),
-        compare=True,
+        compare_enabled=True,
+        scenario=scenario,
+        seed=123,
+        build_a=build_a,
+        build_b=build_b,
     )
     restored = deserialize_shared_configuration(serialize_shared_configuration(config))
     assert restored == deserialize_shared_configuration(
