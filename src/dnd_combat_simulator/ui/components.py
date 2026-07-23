@@ -270,6 +270,9 @@ ATTACK_TOOLBAR_CSS = """
     display: inline-flex;
     width: max-content;
     max-width: 100%;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
     line-height: 1;
 }
 
@@ -277,43 +280,81 @@ ATTACK_TOOLBAR_CSS = """
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
 )[class*="-toolbar"] [data-testid="stVerticalBlockBorderWrapper"] {
-    padding: 2px 4px;
+    width: max-content;
+    max-width: 100%;
+    min-height: 0;
+    padding: 0 !important;
+    margin: 0;
+    border-radius: 8px;
+    line-height: 1;
+}
+
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-toolbar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+    width: max-content;
+    max-width: 100%;
+    min-height: 0;
+    padding: 2px 4px !important;
+    margin: 0;
+    line-height: 1;
 }
 
 [class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stVerticalBlock"],
-[class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stVerticalBlock"],
+[class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stVerticalBlock"] {
+    display: inline-flex;
+    width: max-content;
+    max-width: 100%;
+    min-height: 0;
+    row-gap: 0 !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    margin: 0;
+    line-height: 1;
+}
+
 [class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stHorizontalBlock"],
 [class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stHorizontalBlock"] {
     display: inline-flex;
     width: max-content;
     max-width: 100%;
+    min-height: 0;
     align-items: center;
-    gap: 0.125rem;
-    padding: 0;
+    gap: 2px !important;
+    padding: 0 !important;
+    margin: 0;
+    line-height: 1;
 }
 
 [class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stElementContainer"],
 [class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stElementContainer"] {
-    width: max-content;
-    height: 36px;
-    max-height: 36px;
-    padding: 0;
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    padding: 0 !important;
+    margin: 0;
+    line-height: 1;
 }
 
 [class*="st-key-first-attack-"][class*="-toolbar"] button[kind="tertiary"],
 [class*="st-key-second-attack-"][class*="-toolbar"] button[kind="tertiary"] {
-    min-width: 36px;
-    height: 36px;
-    max-height: 36px;
-    padding-top: 0;
-    padding-bottom: 0;
-    margin-top: 0;
-    margin-bottom: 0;
+    width: 32px;
+    min-width: 32px;
+    max-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    padding: 0 !important;
+    margin: 0;
     line-height: 1;
 }
 
 /* Keep native Streamlit focus-visible outlines, disabled styling,
-   and tooltips intact. */
+   hover behavior, and tooltips intact. */
 </style>
 """
 
