@@ -506,6 +506,7 @@ def _attack_profile_inputs(
                 }}
                 .st-key-{key} p {{
                     margin-bottom: 0;
+                    white-space: nowrap;
                 }}
                 .st-key-{key} [data-testid="stWidgetLabel"] {{
                     min-height: 0;
@@ -685,56 +686,14 @@ def _attack_profile_inputs(
         attack_bonus = None
         save_dc = None
 
-    def _damage_formula_help_icon(column: Any) -> None:
-        popover = getattr(column, "popover", None) or getattr(st, "popover", None)
-        if popover is not None:
-            with popover(
-                "?",
-                help="Damage formula dice syntax help",
-                width="content",
-                use_container_width=False,
-                key=f"{prefix}-damage-formula-help",
-            ) as help_area:
-                writer = getattr(help_area, "markdown", None) or getattr(
-                    st, "markdown", None
-                )
-                if writer is not None:
-                    writer(DAMAGE_FORMULA_HELP)
-            return
-        expander = getattr(column, "expander", None) or getattr(st, "expander", None)
-        if expander is not None:
-            with expander("? Damage formula help", expanded=False) as help_area:
-                writer = getattr(help_area, "markdown", None) or getattr(
-                    st, "markdown", None
-                )
-                if writer is not None:
-                    writer(DAMAGE_FORMULA_HELP)
-
-    def _damage_label_with_help(column: Any) -> None:
-        columns = getattr(column, "columns", None) or getattr(st, "columns", None)
-        if columns is None:
-            _row_text(column, "**Damage**", width=120)
-            return
-        try:
-            label_col, help_col = columns(
-                ["content", "content"], gap="small", vertical_alignment="center"
-            )
-        except TypeError:
-            try:
-                label_col, help_col = columns([1, 1], gap="small")
-            except TypeError:
-                _row_text(column, "**Damage**", width=120)
-                return
-        _row_text(label_col, "**Damage**", width="content")
-        _damage_formula_help_icon(help_col)
-
     damage_key = profile_widget_key(prefix, "damage_formula")
     damage_row = _compact_inline_row(f"{prefix}-damage-row", 5)
-    _damage_label_with_help(damage_row[0])
+    _row_text(damage_row[0], "**Damage**", width="content")
     if damage_key in session_state:
         damage_dice = damage_row[1].text_input(
             "Formula",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
+            help=DAMAGE_FORMULA_HELP,
             key=damage_key,
             width=200,
         )
@@ -743,6 +702,7 @@ def _attack_profile_inputs(
             "Formula",
             value="1d8",
             placeholder=DAMAGE_FORMULA_PLACEHOLDER,
+            help=DAMAGE_FORMULA_HELP,
             key=damage_key,
             width=200,
         )
