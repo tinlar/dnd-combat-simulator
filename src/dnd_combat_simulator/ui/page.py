@@ -3,60 +3,32 @@
 from __future__ import annotations
 
 import logging
-import time
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.sharing import SharedConfigurationError
 from dnd_combat_simulator.simulation import ScenarioConfig
-
-# Imported attributes below are transitional test seams while tests finish moving to
-# owner modules; they are intentionally omitted from __all__.
 from dnd_combat_simulator.ui.components import (
-    _SHARE_TOOLBAR_COMPONENT,
-    ATTACK_TOOLBAR_CSS,
-    CONFIGURATION_TOOLBAR_CSS,
-    PAGE_WIDTH_CSS,
-    SHARE_TOOLBAR_HTML,
-    SHARE_TOOLBAR_JS,
     _render_section_container,
     configure_page,
 )
 from dnd_combat_simulator.ui.constants import (
     COMPARE_WIDGET_KEY,
-    FEATURE_HELP,
     SCENARIO_WIDGET_KEYS,
     SIMULATION_DURATION_MESSAGE_KEY,
     SIMULATION_PENDING_KEY,
-    SIMULATION_RUNNING_KEY,
 )
 from dnd_combat_simulator.ui.inputs import (
-    _attack_profile_inputs,
-    _build_config_from_profiles,
     _build_inputs,
-    _feature_inputs,
-    _profile_definitions,
     _render_configuration_toolbar,
     _render_managed_resources,
-    _render_simulation_settings,
-    _trigger_settings_expander,
-    _trigger_source_options,
 )
 from dnd_combat_simulator.ui.results import (
-    _comparison_round_chart_data,
-    _profile_breakdown_rows,
-    _profile_contribution_chart_data,
-    _profile_damage_per_use_chart_data,
     _render_comparison_results,
     _render_single_build_results,
-    _result_rows,
-    _round_chart_data,
-    _single_result_rows,
-    _single_round_breakdown_rows,
 )
 from dnd_combat_simulator.ui.run_control import (
     ComparisonInputs,
     SingleBuildInputs,
-    _mark_simulation_pending,
     _render_run_simulation_button,
     _run_comparison_with_feedback,
     _run_single_build_with_feedback,
@@ -64,85 +36,25 @@ from dnd_combat_simulator.ui.run_control import (
 from dnd_combat_simulator.ui.sharing import (
     INVALID_SHARED_CONFIG_MESSAGE_KEY,
     LOADED_SHARED_CONFIG_MESSAGE_KEY,
-    LOADED_SHARED_CONFIG_TOKEN_KEY,
-    _current_shared_configuration_url,
-    _current_short_shared_configuration_url,
-    _render_share_configuration_button,
-    get_streamlit_share_store,
     load_shared_configuration_from_query,
 )
 from dnd_combat_simulator.ui.state import (
     _build_from_state,
-    _copy_attack_widget_state,
-    _delete_attack_state,
-    _duplicate_attack_state,
     ensure_session_random_seed,
-    hydrate_session_state_from_shared_configuration,
-    next_default_attack_name,
 )
 from dnd_combat_simulator.ui.validation import (
     _friendly_validation_message,
     validate_build_fields,
-    validate_configuration_for_ui,
     validate_scenario_fields,
 )
 from dnd_combat_simulator.ui.validation_rendering import (
     _field_error,
     validation_errors_by_key,
 )
-from dnd_combat_simulator.ui.widget_keys import (
-    attack_widget_prefix,
-    build_attack_ids_key,
-    feature_widget_key,
-    profile_widget_key,
-)
 
 __all__ = ("main",)
 
 logger = logging.getLogger(__name__)
-
-_TRANSITIONAL_TEST_SEAMS = (
-    ATTACK_TOOLBAR_CSS,
-    CONFIGURATION_TOOLBAR_CSS,
-    PAGE_WIDTH_CSS,
-    SHARE_TOOLBAR_HTML,
-    SHARE_TOOLBAR_JS,
-    _SHARE_TOOLBAR_COMPONENT,
-    FEATURE_HELP,
-    SIMULATION_RUNNING_KEY,
-    _attack_profile_inputs,
-    _build_config_from_profiles,
-    _feature_inputs,
-    _profile_definitions,
-    _render_simulation_settings,
-    _trigger_settings_expander,
-    _trigger_source_options,
-    _comparison_round_chart_data,
-    _profile_breakdown_rows,
-    _profile_contribution_chart_data,
-    _profile_damage_per_use_chart_data,
-    _result_rows,
-    _round_chart_data,
-    _single_result_rows,
-    _single_round_breakdown_rows,
-    _mark_simulation_pending,
-    LOADED_SHARED_CONFIG_TOKEN_KEY,
-    _current_shared_configuration_url,
-    _current_short_shared_configuration_url,
-    _render_share_configuration_button,
-    get_streamlit_share_store,
-    _copy_attack_widget_state,
-    _delete_attack_state,
-    _duplicate_attack_state,
-    hydrate_session_state_from_shared_configuration,
-    next_default_attack_name,
-    validate_configuration_for_ui,
-    attack_widget_prefix,
-    build_attack_ids_key,
-    feature_widget_key,
-    profile_widget_key,
-    time,
-)
 
 
 def main() -> None:

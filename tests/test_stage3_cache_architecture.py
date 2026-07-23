@@ -154,13 +154,40 @@ def test_page_has_no_compatibility_facade_or_runtime_module_mutation() -> None:
     assert app.__all__ == ("configure_page", "main")
     assert page.__all__ == ("main",)
     forbidden_text = (
+        "_TRANSITIONAL_TEST_SEAMS",
+        "transitional test seams",
         "_COMPAT_EXPORTS",
+        "module-level __getattr__",
         "importlib.import_module",
+        "dynamic compatibility lookup",
+        "compatibility wrapper functions",
+        "assignment into attributes of another imported module",
         "Legacy test compatibility",
         "_page_mount_unified_share_component",
     )
     for text in forbidden_text:
         assert text not in source
+
+    imported_names: set[str] = set()
+    imported_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert node.module != "importlib"
+            if node.module == "__future__":
+                continue
+            for alias in node.names:
+                imported_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            assert not any(alias.name == "importlib" for alias in node.names)
+            for alias in node.names:
+                imported_modules.add((alias.asname or alias.name).split(".")[0])
+
+    loaded_names = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    assert imported_names <= loaded_names
 
     for node in ast.walk(tree):
         assert not (
@@ -168,12 +195,11 @@ def test_page_has_no_compatibility_facade_or_runtime_module_mutation() -> None:
             and node.name == "__getattr__"
             and isinstance(getattr(node, "parent", None), ast.Module)
         )
-        assert not (isinstance(node, ast.ImportFrom) and node.module == "importlib")
-        assert not (
-            isinstance(node, ast.Import)
-            and any(alias.name == "importlib" for alias in node.names)
-        )
-        assert not (
-            isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Attribute) for target in node.targets)
-        )
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                assert not (
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id in imported_modules
+                )
