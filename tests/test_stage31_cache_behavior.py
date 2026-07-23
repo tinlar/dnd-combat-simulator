@@ -4,10 +4,12 @@ import pytest
 
 from dnd_combat_simulator.simulation import (
     AttackProfile,
+    BuildComparisonResult,
     BuildConfig,
     ManagedResource,
     ResourceCost,
     ScenarioConfig,
+    SimulationResult,
 )
 from dnd_combat_simulator.ui import run_control
 from dnd_combat_simulator.ui.run_control import (
@@ -46,7 +48,7 @@ def _build(
 
 def _scenario(simulations=10, seed_resource=False) -> ScenarioConfig:
     resources = (ManagedResource("focus", "Focus", 2),) if seed_resource else ()
-    return ScenarioConfig(15, 3, 2, simulations, managed_resources=resources)
+    return ScenarioConfig(15, 3, simulations, managed_resources=resources)
 
 
 @pytest.fixture(autouse=True)
@@ -59,21 +61,29 @@ def clear_streamlit_cache():
 def test_actual_cache_reuses_identical_request_and_keys_result_affecting_changes(
     monkeypatch,
 ):
+    real_simulate_build = run_control.simulate_build
     calls = []
 
-    def fake_simulate(build, scenario, seed):
+    def counting_simulate_build(build, scenario, seed):
         calls.append((build, scenario, seed))
-        return {"call": len(calls)}
+        return real_simulate_build(build, scenario, seed)
 
-    monkeypatch.setattr(run_control, "simulate_build", fake_simulate)
+    monkeypatch.setattr(run_control, "simulate_build", counting_simulate_build)
     base = canonical_single_build_request(SingleBuildInputs(_build(), _scenario(), 1))
-    assert run_control.execute_canonical_request(base) == {"call": 1}
-    assert run_control.execute_canonical_request(base) == {"call": 1}
+
+    first_result = run_control.execute_canonical_request(base)
+    second_result = run_control.execute_canonical_request(base)
+
+    assert isinstance(first_result, SimulationResult)
+    assert isinstance(second_result, SimulationResult)
+    assert second_result == first_result
+    assert len(calls) == 1
+
     variants = [
         canonical_single_build_request(SingleBuildInputs(_build(), _scenario(), 2)),
         canonical_single_build_request(SingleBuildInputs(_build(), _scenario(11), 1)),
         canonical_single_build_request(
-            SingleBuildInputs(_build(), ScenarioConfig(16, 3, 2, 10), 1)
+            SingleBuildInputs(_build(), ScenarioConfig(16, 3, 10), 1)
         ),
         canonical_single_build_request(
             SingleBuildInputs(_build(damage="1d10+3"), _scenario(), 1)
@@ -87,26 +97,38 @@ def test_actual_cache_reuses_identical_request_and_keys_result_affecting_changes
             )
         ),
     ]
-    for expected, request in enumerate(variants, start=2):
-        assert run_control.execute_canonical_request(request) == {"call": expected}
-    assert len(calls) == 7
+    for expected_call_count, request in enumerate(variants, start=2):
+        result = run_control.execute_canonical_request(request)
+        assert isinstance(result, SimulationResult)
+        assert len(calls) == expected_call_count
+        assert isinstance(
+            run_control.execute_canonical_request(request), SimulationResult
+        )
+        assert len(calls) == expected_call_count
 
 
 def test_actual_cache_isolates_single_comparison_reversed_builds_and_cache_version(
     monkeypatch,
 ):
+    real_simulate_build = run_control.simulate_build
+    real_compare_builds = run_control.compare_builds
     calls = []
 
-    def fake_simulate(build, scenario, seed):
-        calls.append("single")
-        return {"kind": "single", "call": len(calls)}
+    def counting_simulate_build(build, scenario, seed):
+        calls.append(("single", build.name))
+        return real_simulate_build(build, scenario, seed)
 
-    def fake_compare(first_build, second_build, scenario, seed):
-        calls.append((first_build.name, second_build.name))
-        return {"kind": "comparison", "call": len(calls)}
+    def counting_compare_builds(first_build, second_build, scenario, seed):
+        calls.append(("comparison", first_build.name, second_build.name))
+        return real_compare_builds(
+            first_build=first_build,
+            second_build=second_build,
+            scenario=scenario,
+            seed=seed,
+        )
 
-    monkeypatch.setattr(run_control, "simulate_build", fake_simulate)
-    monkeypatch.setattr(run_control, "compare_builds", fake_compare)
+    monkeypatch.setattr(run_control, "simulate_build", counting_simulate_build)
+    monkeypatch.setattr(run_control, "compare_builds", counting_compare_builds)
     first = _build("A", "1d8", ("a",))
     second = _build("B", "1d6", ("b",))
     scenario = _scenario()
@@ -122,9 +144,30 @@ def test_actual_cache_isolates_single_comparison_reversed_builds_and_cache_versi
         single.simulations,
         single.seed,
     )
-    for request in (single, comp, rev, versioned):
-        run_control.execute_canonical_request(request)
-    assert len(calls) == 4
+
+    expected_types = (
+        (single, SimulationResult),
+        (comp, BuildComparisonResult),
+        (rev, BuildComparisonResult),
+        (versioned, SimulationResult),
+    )
+    for expected_call_count, (request, expected_type) in enumerate(
+        expected_types, start=1
+    ):
+        result = run_control.execute_canonical_request(request)
+        assert isinstance(result, expected_type)
+        assert len(calls) == expected_call_count
+        cached_result = run_control.execute_canonical_request(request)
+        assert isinstance(cached_result, expected_type)
+        assert cached_result == result
+        assert len(calls) == expected_call_count
+
+    assert calls == [
+        ("single", "A"),
+        ("comparison", "A", "B"),
+        ("comparison", "B", "A"),
+        ("single", "A"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -149,20 +192,74 @@ def test_invalid_requests_never_reach_cached_boundary(monkeypatch, build):
 
 
 def test_engine_exceptions_are_not_cached(monkeypatch):
+    real_simulate_build = run_control.simulate_build
     calls = 0
 
-    def flaky(build, scenario, seed):
+    def flaky_simulate_build(build, scenario, seed):
         nonlocal calls
         calls += 1
         if calls == 1:
             raise RuntimeError("boom")
-        return {"ok": True}
+        return real_simulate_build(build, scenario, seed)
 
-    monkeypatch.setattr(run_control, "simulate_build", flaky)
+    monkeypatch.setattr(run_control, "simulate_build", flaky_simulate_build)
     request = canonical_single_build_request(
         SingleBuildInputs(_build(), _scenario(), 1)
     )
+
     with pytest.raises(RuntimeError):
         run_control.execute_canonical_request(request)
-    assert run_control.execute_canonical_request(request) == {"ok": True}
+
+    retry_result = run_control.execute_canonical_request(request)
+    assert isinstance(retry_result, SimulationResult)
     assert calls == 2
+
+    cached_result = run_control.execute_canonical_request(request)
+    assert isinstance(cached_result, SimulationResult)
+    assert cached_result == retry_result
+    assert calls == 2
+
+
+def test_production_result_types_cross_actual_streamlit_cache_boundary(monkeypatch):
+    real_simulate_build = run_control.simulate_build
+    real_compare_builds = run_control.compare_builds
+    calls = []
+
+    def counting_simulate_build(build, scenario, seed):
+        calls.append(("single", build.name))
+        return real_simulate_build(build, scenario, seed)
+
+    def counting_compare_builds(first_build, second_build, scenario, seed):
+        calls.append(("comparison", first_build.name, second_build.name))
+        return real_compare_builds(
+            first_build=first_build,
+            second_build=second_build,
+            scenario=scenario,
+            seed=seed,
+        )
+
+    monkeypatch.setattr(run_control, "simulate_build", counting_simulate_build)
+    monkeypatch.setattr(run_control, "compare_builds", counting_compare_builds)
+
+    first = _build("A", "1d8", ("a",))
+    second = _build("B", "1d6", ("b",))
+    scenario = _scenario()
+    single = canonical_single_build_request(SingleBuildInputs(first, scenario, 1))
+    comparison = canonical_comparison_request(
+        ComparisonInputs(first, second, scenario, 1)
+    )
+
+    _clear_cache()
+    single_result = run_control.execute_canonical_request(single)
+    cached_single_result = run_control.execute_canonical_request(single)
+    assert isinstance(single_result, SimulationResult)
+    assert isinstance(cached_single_result, SimulationResult)
+    assert cached_single_result == single_result
+    assert calls == [("single", "A")]
+
+    comparison_result = run_control.execute_canonical_request(comparison)
+    cached_comparison_result = run_control.execute_canonical_request(comparison)
+    assert isinstance(comparison_result, BuildComparisonResult)
+    assert isinstance(cached_comparison_result, BuildComparisonResult)
+    assert cached_comparison_result == comparison_result
+    assert calls == [("single", "A"), ("comparison", "A", "B")]
