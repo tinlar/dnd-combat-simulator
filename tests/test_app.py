@@ -275,6 +275,7 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
     from types import SimpleNamespace
 
     from dnd_combat_simulator.ui.components import (
+        ATTACK_CARD_CSS,
         ATTACK_TOOLBAR_CSS,
         PAGE_WIDTH_CSS,
         configure_page,
@@ -304,6 +305,10 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
         (
             "markdown",
             {"body": PAGE_WIDTH_CSS, "unsafe_allow_html": True},
+        ),
+        (
+            "markdown",
+            {"body": ATTACK_CARD_CSS, "unsafe_allow_html": True},
         ),
         (
             "markdown",
@@ -3736,6 +3741,7 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
     save_field = next(call for call in save_calls if call[1] == "Save DC value")
     assert save_field[2]["value"] == 13
     assert save_field[2]["disabled"] is True
+    assert "Effective:" not in [call[1] for call in save_calls]
     assert save_profile.save_dc == 19
     assert save_profile.resolution_type is ResolutionType.SAVING_THROW
     assert "Attack Bonus" not in [call[1] for call in save_calls]

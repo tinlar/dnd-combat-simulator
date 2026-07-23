@@ -751,7 +751,7 @@ def _attack_profile_inputs(
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc_key = profile_widget_key(prefix, "save_dc")
-        save_row = _compact_inline_row(f"{prefix}-save-dc-row", 4)
+        save_row = _compact_inline_row(f"{prefix}-save-dc-row", 3)
         _row_text(save_row[0], "**Save DC**", width=120)
         use_build_save_dc = _safe_checkbox(
             save_row[1],
@@ -808,10 +808,6 @@ def _attack_profile_inputs(
                 label_visibility="collapsed",
                 width=90,
             )
-        effective_save_dc = (
-            resolved_math_defaults.save_dc if use_build_save_dc else int(save_dc)
-        )
-        _row_text(save_row[3], f"Effective: {effective_save_dc}")
         _field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
     else:
         attack_bonus = None
@@ -1305,6 +1301,10 @@ def _build_inputs(
             default_attack_name,
         ) in enumerate(_profile_definitions(prefix, 0)):
             with _render_section_container():
+                st.markdown(
+                    '<span class="attack-card-marker" aria-hidden="true"></span>',
+                    unsafe_allow_html=True,
+                )
                 current_name = (
                     str(
                         getattr(st, "session_state", {}).get(
