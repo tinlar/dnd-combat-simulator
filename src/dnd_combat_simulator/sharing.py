@@ -7,9 +7,9 @@ import binascii
 import json
 import re
 import zlib
-from uuid import NAMESPACE_URL, uuid5
 from dataclasses import dataclass, replace
 from urllib.parse import urlencode, urlsplit, urlunsplit
+from uuid import NAMESPACE_URL, uuid5
 
 from dnd_combat_simulator.combat import (
     AttackFeature,
@@ -150,8 +150,11 @@ class SharedBuildConfiguration:
         return cls(
             build.name,
             tuple(
-                SharedAttackProfileConfiguration.from_attack_profile(p)
-                for p in build.resolved_attack_profiles()
+                replace(
+                    SharedAttackProfileConfiguration.from_attack_profile(p),
+                    attack_id=p.attack_id or f"profile_{index + 1}",
+                )
+                for index, p in enumerate(build.resolved_attack_profiles())
             ),
         )
 
@@ -284,8 +287,13 @@ def _is_legacy_positional_attack_id(value: str) -> bool:
     )
 
 
-def _migrated_attack_id(build_prefix: str, index: int, profile: SharedAttackProfileConfiguration) -> str:
-    seed = f"tinlar/dnd-combat-simulator/{build_prefix}/{index}/{profile.name}/{profile.damage_formula}"
+def _migrated_attack_id(
+    build_prefix: str, index: int, profile: SharedAttackProfileConfiguration
+) -> str:
+    seed = (
+        f"tinlar/dnd-combat-simulator/{build_prefix}/{index}/"
+        f"{profile.name}/{profile.damage_formula}"
+    )
     return f"attack-{uuid5(NAMESPACE_URL, seed).hex}"
 
 
@@ -293,7 +301,6 @@ def migrate_shared_build_attack_ids(
     build_prefix: str, shared_build: SharedBuildConfiguration
 ) -> SharedBuildConfiguration:
     profiles = shared_build.attack_profiles
-    raw_ids = [profile.attack_id for profile in profiles]
     used: set[str] = set()
     migrated_ids: list[str] = []
     legacy_to_stable: dict[str, str] = {}
@@ -304,14 +311,15 @@ def migrate_shared_build_attack_ids(
             candidate = _migrated_attack_id(build_prefix, index, profile)
             suffix = 1
             while candidate in used:
-                candidate = f"{_migrated_attack_id(build_prefix, index, profile)}-{suffix}"
+                candidate = (
+                    f"{_migrated_attack_id(build_prefix, index, profile)}-{suffix}"
+                )
                 suffix += 1
         used.add(candidate)
         migrated_ids.append(candidate)
         if raw_id:
             legacy_to_stable[raw_id] = candidate
         legacy_to_stable[str(index)] = candidate
-        legacy_to_stable[str(index + 1)] = candidate
         legacy_to_stable[f"profile-{index + 1}"] = candidate
     names: dict[str, list[str]] = {}
     for profile, stable_id in zip(profiles, migrated_ids, strict=True):
@@ -325,10 +333,14 @@ def migrate_shared_build_attack_ids(
             matches = names[source_id]
             if len(matches) != 1:
                 raise SharedConfigurationError(
-                    f"{build_prefix} profile {index + 1} trigger source name is ambiguous."
+                    f"{build_prefix} profile {index + 1} trigger source "
+                    "name is ambiguous."
                 )
             source_id = matches[0]
-        elif profile.trigger_type not in (TriggerType.ALWAYS, TriggerType.SOMETIMES) and source_id:
+        elif (
+            profile.trigger_type not in (TriggerType.ALWAYS, TriggerType.SOMETIMES)
+            and source_id
+        ):
             try:
                 legacy_index = int(source_id)
             except (TypeError, ValueError):
@@ -336,9 +348,16 @@ def migrate_shared_build_attack_ids(
             else:
                 if legacy_index < 0 or legacy_index >= len(profiles):
                     raise SharedConfigurationError(
-                        f"{build_prefix} profile {index + 1} trigger source index is invalid."
+                        f"{build_prefix} profile {index + 1} trigger source "
+                        "index is invalid."
                     )
-        migrated.append(replace(profile, attack_id=migrated_ids[index], trigger_source_attack_id=source_id))
+        migrated.append(
+            replace(
+                profile,
+                attack_id=migrated_ids[index],
+                trigger_source_attack_id=source_id,
+            )
+        )
     return replace(shared_build, attack_profiles=tuple(migrated))
 
 
@@ -594,7 +613,9 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
             raise SharedConfigurationError(f"{label} has too many attack profiles.")
         attack_ids = [profile.attack_id for profile in build.attack_profiles]
         if any(not attack_id.strip() for attack_id in attack_ids):
-            raise SharedConfigurationError(f"{label} contains an attack with an empty ID.")
+            raise SharedConfigurationError(
+                f"{label} contains an attack with an empty ID."
+            )
         if len(set(attack_ids)) != len(attack_ids):
             raise SharedConfigurationError(f"{label} contains duplicate attack IDs.")
         for i, profile in enumerate(build.attack_profiles, 1):
