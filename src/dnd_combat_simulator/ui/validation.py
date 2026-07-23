@@ -51,12 +51,8 @@ class ValidationIssue:
 
     @property
     def key(self) -> str:
-        """Compatibility accessor for widget-focused legacy tests."""
-        if not self.widget_key:
-            return ""
-        if self.field == "trigger_chance_percent" and self.attack_id:
-            return f"{self.attack_id}-trigger-chance-percent"
-        return self.widget_key
+        """Widget key targeted by this validation issue."""
+        return self.widget_key or ""
 
 
 def _friendly_validation_message(error: ValueError) -> str:
@@ -423,6 +419,11 @@ def validate_configuration_for_ui(
     structured: dict[tuple[str, str | None, str], str] = {}
     for error in validate_scenario_fields(configuration.scenario.to_scenario_config()):
         structured[("scenario", None, error.key)] = error.message
+    available_resource_ids = frozenset(
+        resource.resource_id
+        for resource in configuration.scenario.to_scenario_config().managed_resources
+        if resource.resource_id
+    )
     for build_key, prefix, build in (
         ("build_a", "first", configuration.build_a),
         ("build_b", "second", configuration.build_b),
@@ -434,7 +435,11 @@ def validate_configuration_for_ui(
         }
         for index, attack_id in enumerate(attack_ids):
             widget_to_attack[profile_prefix(prefix, index)] = attack_id
-        for error in validate_build_fields(build.to_build_config(), prefix=prefix):
+        for error in validate_build_fields(
+            build.to_build_config(),
+            prefix=prefix,
+            available_resource_ids=available_resource_ids,
+        ):
             profile_id: str | None = None
             field = error.key
             if error.key == f"{prefix}-build-name":
@@ -459,10 +464,22 @@ def validate_configuration_for_ui(
 def _validation_errors_for_configuration(
     configuration: SharedConfiguration,
 ) -> list[ValidationIssue]:
+    scenario = configuration.scenario.to_scenario_config()
+    available_resource_ids = frozenset(
+        resource.resource_id
+        for resource in scenario.managed_resources
+        if resource.resource_id
+    )
     return [
-        *validate_scenario_fields(configuration.scenario.to_scenario_config()),
-        *validate_build_fields(configuration.build_a.to_build_config(), prefix="first"),
+        *validate_scenario_fields(scenario),
         *validate_build_fields(
-            configuration.build_b.to_build_config(), prefix="second"
+            configuration.build_a.to_build_config(),
+            prefix="first",
+            available_resource_ids=available_resource_ids,
+        ),
+        *validate_build_fields(
+            configuration.build_b.to_build_config(),
+            prefix="second",
+            available_resource_ids=available_resource_ids,
         ),
     ]
