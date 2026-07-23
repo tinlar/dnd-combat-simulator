@@ -3124,6 +3124,85 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
     assert state[app.build_attack_ids_key("first")] == ["attack-a", "attack-b"]
 
 
+def test_build_inputs_uses_attack_name_input_without_markdown_heading(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeContainer(Context):
+        def button(self, *args, **kwargs):
+            return False
+
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    markdown_calls: list[str] = []
+    text_input_calls: list[tuple[str, dict[str, object]]] = []
+    state = {
+        app.build_attack_ids_key("first"): ["attack-a"],
+        app.profile_widget_key(
+            app.attack_widget_prefix("first", "attack-a"), "name"
+        ): "Slash",
+    }
+
+    def markdown(body: str, **kwargs: object) -> None:
+        markdown_calls.append(body)
+
+    def text_input(label: str, **kwargs: object) -> str:
+        text_input_calls.append((label, kwargs))
+        return str(kwargs.get("value", ""))
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        container=lambda **kwargs: FakeContainer(),
+        columns=lambda spec, **kwargs: [
+            FakeContainer() for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+        markdown=markdown,
+        text_input=text_input,
+        number_input=lambda label, **kwargs: kwargs.get("value", 1),
+        selectbox=lambda label, **kwargs: kwargs["options"][kwargs.get("index", 0)],
+        radio=lambda label, **kwargs: kwargs["options"][0],
+        checkbox=lambda *args, **kwargs: False,
+        expander=lambda *args, **kwargs: Context(),
+        button=lambda *args, **kwargs: False,
+        caption=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        rerun=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    app._build_inputs("first", "Build A")
+
+    assert "##### Slash" not in markdown_calls
+    attack_name_inputs = [
+        kwargs for label, kwargs in text_input_calls if label == "Attack name"
+    ]
+    assert len(attack_name_inputs) == 1
+    assert attack_name_inputs[0]["key"] == app.profile_widget_key(
+        app.attack_widget_prefix("first", "attack-a"), "name"
+    )
+
+
 def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
     from dnd_combat_simulator import app
     from dnd_combat_simulator.combat import AttackFeature
@@ -3271,12 +3350,23 @@ def test_attack_toolbar_css_is_scoped_and_compact() -> None:
 
     css = app.ATTACK_TOOLBAR_CSS
 
-    assert '[class*="st-key-first-attack-"][class$="-toolbar"]' in css
+    assert '[class*="st-key-first-attack-"][class*="-toolbar"]' in css
+    assert '[class*="st-key-second-attack-"][class*="-toolbar"]' in css
+    assert '[class$="-toolbar"]' not in css
+    assert '[data-testid="stVerticalBlockBorderWrapper"]' in css
+    assert '[data-testid="stVerticalBlock"]' in css
+    assert '[data-testid="stHorizontalBlock"]' in css
+    assert "padding: 2px 4px" in css
+    assert "padding: 0" in css
+    assert "height: 36px" in css
+    assert "max-height: 36px" in css
     assert 'button[kind="tertiary"]' in css
-    assert "min-height: 36px" in css
+    assert "min-height" not in css
     assert "padding-top: 0" in css
     assert "padding-bottom: 0" in css
     assert "focus-visible" in css
+    assert "disabled styling" in css
+    assert "tooltips" in css
     assert "Confirm Delete" not in css
     assert '\nbutton[kind="tertiary"]' not in css
     assert "configuration-toolbar" not in css
