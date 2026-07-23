@@ -718,16 +718,25 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
     assert ("columns", {"spec": 3}) in calls
     checkbox_calls = [call for kind, call in calls if kind == "checkbox"]
     assert [call["label"] for call in checkbox_calls] == [
+        "Inherit triggering critical",
+        "Require matching damage dice to continue",
         "Elven Accuracy",
         "Great Weapon Fighting",
         "Tavern Brawler",
         "Stop on Miss",
         "Potent Cantrip",
     ]
-    assert checkbox_calls[0]["key"] == "first-primary-feature-elven_accuracy"
-    assert checkbox_calls[0]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
-    assert checkbox_calls[3]["key"] == "first-primary-feature-stop_on_miss"
-    assert checkbox_calls[3]["help"] == FEATURE_HELP[AttackFeature.STOP_ON_MISS]
+    assert checkbox_calls[0]["key"] == "first-primary-inherit-triggering-critical"
+    assert checkbox_calls[0]["disabled"] is True
+    assert (
+        checkbox_calls[1]["key"]
+        == "first-primary-require-matching-damage-dice-to-continue"
+    )
+    assert checkbox_calls[1]["disabled"] is True
+    assert checkbox_calls[2]["key"] == "first-primary-feature-elven_accuracy"
+    assert checkbox_calls[2]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
+    assert checkbox_calls[5]["key"] == "first-primary-feature-stop_on_miss"
+    assert checkbox_calls[5]["help"] == FEATURE_HELP[AttackFeature.STOP_ON_MISS]
     assert checkbox_calls[3]["disabled"] is False
 
 

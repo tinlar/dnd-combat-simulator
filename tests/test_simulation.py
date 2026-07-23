@@ -2852,3 +2852,171 @@ def test_stage44_inheritance_fields_require_real_booleans() -> None:
             attacks_per_round=1,
             use_build_attack_bonus=1,  # type: ignore[arg-type]
         )
+
+
+def test_inherit_triggering_critical_requires_specific_trigger_source() -> None:
+    with pytest.raises(ValueError, match="Inherit Triggering Critical"):
+        run_damage_simulations(
+            attack_bonus=5,
+            target_armor_class=10,
+            damage_dice="1d4",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "Smite",
+                    None,
+                    "1d8",
+                    1,
+                    resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                    inherit_triggering_critical=True,
+                ),
+            ),
+        )
+
+
+def test_triggered_automatic_damage_inherits_critical_damage() -> None:
+    rng = PredictableRng([20, 1, 1, 4, 5])
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile("Strike", 5, "1d1", 1, attack_id="strike"),
+            AttackProfile(
+                "Smite",
+                None,
+                "1d8",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                attack_id="smite",
+                trigger_type=TriggerType.AFTER_SUCCESS,
+                trigger_source_attack_id="strike",
+                inherit_triggering_critical=True,
+            ),
+        ),
+    )
+    assert result.attack_profile_results[1].average_total_damage_per_simulation == 9
+
+
+def test_triggered_automatic_damage_remains_normal_after_normal_hit() -> None:
+    rng = PredictableRng([15, 1, 4])
+    result = run_damage_simulations(
+        attack_bonus=5,
+        target_armor_class=10,
+        damage_dice="1d4",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile("Strike", 5, "1d1", 1, attack_id="strike"),
+            AttackProfile(
+                "Smite",
+                None,
+                "1d8",
+                1,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                attack_id="smite",
+                trigger_type=TriggerType.AFTER_SUCCESS,
+                trigger_source_attack_id="strike",
+                inherit_triggering_critical=True,
+            ),
+        ),
+    )
+    assert result.attack_profile_results[1].average_total_damage_per_simulation == 4
+
+
+def test_matching_damage_dice_requires_more_than_one_attack() -> None:
+    with pytest.raises(ValueError, match="Require Matching Damage Dice"):
+        run_damage_simulations(
+            attack_bonus=20,
+            target_armor_class=10,
+            damage_dice="2d8",
+            rounds=1,
+            simulations=1,
+            attack_profiles=(
+                AttackProfile(
+                    "Orb",
+                    20,
+                    "2d8",
+                    1,
+                    require_matching_damage_dice_to_continue=True,
+                ),
+            ),
+        )
+
+
+def test_matching_pair_allows_next_attack_and_no_pair_stops_remaining() -> None:
+    rng = PredictableRng([10, 3, 3, 10, 1, 2])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=10,
+        damage_dice="2d8",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Orb",
+                20,
+                "2d8",
+                3,
+                require_matching_damage_dice_to_continue=True,
+            ),
+        ),
+    )
+    profile_result = result.attack_profile_results[0]
+    assert profile_result.total_attacks_made == 2
+    assert profile_result.total_skipped_profile_uses == 1
+    assert profile_result.hit_rate == 1
+    assert result.total_target_resolutions == 2
+
+
+def test_flat_and_discarded_dice_do_not_continue_matching_chain() -> None:
+    rng = PredictableRng([10, 4, 4, 5])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=10,
+        damage_dice="3d8kh1+4",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Orb",
+                20,
+                "3d8kh1+4",
+                2,
+                require_matching_damage_dice_to_continue=True,
+            ),
+        ),
+    )
+    assert result.total_attacks_made == 1
+    assert result.total_target_resolutions == 1
+
+
+def test_rerolled_exploding_critical_and_multiterm_dice_participate_in_matching() -> (
+    None
+):
+    rng = PredictableRng([20, 1, 4, 8, 4, 5, 4, 10, 2, 3])
+    result = run_damage_simulations(
+        attack_bonus=20,
+        target_armor_class=10,
+        damage_dice="1d8r1!+1d6",
+        rounds=1,
+        simulations=1,
+        rng=rng,
+        attack_profiles=(
+            AttackProfile(
+                "Orb",
+                20,
+                "1d8r1!+1d6",
+                2,
+                require_matching_damage_dice_to_continue=True,
+            ),
+        ),
+    )
+    assert result.total_attacks_made == 2

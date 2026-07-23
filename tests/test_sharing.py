@@ -596,6 +596,8 @@ def test_stage44_legacy_shared_profile_defaults_to_manual() -> None:
         for key in (
             "use_build_attack_bonus",
             "use_build_save_dc",
+            "inherit_triggering_critical",
+            "require_matching_damage_dice_to_continue",
         ):
             config[build_key]["attack_profiles"][0].pop(key)
     token = (
@@ -608,6 +610,11 @@ def test_stage44_legacy_shared_profile_defaults_to_manual() -> None:
 
     assert decoded.build_a.attack_profiles[0].use_build_attack_bonus is False
     assert decoded.build_a.attack_profiles[0].use_build_save_dc is False
+    assert decoded.build_a.attack_profiles[0].inherit_triggering_critical is False
+    assert (
+        decoded.build_a.attack_profiles[0].require_matching_damage_dice_to_continue
+        is False
+    )
 
 
 def test_legacy_enabled_build_damage_modifier_merges_into_formula() -> None:

@@ -127,6 +127,18 @@ class DamageRollBreakdown:
     terms: tuple[DiceTermRoll | ConstantTermRoll, ...]
     total: int
 
+    @property
+    def included_die_faces(self) -> tuple[int, ...]:
+        """Final individual die faces that contributed to resolved damage."""
+        return tuple(
+            face
+            for term in self.terms
+            if isinstance(term, DiceTermRoll) and term.term.sign > 0
+            for chain in term.chains
+            if chain.retained
+            for face in chain.rolls
+        )
+
 
 _BASE_PATTERN = re.compile(r"(?P<count>[1-9]\d*)d(?P<sides>[1-9]\d*)")
 _INT_PATTERN = re.compile(r"\d+")
@@ -512,6 +524,39 @@ def roll_dice_pool(
     return _roll_dice_pool_breakdown(DiceTerm(dice), rng, features=features).subtotal
 
 
+def roll_compiled_damage_breakdown(
+    expression: DamageExpression,
+    *,
+    critical: bool = False,
+    rng: RandomNumberGenerator | None = None,
+    features: frozenset[str] = frozenset(),
+) -> DamageRollBreakdown:
+    """Roll an already parsed damage expression and retain included die faces."""
+    random_number_generator = rng if rng is not None else Random()
+    term_rolls: list[DiceTermRoll | ConstantTermRoll] = []
+    total = 0
+    for term in expression.terms:
+        if isinstance(term, ConstantTerm):
+            roll = ConstantTermRoll(term=term, subtotal=term.value)
+            term_rolls.append(roll)
+            total += roll.subtotal
+            continue
+        roll = _roll_dice_pool_breakdown(
+            term, random_number_generator, features=features
+        )
+        term_rolls.append(roll)
+        total += roll.subtotal
+        if critical:
+            critical_roll = _roll_dice_pool_breakdown(
+                term, random_number_generator, features=features
+            )
+            term_rolls.append(critical_roll)
+            total += critical_roll.subtotal
+    return DamageRollBreakdown(
+        expression=expression, terms=tuple(term_rolls), total=max(0, total)
+    )
+
+
 def roll_compiled_damage_expression(
     expression: DamageExpression,
     *,
@@ -542,29 +587,8 @@ def roll_damage_formula_breakdown(
     features: frozenset[str] = frozenset(),
 ) -> DamageRollBreakdown:
     """Roll a complete damage expression and return a detailed breakdown."""
-    expression = parse_damage_expression(notation)
-    random_number_generator = rng if rng is not None else Random()
-    term_rolls: list[DiceTermRoll | ConstantTermRoll] = []
-    total = 0
-    for term in expression.terms:
-        if isinstance(term, ConstantTerm):
-            roll = ConstantTermRoll(term=term, subtotal=term.value)
-            term_rolls.append(roll)
-            total += roll.subtotal
-            continue
-        roll = _roll_dice_pool_breakdown(
-            term, random_number_generator, features=features
-        )
-        term_rolls.append(roll)
-        total += roll.subtotal
-        if critical:
-            critical_roll = _roll_dice_pool_breakdown(
-                term, random_number_generator, features=features
-            )
-            term_rolls.append(critical_roll)
-            total += critical_roll.subtotal
-    return DamageRollBreakdown(
-        expression=expression, terms=tuple(term_rolls), total=max(0, total)
+    return roll_compiled_damage_breakdown(
+        parse_damage_expression(notation), critical=critical, rng=rng, features=features
     )
 
 

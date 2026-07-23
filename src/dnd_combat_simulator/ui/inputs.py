@@ -174,16 +174,23 @@ def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> Attack
 
 
 def _feature_inputs(
-    prefix: str, resolution_type: ResolutionType, affected_targets: int = 1
-) -> frozenset[AttackFeature]:
+    prefix: str,
+    resolution_type: ResolutionType,
+    affected_targets: int = 1,
+    *,
+    can_inherit_triggering_critical: bool = False,
+    can_require_matching_damage_dice: bool = False,
+) -> tuple[frozenset[AttackFeature], bool, bool]:
     """Render feats and features controls for one attack profile."""
     import streamlit as st
 
     selected = set()
+    inherit_triggering_critical = False
+    require_matching_damage_dice_to_continue = False
     expander = getattr(st, "expander", None)
     checkbox = getattr(st, "checkbox", None)
     if expander is None or checkbox is None:
-        return frozenset()
+        return frozenset(), False, False
     try:
         feature_context = expander(
             f"{_features_summary_from_state(prefix)}",
@@ -197,6 +204,35 @@ def _feature_inputs(
     with feature_context:
         columns = getattr(st, "columns", None)
         feature_columns = columns(min(3, len(FEATURE_ORDER))) if columns else None
+        inherited_key = profile_widget_key(prefix, "inherit_triggering_critical")
+        matching_key = profile_widget_key(
+            prefix, "require_matching_damage_dice_to_continue"
+        )
+        if not can_inherit_triggering_critical:
+            getattr(st, "session_state", {}).pop(inherited_key, None)
+        if not can_require_matching_damage_dice:
+            getattr(st, "session_state", {}).pop(matching_key, None)
+        inherit_triggering_critical = checkbox(
+            "Inherit triggering critical",
+            value=False,
+            key=inherited_key,
+            help=(
+                "When this attack is triggered by another attack, treat this "
+                "attack's damage as critical damage if the triggering attack was "
+                "a critical hit."
+            ),
+            disabled=not can_inherit_triggering_critical,
+        )
+        require_matching_damage_dice_to_continue = checkbox(
+            "Require matching damage dice to continue",
+            value=False,
+            key=matching_key,
+            help=(
+                "After each attack, the next attack occurs only if at least two "
+                "included damage dice show the same result."
+            ),
+            disabled=not can_require_matching_damage_dice,
+        )
         for index, feature in enumerate(FEATURE_ORDER):
             disabled = not is_feature_available(
                 feature, resolution_type, affected_targets=affected_targets
@@ -218,7 +254,14 @@ def _feature_inputs(
             )
             if checked and not disabled:
                 selected.add(feature)
-    return frozenset(selected)
+    return (
+        frozenset(selected),
+        bool(inherit_triggering_critical and can_inherit_triggering_critical),
+        bool(
+            require_matching_damage_dice_to_continue
+            and can_require_matching_damage_dice
+        ),
+    )
 
 
 def _trigger_source_options(
@@ -973,7 +1016,19 @@ def _attack_profile_inputs(
                     errors_by_key, profile_widget_key(prefix, "resource_amount")
                 )
                 resource_costs = (ResourceCost(str(selected), int(amount)),)
-    features = _feature_inputs(prefix, resolution_type, int(affected_targets))
+    can_inherit_triggering_critical = (
+        trigger_type not in (TriggerType.ALWAYS, TriggerType.SOMETIMES)
+        and trigger_source_attack_id is not None
+    )
+    features, inherit_triggering_critical, require_matching_damage_dice_to_continue = (
+        _feature_inputs(
+            prefix,
+            resolution_type,
+            int(affected_targets),
+            can_inherit_triggering_critical=can_inherit_triggering_critical,
+            can_require_matching_damage_dice=int(attacks_per_round) > 1,
+        )
+    )
     return AttackProfile(
         name=attack_name,
         attack_bonus=None if attack_bonus is None else int(attack_bonus),
@@ -994,6 +1049,8 @@ def _attack_profile_inputs(
         resource_costs=resource_costs,
         use_build_attack_bonus=use_build_attack_bonus,
         use_build_save_dc=use_build_save_dc,
+        inherit_triggering_critical=inherit_triggering_critical,
+        require_matching_damage_dice_to_continue=require_matching_damage_dice_to_continue,
     )
 
 
