@@ -73,3 +73,14 @@ def trigger_expanded_state_key(profile_id: str) -> str:
 
 def managed_resource_widget_key(resource_id: int | str, field: str) -> str:
     return f"scenario-managed-resource-{resource_id}-{field}"
+
+
+def build_math_state_key(build_prefix: str, field: str) -> str:
+    suffixes = {
+        "ability_modifier": "ability-modifier",
+        "proficiency_bonus": "proficiency-bonus",
+        "attack_bonus_adjustment": "attack-bonus-adjustment",
+        "damage_bonus_adjustment": "damage-bonus-adjustment",
+        "save_dc_adjustment": "save-dc-adjustment",
+    }
+    return f"{build_prefix}-build-math-{suffixes[field]}"

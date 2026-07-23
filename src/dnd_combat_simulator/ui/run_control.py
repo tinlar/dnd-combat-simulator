@@ -30,7 +30,7 @@ from dnd_combat_simulator.ui.validation import (
 )
 
 logger = logging.getLogger(__name__)
-SIMULATION_CACHE_VERSION = 1
+SIMULATION_CACHE_VERSION = 2
 SIMULATION_CACHE_MAX_ENTRIES = 64
 
 

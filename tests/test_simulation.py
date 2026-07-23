@@ -22,6 +22,7 @@ from dnd_combat_simulator.simulation import (
     compare_builds,
     parse_active_rounds,
     run_damage_simulations,
+    simulate_build,
 )
 
 
@@ -2620,3 +2621,36 @@ def test_run_damage_simulations_optimized_engine_regression_matrix(
             == expected["resource"]
         )
     assert rng.rolls == expected["calls"]
+
+
+def test_build_math_defaults_do_not_affect_simulation_results_or_comparison() -> None:
+    from dataclasses import replace
+
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+
+    profile = AttackProfile("Strike", 5, "1d8+3", 1, attack_id="strike")
+    base = BuildConfig(
+        name="Build",
+        attack_bonus=5,
+        damage_dice="1d8+3",
+        attacks_per_round=1,
+        attack_profiles=(profile,),
+    )
+    custom_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
+    custom = replace(base, math_defaults=custom_defaults)
+    scenario = ScenarioConfig(15, 3, 20)
+
+    assert simulate_build(base, scenario, seed=42) == simulate_build(
+        custom, scenario, seed=42
+    )
+
+    comparison = compare_builds(
+        first_build=custom,
+        second_build=replace(
+            base, name="Other", math_defaults=BuildMathDefaults(-1, 0, -2, -3, -4)
+        ),
+        scenario=scenario,
+        seed=42,
+    )
+    assert comparison.first_build.math_defaults == custom_defaults
+    assert comparison.second_build.math_defaults != comparison.first_build.math_defaults

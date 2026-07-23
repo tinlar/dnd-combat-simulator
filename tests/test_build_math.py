@@ -171,3 +171,30 @@ def test_build_math_import_probe_preserves_parent_modules() -> None:
     assert sys.modules["streamlit"] is streamlit_before
     assert sys.modules.get("dnd_combat_simulator.simulation") is simulation_before
     assert sys.modules.get("dnd_combat_simulator.ui.run_control") is run_control_before
+
+
+def test_build_config_carries_math_defaults_without_changing_legacy_profiles() -> None:
+    from dnd_combat_simulator.combat import AttackRollMode
+    from dnd_combat_simulator.simulation import BuildConfig
+
+    positional = BuildConfig("Build A", 5, "1d8+3", 1)
+    assert positional.math_defaults == BuildMathDefaults()
+
+    profiles = positional.resolved_attack_profiles()
+    assert profiles[0].attack_bonus == 5
+    assert profiles[0].damage_dice == "1d8+3"
+    assert profiles[0].attacks_per_round == 1
+    assert profiles[0].attack_roll_mode is AttackRollMode.NORMAL
+
+    custom_defaults = BuildMathDefaults(ability_modifier=9, proficiency_bonus=8)
+    custom = BuildConfig(
+        name="Build A",
+        attack_bonus=5,
+        damage_dice="1d8+3",
+        attacks_per_round=1,
+        math_defaults=custom_defaults,
+    )
+    assert custom.math_defaults == custom_defaults
+    assert custom != positional
+    assert hash(custom) != hash(positional)
+    assert custom.resolved_attack_profiles()[0].attack_bonus == 5

@@ -203,3 +203,25 @@ def test_page_has_no_compatibility_facade_or_runtime_module_mutation() -> None:
                     and isinstance(target.value, ast.Name)
                     and target.value.id in imported_modules
                 )
+
+
+def test_build_math_module_has_no_architecture_back_edges() -> None:
+    source = Path("src/dnd_combat_simulator/build_math.py").read_text()
+    tree = ast.parse(source)
+    imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.append(node.module)
+    forbidden = (
+        "streamlit",
+        "dnd_combat_simulator.sharing",
+        "dnd_combat_simulator.simulation",
+        "dnd_combat_simulator.ui",
+    )
+    assert not any(
+        module == f or module.startswith(f + ".")
+        for module in imports
+        for f in forbidden
+    )

@@ -6,6 +6,7 @@ import logging
 from secrets import randbelow
 from uuid import uuid4
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -38,6 +39,7 @@ from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
     attack_widget_prefix,
     build_attack_ids_key,
+    build_math_state_key,
     feature_widget_key,
     managed_resource_widget_key,
     profile_prefix,
@@ -50,6 +52,14 @@ def _new_attack_id(build_prefix: str, position: int = 0) -> str:
     del build_prefix, position
     return f"attack-{uuid4().hex}"
 
+
+BUILD_MATH_DEFAULT_FIELDS = (
+    "ability_modifier",
+    "proficiency_bonus",
+    "attack_bonus_adjustment",
+    "damage_bonus_adjustment",
+    "save_dc_adjustment",
+)
 
 ATTACK_WIDGET_STATE_FIELDS = (
     "name",
@@ -456,6 +466,10 @@ def _hydrate_build_session_state(
     session_state, prefix: str, build: SharedBuildConfiguration
 ) -> None:
     session_state[f"{prefix}-build-name"] = build.name
+    for field_name in BUILD_MATH_DEFAULT_FIELDS:
+        session_state[build_math_state_key(prefix, field_name)] = getattr(
+            build.math_defaults, field_name
+        )
     attack_ids = [
         profile.attack_id or _new_attack_id(prefix, index)
         for index, profile in enumerate(build.attack_profiles)
@@ -595,12 +609,28 @@ def _profile_definitions(
     )
 
 
+def _build_math_defaults_from_state(state, build_prefix: str) -> BuildMathDefaults:
+    defaults = BuildMathDefaults()
+    values = {
+        field_name: int(
+            state.get(
+                build_math_state_key(build_prefix, field_name),
+                getattr(defaults, field_name),
+            )
+        )
+        for field_name in BUILD_MATH_DEFAULT_FIELDS
+    }
+    return BuildMathDefaults(**values)
+
+
 def _build_config_from_profiles(
     name: str,
     profiles: tuple[AttackProfile, ...],
+    math_defaults: BuildMathDefaults | None = None,
 ) -> BuildConfig:
     """Create a build config with every displayed profile attached."""
     primary = profiles[0]
+    resolved_defaults = BuildMathDefaults() if math_defaults is None else math_defaults
     return BuildConfig(
         name=name,
         attack_bonus=primary.attack_bonus or 0,
@@ -608,6 +638,7 @@ def _build_config_from_profiles(
         attacks_per_round=primary.attacks_per_round,
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
+        math_defaults=resolved_defaults,
     )
 
 
@@ -621,6 +652,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
         return _build_config_from_profiles(
             default_build_name,
             (AttackProfile("Attack 1", 5, "1d8+3", 1, attack_id=attack_id),),
+            BuildMathDefaults(),
         )
     profiles = []
     for _index, (attack_id, _, default_name) in enumerate(
@@ -786,6 +818,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
     return _build_config_from_profiles(
         session_state.get(f"{prefix}-build-name", default_build_name),
         tuple(profiles),
+        _build_math_defaults_from_state(session_state, prefix),
     )
 
 

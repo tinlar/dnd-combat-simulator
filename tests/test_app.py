@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from dnd_combat_simulator import APP_TITLE
@@ -3419,3 +3421,83 @@ def test_streamlit_duplicate_button_copies_persistent_state_without_exceptions()
     new_session_state = at.session_state._state._new_session_state
     assert f"{dest_prefix}-duplicate" not in new_session_state
     assert f"{dest_prefix}-toolbar" not in new_session_state
+
+
+def test_stage42_build_math_keys_and_state_round_trip(monkeypatch) -> None:
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+    from dnd_combat_simulator.sharing import (
+        deserialize_shared_configuration,
+        serialize_shared_configuration,
+        shared_configuration_from_configs,
+    )
+    from dnd_combat_simulator.simulation import BuildConfig, ScenarioConfig
+    from dnd_combat_simulator.ui.state import (
+        _build_from_state,
+        _build_math_defaults_from_state,
+        hydrate_session_state_from_shared_configuration,
+    )
+    from dnd_combat_simulator.ui.widget_keys import build_math_state_key
+
+    assert (
+        build_math_state_key("first", "ability_modifier")
+        == "first-build-math-ability-modifier"
+    )
+    with pytest.raises(KeyError):
+        build_math_state_key("first", "unknown")
+
+    class FakeStreamlit:
+        session_state = {}
+
+    monkeypatch.setitem(sys.modules, "streamlit", FakeStreamlit)
+    assert _build_math_defaults_from_state({}, "first") == BuildMathDefaults()
+
+    first_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
+    second_defaults = BuildMathDefaults(-1, 0, -2, -3, -4)
+    shared = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 2, 3),
+        seed=9,
+        build_a=BuildConfig("A", 5, "1d8", 1, math_defaults=first_defaults),
+        build_b=BuildConfig("B", 6, "1d6", 1, math_defaults=second_defaults),
+    )
+    hydrate_session_state_from_shared_configuration(FakeStreamlit.session_state, shared)
+    assert _build_from_state("first", "Build A").math_defaults == first_defaults
+    assert _build_from_state("second", "Build B").math_defaults == second_defaults
+
+    reshared = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 2, 3),
+        seed=9,
+        build_a=_build_from_state("first", "Build A"),
+        build_b=_build_from_state("second", "Build B"),
+    )
+    rerestored = deserialize_shared_configuration(
+        serialize_shared_configuration(reshared)
+    )
+    assert rerestored.build_a.math_defaults == first_defaults
+    assert rerestored.build_b.math_defaults == second_defaults
+    assert rerestored.build_a.math_defaults != rerestored.build_b.math_defaults
+
+
+def test_stage4_build_math_controls_are_not_rendered() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py").run(timeout=10)
+    assert not at.exception
+    text = "\n".join(str(node.value) for node in at.text)
+    assert any(title.value == APP_TITLE for title in at.title)
+    assert any(button.label == "Run Simulation" for button in at.button)
+    forbidden = (
+        "Ability modifier",
+        "Proficiency bonus",
+        "Other attack bonus",
+        "Other damage bonus",
+        "Other Save DC bonus",
+        "Calculated attack bonus",
+        "Calculated damage modifier",
+        "Calculated Save DC",
+        "Use Build Attack Bonus",
+        "Use Build Save DC",
+        "Use Build Damage Modifier",
+    )
+    assert all(label not in text for label in forbidden)
