@@ -519,19 +519,6 @@ def _attack_profile_inputs(
             "Attack name", value=default_name, key=attack_name_key
         )
     _field_error(errors_by_key, profile_widget_key(prefix, "name"))
-    resolution_type_label = st.selectbox(
-        "Resolution Type",
-        options=["Attack Roll", "Saving Throw", "Automatic Damage"],
-        index=0,
-        key=profile_widget_key(prefix, "resolution_type"),
-    )
-    resolution_type = {
-        "Attack Roll": ResolutionType.ATTACK_ROLL,
-        "Saving Throw": ResolutionType.SAVING_THROW,
-        "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
-    }[resolution_type_label]
-    _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
-
     def _row_text(column: Any, text: str, *, width: str | int = "auto") -> None:
         writer = getattr(column, "markdown", None) or getattr(st, "markdown", None)
         if writer is not None:
@@ -647,9 +634,66 @@ def _attack_profile_inputs(
         session_state.get(profile_widget_key(prefix, "use_build_save_dc"), True)
     )
 
+    resolution_type_options = ["Attack Roll", "Saving Throw", "Automatic Damage"]
+    resolution_type_key = profile_widget_key(prefix, "resolution_type")
+    stored_resolution_type_label = session_state.get(resolution_type_key, "Attack Roll")
+    if stored_resolution_type_label not in resolution_type_options:
+        stored_resolution_type_label = "Attack Roll"
+
+    if stored_resolution_type_label == "Automatic Damage":
+        resolution_columns = [st]
+    else:
+        try:
+            resolution_columns = list(
+                st.columns(2, gap="small", vertical_alignment="bottom")
+            )
+        except TypeError:
+            resolution_columns = list(st.columns(2, gap="small"))
+
+    resolution_type_label = resolution_columns[0].selectbox(
+        "Resolution Type",
+        options=resolution_type_options,
+        index=resolution_type_options.index(stored_resolution_type_label),
+        key=resolution_type_key,
+    )
+    resolution_type = {
+        "Attack Roll": ResolutionType.ATTACK_ROLL,
+        "Saving Throw": ResolutionType.SAVING_THROW,
+        "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
+    }[resolution_type_label]
+    _field_error(errors_by_key, resolution_type_key)
+
+    if resolution_type is ResolutionType.ATTACK_ROLL:
+        secondary_column = resolution_columns[1] if len(resolution_columns) > 1 else st
+        attack_roll_mode_label = secondary_column.selectbox(
+            "Attack Roll Mode",
+            options=[mode.value.title() for mode in AttackRollMode],
+            index=0,
+            key=profile_widget_key(prefix, "attack_roll_mode"),
+        )
+        attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
+        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
+    elif resolution_type is ResolutionType.SAVING_THROW:
+        secondary_column = resolution_columns[1] if len(resolution_columns) > 1 else st
+        successful_save_damage_label = secondary_column.selectbox(
+            "Successful Save Damage",
+            options=["No damage", "Half damage"],
+            index=0,
+            key=profile_widget_key(prefix, "successful_save_damage"),
+        )
+        attack_roll_mode = AttackRollMode.NORMAL
+        successful_save_damage = (
+            SuccessfulSaveDamage.HALF_DAMAGE
+            if successful_save_damage_label == "Half damage"
+            else SuccessfulSaveDamage.NO_DAMAGE
+        )
+    else:
+        attack_roll_mode = AttackRollMode.NORMAL
+        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
+
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus_key = profile_widget_key(prefix, "attack_bonus")
-        attack_row = _compact_inline_row(f"{prefix}-attack-bonus-row", 4)
+        attack_row = _compact_inline_row(f"{prefix}-attack-bonus-row", 3)
         _row_text(attack_row[0], "**Attack Bonus**", width=120)
         use_build_attack_bonus = _safe_checkbox(
             attack_row[1],
@@ -668,7 +712,7 @@ def _attack_profile_inputs(
                     session_state[attack_bonus_custom_key] = previous_attack_bonus
             session_state[attack_bonus_key] = resolved_math_defaults.attack_bonus
             attack_row[2].number_input(
-                "Attack Bonus value",
+                "Attack Bonus",
                 value=resolved_math_defaults.attack_bonus,
                 step=1,
                 key=attack_bonus_key,
@@ -679,7 +723,7 @@ def _attack_profile_inputs(
         elif attack_bonus_custom_key in session_state:
             session_state[attack_bonus_key] = session_state[attack_bonus_custom_key]
             attack_bonus = attack_row[2].number_input(
-                "Attack Bonus value",
+                "Attack Bonus",
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
@@ -687,7 +731,7 @@ def _attack_profile_inputs(
             )
         elif attack_bonus_key in session_state:
             attack_bonus = attack_row[2].number_input(
-                "Attack Bonus value",
+                "Attack Bonus",
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
@@ -695,19 +739,13 @@ def _attack_profile_inputs(
             )
         else:
             attack_bonus = attack_row[2].number_input(
-                "Attack Bonus value",
+                "Attack Bonus",
                 value=5,
                 step=1,
                 key=attack_bonus_key,
                 label_visibility="collapsed",
                 width=90,
             )
-        effective_attack_bonus = (
-            resolved_math_defaults.attack_bonus
-            if use_build_attack_bonus
-            else int(attack_bonus)
-        )
-        _row_text(attack_row[3], f"Effective: {effective_attack_bonus:+d}")
         _field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
@@ -810,7 +848,10 @@ def _attack_profile_inputs(
                 _render_error(error.message)
                 break
 
-    row_two = st.columns(3)
+    try:
+        row_two = st.columns(3, gap="small", vertical_alignment="bottom")
+    except TypeError:
+        row_two = st.columns(3, gap="small")
     attacks_per_round = row_two[0].number_input(
         "Attacks per round",
         min_value=1,
@@ -827,32 +868,7 @@ def _attack_profile_inputs(
         key=profile_widget_key(prefix, "affected_targets"),
     )
     _field_error(errors_by_key, profile_widget_key(prefix, "affected_targets"))
-    if resolution_type is ResolutionType.ATTACK_ROLL:
-        attack_roll_mode_label = row_two[2].selectbox(
-            "Attack roll mode",
-            options=[mode.value.title() for mode in AttackRollMode],
-            index=0,
-            key=profile_widget_key(prefix, "attack_roll_mode"),
-        )
-        attack_roll_mode = AttackRollMode(attack_roll_mode_label.lower())
-        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
-    elif resolution_type is ResolutionType.SAVING_THROW:
-        successful_save_damage_label = row_two[2].selectbox(
-            "Successful Save Damage",
-            options=["No damage", "Half damage"],
-            index=0,
-            key=profile_widget_key(prefix, "successful_save_damage"),
-        )
-        attack_roll_mode = AttackRollMode.NORMAL
-        successful_save_damage = (
-            SuccessfulSaveDamage.HALF_DAMAGE
-            if successful_save_damage_label == "Half damage"
-            else SuccessfulSaveDamage.NO_DAMAGE
-        )
-    else:
-        attack_roll_mode = AttackRollMode.NORMAL
-        successful_save_damage = SuccessfulSaveDamage.NO_DAMAGE
-    active_rounds = st.text_input(
+    active_rounds = row_two[2].text_input(
         "Active Rounds",
         value="",
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
