@@ -46,11 +46,36 @@ from dnd_combat_simulator.ui.state import (
     hydrate_session_state_from_shared_configuration,
 )
 from dnd_combat_simulator.ui.validation import (
-    _configuration_errors_for_current_state,
     _validation_errors_for_configuration,
+    validate_configuration_for_ui,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _configuration_errors_for_current_state() -> dict[tuple[str, str | None, str], str]:
+    import streamlit as st
+
+    session_state = getattr(st, "session_state", {})
+    scenario = ScenarioConfig(
+        target_armor_class=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
+        ),
+        enemy_save_bonus=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
+        ),
+        rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
+        simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
+        managed_resources=_managed_resources_from_state(),
+    )
+    configuration = shared_configuration_from_configs(
+        compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
+        scenario=scenario,
+        seed=int(session_state.get(SCENARIO_WIDGET_KEYS["seed"], 20240721)),
+        build_a=_build_from_state("first", "Build A"),
+        build_b=_build_from_state("second", "Build B"),
+    )
+    return validate_configuration_for_ui(configuration)
 
 
 def _resolution_type_label(resolution_type: ResolutionType) -> str:

@@ -61,10 +61,10 @@ from dnd_combat_simulator.ui.state import (
     resource_summary,
     trigger_summary,
 )
-from dnd_combat_simulator.ui.validation import (
-    _field_error,
-    _render_error,
-    _validate_profile_fields,
+from dnd_combat_simulator.ui.validation import _validate_profile_fields
+from dnd_combat_simulator.ui.validation_rendering import (
+    render_field_error,
+    render_validation_error,
 )
 from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
@@ -334,7 +334,7 @@ def _render_managed_resources(
                 key=managed_resource_widget_key(resource_id, "name"),
                 value=f"Resource {index + 1}",
             )
-            _field_error(
+            render_field_error(
                 errors_by_key, managed_resource_widget_key(resource_id, "name")
             )
             starting = cols[1].number_input(
@@ -344,7 +344,7 @@ def _render_managed_resources(
                 key=managed_resource_widget_key(resource_id, "starting-value"),
                 value=0,
             )
-            _field_error(
+            render_field_error(
                 errors_by_key,
                 managed_resource_widget_key(resource_id, "starting-value"),
             )
@@ -415,7 +415,7 @@ def _attack_profile_inputs(
     attack_name = st.text_input(
         "Attack name", value=default_name, key=profile_widget_key(prefix, "name")
     )
-    _field_error(errors_by_key, profile_widget_key(prefix, "name"))
+    render_field_error(errors_by_key, profile_widget_key(prefix, "name"))
     resolution_type_label = st.selectbox(
         "Resolution Type",
         options=["Attack Roll", "Saving Throw", "Automatic Damage"],
@@ -427,7 +427,7 @@ def _attack_profile_inputs(
         "Saving Throw": ResolutionType.SAVING_THROW,
         "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
     }[resolution_type_label]
-    _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
+    render_field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
     row_one = st.columns(2)
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus = row_one[0].number_input(
@@ -436,7 +436,7 @@ def _attack_profile_inputs(
             step=1,
             key=profile_widget_key(prefix, "attack_bonus"),
         )
-        _field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
+        render_field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
@@ -447,7 +447,7 @@ def _attack_profile_inputs(
             step=1,
             key=profile_widget_key(prefix, "save_dc"),
         )
-        _field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
+        render_field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
     else:
         attack_bonus = None
         save_dc = None
@@ -458,13 +458,15 @@ def _attack_profile_inputs(
         help=DAMAGE_FORMULA_HELP,
         key=profile_widget_key(prefix, "damage_formula"),
     )
-    if not _field_error(errors_by_key, profile_widget_key(prefix, "damage_formula")):
+    if not render_field_error(
+        errors_by_key, profile_widget_key(prefix, "damage_formula")
+    ):
         current_damage_errors = _validate_profile_fields(
             AttackProfile(default_name, 0, damage_dice, 1), prefix=prefix
         )
         for error in current_damage_errors:
             if error.key == profile_widget_key(prefix, "damage_formula"):
-                _render_error(error.message)
+                render_validation_error(error.message)
                 break
     row_two = st.columns(3)
     attacks_per_round = row_two[0].number_input(
@@ -474,7 +476,7 @@ def _attack_profile_inputs(
         step=1,
         key=profile_widget_key(prefix, "attacks_per_round"),
     )
-    _field_error(errors_by_key, profile_widget_key(prefix, "attacks_per_round"))
+    render_field_error(errors_by_key, profile_widget_key(prefix, "attacks_per_round"))
     affected_targets = row_two[1].number_input(
         "Target Resolutions",
         min_value=1,
@@ -482,7 +484,7 @@ def _attack_profile_inputs(
         step=1,
         key=profile_widget_key(prefix, "affected_targets"),
     )
-    _field_error(errors_by_key, profile_widget_key(prefix, "affected_targets"))
+    render_field_error(errors_by_key, profile_widget_key(prefix, "affected_targets"))
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_roll_mode_label = row_two[2].selectbox(
             "Attack roll mode",
@@ -514,7 +516,7 @@ def _attack_profile_inputs(
         help="Leave blank for every round. Examples: 1-5 or 1, 3-5, 8.",
         key=profile_widget_key(prefix, "active_rounds"),
     )
-    _field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
+    render_field_error(errors_by_key, profile_widget_key(prefix, "active_rounds"))
 
     state = getattr(st, "session_state", {})
     trigger_type_label = state.get(profile_widget_key(prefix, "trigger_type"), "Always")
@@ -559,7 +561,7 @@ def _attack_profile_inputs(
                 "Critically hits only applies to attack-roll attacks."
             ),
         )
-        _field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
+        render_field_error(errors_by_key, profile_widget_key(prefix, "trigger_type"))
         trigger_type = {
             "Another attack succeeds": TriggerType.AFTER_SUCCESS,
             "Another attack fails": TriggerType.AFTER_FAILURE,
@@ -578,7 +580,7 @@ def _attack_profile_inputs(
             )
             if str(chance_text).isdigit():
                 trigger_chance_percent = int(chance_text)
-            _field_error(
+            render_field_error(
                 errors_by_key, profile_widget_key(prefix, "trigger_chance_percent")
             )
             st.caption("Sometimes [Percentage Chance] % per round")
@@ -611,7 +613,7 @@ def _attack_profile_inputs(
                 getattr(st, "warning", lambda *args, **kwargs: None)(
                     NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE
                 )
-            _field_error(errors_by_key, source_key)
+            render_field_error(errors_by_key, source_key)
             source_resolution = ResolutionType.ATTACK_ROLL
             if trigger_source_attack_id in option_ids:
                 source_resolution_label = getattr(st, "session_state", {}).get(
@@ -677,7 +679,9 @@ def _attack_profile_inputs(
                     ),
                     key=profile_widget_key(prefix, "resource_id"),
                 )
-                _field_error(errors_by_key, profile_widget_key(prefix, "resource_id"))
+                render_field_error(
+                    errors_by_key, profile_widget_key(prefix, "resource_id")
+                )
                 amount = st.number_input(
                     "Amount consumed",
                     min_value=1,
@@ -685,7 +689,7 @@ def _attack_profile_inputs(
                     step=1,
                     key=profile_widget_key(prefix, "resource_amount"),
                 )
-                _field_error(
+                render_field_error(
                     errors_by_key, profile_widget_key(prefix, "resource_amount")
                 )
                 resource_costs = (ResourceCost(str(selected), int(amount)),)
@@ -766,7 +770,7 @@ def _build_inputs(
         name = st.text_input(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )
-        _field_error(errors_by_key, f"{prefix}-build-name")
+        render_field_error(errors_by_key, f"{prefix}-build-name")
         attack_ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
         if st.button(
             "Add Attack",
