@@ -56,6 +56,7 @@ from dnd_combat_simulator.ui.state import (
     _new_resource_id,
     _reset_triggers_referencing_attack,
     _resource_usage_profile_keys,
+    clone_build_session_state,
     features_summary,
     next_default_attack_name,
     resource_summary,
@@ -519,6 +520,7 @@ def _attack_profile_inputs(
             "Attack name", value=default_name, key=attack_name_key
         )
     _field_error(errors_by_key, profile_widget_key(prefix, "name"))
+
     def _row_text(column: Any, text: str, *, width: str | int = "auto") -> None:
         writer = getattr(column, "markdown", None) or getattr(st, "markdown", None)
         if writer is not None:
@@ -1256,6 +1258,39 @@ def _build_config_from_profiles(
     )
 
 
+CLONE_BUILD_A_CONFIRMATION_KEY = "clone-build-a-into-build-b-confirm"
+CLONE_BUILD_A_SUCCESS_KEY = "clone-build-a-into-build-b-success"
+
+
+def _render_clone_build_a_control() -> None:
+    """Render Build B's whole-build clone control and confirmation actions."""
+    import streamlit as st
+
+    state = getattr(st, "session_state", {})
+    if state.pop(CLONE_BUILD_A_SUCCESS_KEY, False):
+        st.success("Build A copied to Build B.")
+    if st.button("Clone Build A", key="second-clone-build-a"):
+        state[CLONE_BUILD_A_CONFIRMATION_KEY] = True
+    if not state.get(CLONE_BUILD_A_CONFIRMATION_KEY, False):
+        return
+    st.warning(
+        "Clone Build A into Build B? This will overwrite all current Build B settings."
+    )
+    confirm_cols = st.columns([1, 1, 3])
+    cancel_button = getattr(confirm_cols[0], "button", st.button)
+    overwrite_button = getattr(confirm_cols[1], "button", st.button)
+    if cancel_button("Cancel", key="second-clone-build-a-cancel"):
+        state.pop(CLONE_BUILD_A_CONFIRMATION_KEY, None)
+        getattr(st, "rerun", lambda: None)()
+    if overwrite_button(
+        "Overwrite Build B", key="second-clone-build-a-overwrite", type="primary"
+    ):
+        clone_build_session_state(state, "first", "second")
+        state.pop(CLONE_BUILD_A_CONFIRMATION_KEY, None)
+        state[CLONE_BUILD_A_SUCCESS_KEY] = True
+        getattr(st, "rerun", lambda: None)()
+
+
 def _build_inputs(
     prefix: str, default_name: str, errors_by_key: dict[str, str] | None = None
 ) -> BuildConfig:
@@ -1265,6 +1300,8 @@ def _build_inputs(
     errors_by_key = errors_by_key or {}
     with _render_section_container():
         st.markdown(f"#### {default_name}")
+        if prefix == "second":
+            _render_clone_build_a_control()
         name = st.text_input(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )

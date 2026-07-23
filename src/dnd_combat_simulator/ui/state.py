@@ -17,6 +17,7 @@ from dnd_combat_simulator.combat import (
 from dnd_combat_simulator.sharing import (
     SharedBuildConfiguration,
     SharedConfiguration,
+    _build_from_json,
     migrate_shared_build_attack_ids,
 )
 from dnd_combat_simulator.simulation import (
@@ -245,9 +246,7 @@ def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
 
 def _dependent_attack_names(state, build_prefix: str, attack_id: str) -> list[str]:
     names = []
-    for index, current_id in enumerate(
-        _attack_ids_from_state(state, build_prefix)
-    ):
+    for index, current_id in enumerate(_attack_ids_from_state(state, build_prefix)):
         if current_id == attack_id:
             continue
         widget_prefix = attack_widget_prefix(build_prefix, current_id)
@@ -584,6 +583,40 @@ def _hydrate_build_session_state(
                 feature in profile.features
             )
         _copy_attack_widget_state(session_state, widget_prefix, legacy_prefix)
+
+
+def _clear_build_session_state(session_state, prefix: str) -> None:
+    """Remove persisted widget state for one build before full replacement."""
+    prefixes = (f"{prefix}-", f"profile-{prefix}-")
+    for key in list(session_state):
+        if str(key).startswith(prefixes):
+            del session_state[key]
+
+
+def clone_build_session_state(
+    session_state, source_prefix: str, dest_prefix: str
+) -> None:
+    """Replace one build's widget state with a deep serialized copy of another."""
+    source = _build_from_state(source_prefix, "Build A")
+    shared_source = SharedBuildConfiguration.from_build_config(source)
+    cloned = _build_from_json(shared_source.to_json_dict(), dest_prefix)
+    _clear_build_session_state(session_state, dest_prefix)
+    ids_key = build_managed_resource_ids_key(dest_prefix)
+    count_key = build_managed_resource_count_key(dest_prefix)
+    session_state[ids_key] = [
+        resource.resource_id for resource in cloned.managed_resources
+    ]
+    session_state[count_key] = len(cloned.managed_resources)
+    for resource in cloned.managed_resources:
+        session_state[
+            managed_resource_widget_key(resource.resource_id, "name", dest_prefix)
+        ] = resource.name
+        session_state[
+            managed_resource_widget_key(
+                resource.resource_id, "starting-value", dest_prefix
+            )
+        ] = resource.starting_value
+    _hydrate_build_session_state(session_state, dest_prefix, cloned)
 
 
 def hydrate_session_state_from_shared_configuration(
