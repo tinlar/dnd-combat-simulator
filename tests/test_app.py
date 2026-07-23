@@ -2913,3 +2913,196 @@ def test_next_default_attack_name_ignores_order_and_existing_case() -> None:
 
     assert next_default_attack_name(["Attack 2", "attack 1"]) == "Attack 3"
     assert next_default_attack_name(["Custom", "Attack 1"]) == "Attack 2"
+
+
+def test_attack_action_toolbar_uses_single_horizontal_tertiary_container(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    calls = []
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeContainer(Context):
+        def __init__(self, key=None):
+            self.key = key
+
+        def button(self, label, **kwargs):
+            calls.append(("toolbar_button", self.key, label, kwargs))
+            return False
+
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    def container(**kwargs):
+        calls.append(("container", kwargs))
+        return FakeContainer(kwargs.get("key"))
+
+    def columns(spec, **kwargs):
+        calls.append(("columns", {"spec": spec, **kwargs}))
+        return [
+            FakeContainer() for _ in range(spec if isinstance(spec, int) else len(spec))
+        ]
+
+    state = {
+        app.build_attack_ids_key("first"): ["attack-a", "attack-b"],
+        app.profile_widget_key(
+            app.attack_widget_prefix("first", "attack-a"), "name"
+        ): "Slash",
+        app.profile_widget_key(
+            app.attack_widget_prefix("first", "attack-b"), "name"
+        ): "Stab",
+    }
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        container=container,
+        columns=columns,
+        markdown=lambda *args, **kwargs: None,
+        text_input=lambda label, **kwargs: kwargs.get("value", ""),
+        number_input=lambda label, **kwargs: kwargs.get("value", 1),
+        selectbox=lambda label, **kwargs: kwargs["options"][kwargs.get("index", 0)],
+        radio=lambda label, **kwargs: kwargs["options"][0],
+        checkbox=lambda *args, **kwargs: False,
+        expander=lambda *args, **kwargs: Context(),
+        button=lambda *args, **kwargs: False,
+        caption=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        rerun=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    app._build_inputs("first", "Build A")
+
+    toolbar_containers = [
+        call[1]
+        for call in calls
+        if call[0] == "container" and str(call[1].get("key", "")).endswith("-toolbar")
+    ]
+    assert toolbar_containers == [
+        {
+            "key": "first-attack-a-toolbar",
+            "border": True,
+            "width": "content",
+            "horizontal": True,
+            "vertical_alignment": "center",
+            "gap": "xsmall",
+        },
+        {
+            "key": "first-attack-b-toolbar",
+            "border": True,
+            "width": "content",
+            "horizontal": True,
+            "vertical_alignment": "center",
+            "gap": "xsmall",
+        },
+    ]
+    toolbar_buttons = [call for call in calls if call[0] == "toolbar_button"]
+    assert len(toolbar_buttons) == 8
+    assert [call[2] for call in toolbar_buttons[:4]] == [
+        ":material/content_copy:",
+        ":material/arrow_upward:",
+        ":material/arrow_downward:",
+        ":material/delete:",
+    ]
+    assert all(call[3]["type"] == "tertiary" for call in toolbar_buttons)
+    assert all(call[3]["width"] == "content" for call in toolbar_buttons)
+    assert all(call[3]["type"] != "secondary" for call in toolbar_buttons)
+    assert [call[3]["help"] for call in toolbar_buttons[:4]] == [
+        "Duplicate Slash.",
+        "This attack is already first.",
+        "Move Slash down.",
+        "Delete Slash. Requires confirmation.",
+    ]
+    assert [call[3]["disabled"] for call in toolbar_buttons[:4]] == [
+        False,
+        True,
+        False,
+        False,
+    ]
+    assert [call[3]["disabled"] for call in toolbar_buttons[4:]] == [
+        False,
+        False,
+        True,
+        False,
+    ]
+    assert not any(
+        call[0] == "columns" and call[1]["spec"] == [0.18, 0.18, 0.18, 0.18, 1.0]
+        for call in calls
+    )
+
+
+def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator import app
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeContainer(Context):
+        def __init__(self, key=None):
+            self.key = key
+
+        def button(self, label, **kwargs):
+            return kwargs["key"] == "first-attack-a-delete"
+
+        def number_input(self, label, **kwargs):
+            return kwargs.get("value", 1)
+
+        def text_input(self, label, **kwargs):
+            return kwargs.get("value", "")
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def radio(self, label, **kwargs):
+            return kwargs["options"][0]
+
+    state = {app.build_attack_ids_key("first"): ["attack-a", "attack-b"]}
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        container=lambda **kwargs: FakeContainer(kwargs.get("key")),
+        columns=lambda spec, **kwargs: [
+            FakeContainer() for _ in range(spec if isinstance(spec, int) else len(spec))
+        ],
+        markdown=lambda *args, **kwargs: None,
+        text_input=lambda label, **kwargs: kwargs.get("value", ""),
+        number_input=lambda label, **kwargs: kwargs.get("value", 1),
+        selectbox=lambda label, **kwargs: kwargs["options"][kwargs.get("index", 0)],
+        radio=lambda label, **kwargs: kwargs["options"][0],
+        checkbox=lambda *args, **kwargs: False,
+        expander=lambda *args, **kwargs: Context(),
+        button=lambda *args, **kwargs: False,
+        caption=lambda *args, **kwargs: None,
+        warning=lambda *args, **kwargs: None,
+        rerun=lambda: None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    app._build_inputs("first", "Build A")
+
+    assert state[app.ATTACK_DELETE_CONFIRMATION_KEY] == "first:attack-a"
+    assert state[app.build_attack_ids_key("first")] == ["attack-a", "attack-b"]

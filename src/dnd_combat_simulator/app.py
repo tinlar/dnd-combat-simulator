@@ -3123,24 +3123,30 @@ def _build_inputs(
                 st.markdown(f"##### {current_name}")
                 ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
                 container = getattr(st, "container", None)
-                if container is None:
-                    action_cols = st.columns([0.18, 0.18, 0.18, 0.18, 1.0])[:4]
-                else:
-                    toolbar = container(
-                        border=True,
+                toolbar = (
+                    container(
                         key=f"{prefix}-{attack_id}-toolbar",
-                        horizontal=True,
-                        horizontal_alignment="left",
-                        gap="small",
+                        border=True,
                         width="content",
+                        horizontal=True,
+                        vertical_alignment="center",
+                        gap="xsmall",
                     )
-                    action_cols = [toolbar, toolbar, toolbar, toolbar]
+                    if container is not None
+                    else st
+                )
 
-                def action_button(target):
-                    return getattr(target, "button", lambda *args, **kwargs: False)
+                def toolbar_button(*args, _toolbar=toolbar, **kwargs):
+                    button = getattr(_toolbar, "button", lambda *args, **kwargs: False)
+                    return button(
+                        *args,
+                        type="tertiary",
+                        width="content",
+                        **kwargs,
+                    )
 
                 at_max = len(ids) >= MAX_ATTACKS_PER_BUILD
-                if action_button(action_cols[0])(
+                if toolbar_button(
                     ":material/content_copy:",
                     key=f"{prefix}-{attack_id}-duplicate",
                     disabled=at_max,
@@ -3178,7 +3184,7 @@ def _build_inputs(
                         ids[: profile_index + 1] + [new_id] + ids[profile_index + 1 :]
                     )
                     getattr(st, "rerun", lambda: None)()
-                if action_button(action_cols[1])(
+                if toolbar_button(
                     ":material/arrow_upward:",
                     key=f"{prefix}-{attack_id}-up",
                     disabled=profile_index == 0,
@@ -3194,7 +3200,7 @@ def _build_inputs(
                     )
                     getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = ids
                     getattr(st, "rerun", lambda: None)()
-                if action_button(action_cols[2])(
+                if toolbar_button(
                     ":material/arrow_downward:",
                     key=f"{prefix}-{attack_id}-down",
                     disabled=profile_index == len(ids) - 1,
@@ -3213,7 +3219,7 @@ def _build_inputs(
                 dependents = _dependent_attack_names(
                     getattr(st, "session_state", {}), prefix, attack_id
                 )
-                delete_clicked = action_button(action_cols[3])(
+                delete_clicked = toolbar_button(
                     ":material/delete:",
                     key=f"{prefix}-{attack_id}-delete",
                     disabled=len(ids) == 1,
@@ -3222,7 +3228,6 @@ def _build_inputs(
                         if len(ids) == 1
                         else f"Delete {current_name}. Requires confirmation."
                     ),
-                    type="tertiary",
                 )
                 state = getattr(st, "session_state", {})
                 if delete_clicked:
