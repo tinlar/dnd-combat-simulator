@@ -265,60 +265,26 @@ export default function(component) {
 
 ATTACK_CARD_CSS = """
 <style>
-:root {
-    --attack-card-background: color-mix(
-        in srgb,
-        var(--st-secondary-background-color) 82%,
-        var(--st-primary-color) 18%
-    );
-    --attack-card-border: color-mix(
-        in srgb,
-        var(--st-border-color) 82%,
-        var(--st-primary-color) 18%
-    );
-    --attack-card-nested-background: color-mix(
-        in srgb,
-        var(--st-background-color) 88%,
-        var(--st-secondary-background-color) 12%
-    );
-}
-
-@media (prefers-color-scheme: dark) {
-    :root {
-        --attack-card-background: color-mix(
-            in srgb,
-            var(--st-secondary-background-color) 90%,
-            var(--st-primary-color) 10%
-        );
-        --attack-card-border: color-mix(
-            in srgb,
-            var(--st-border-color) 76%,
-            var(--st-primary-color) 24%
-        );
-        --attack-card-nested-background: color-mix(
-            in srgb,
-            var(--st-background-color) 78%,
-            var(--st-secondary-background-color) 22%
-        );
-    }
-}
-
 :is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
 )[class*="-card"] {
-    background-color: var(--attack-card-background) !important;
-    border-color: var(--attack-card-border) !important;
+    background-color:
+        color-mix(in srgb, currentColor 7%, transparent) !important;
+    border-color:
+        color-mix(in srgb, currentColor 22%, transparent) !important;
     border-radius: 14px !important;
-    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.12);
+    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.14);
 }
 
 :is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
 )[class*="-card"] [data-testid="stExpander"] details {
-    background-color: var(--attack-card-nested-background) !important;
-    border-color: var(--st-border-color) !important;
+    background-color:
+        color-mix(in srgb, currentColor 4%, transparent) !important;
+    border-color:
+        color-mix(in srgb, currentColor 18%, transparent) !important;
 }
 </style>
 """

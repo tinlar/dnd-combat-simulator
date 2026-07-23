@@ -3402,8 +3402,17 @@ def test_attack_card_css_targets_keyed_card_directly() -> None:
     assert "attack-card-marker" not in css
     assert direct_card_selector in css
     assert nested_expander_selector in css
-    assert "background-color: var(--attack-card-background) !important;" in css
-    assert "border-color: var(--attack-card-border) !important;" in css
+    assert "--st-background-color" not in css
+    assert "--st-secondary-background-color" not in css
+    assert "--st-primary-color" not in css
+    assert "prefers-color-scheme" not in css
+    assert "currentColor" in css
+    assert "background-color:" in css
+    assert "color-mix(in srgb, currentColor 7%, transparent) !important;" in css
+    assert "border-color:" in css
+    assert "color-mix(in srgb, currentColor 22%, transparent) !important;" in css
+    assert "color-mix(in srgb, currentColor 4%, transparent) !important;" in css
+    assert "color-mix(in srgb, currentColor 18%, transparent) !important;" in css
     assert "padding: clamp" not in css
 
 def test_attack_toolbar_css_is_scoped_and_compact() -> None:
