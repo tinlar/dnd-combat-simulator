@@ -414,9 +414,7 @@ def _safe_checkbox(st: Any, label: str, *, key: str, default: bool) -> bool:
     import sys
 
     streamlit_module = sys.modules.get("streamlit")
-    state = getattr(
-        st, "session_state", getattr(streamlit_module, "session_state", {})
-    )
+    state = getattr(st, "session_state", getattr(streamlit_module, "session_state", {}))
     if not isinstance(state, Mapping):
         state = getattr(streamlit_module, "session_state", {})
     kwargs: dict[str, object] = {"key": key}
@@ -471,10 +469,21 @@ def _attack_profile_inputs(
         "Automatic Damage": ResolutionType.AUTOMATIC_DAMAGE,
     }[resolution_type_label]
     _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
+
     def _row_text(column: Any, text: str) -> None:
         writer = getattr(column, "markdown", None) or getattr(st, "markdown", None)
         if writer is not None:
             writer(text)
+
+    def _compact_row_columns(widths: list[float]) -> list[Any]:
+        columns = st.columns
+        try:
+            return list(columns(widths, gap="small", vertical_alignment="center"))
+        except TypeError:
+            try:
+                return list(columns(widths, gap="small"))
+            except TypeError:
+                return list(columns(len(widths)))
 
     use_build_attack_bonus = bool(
         session_state.get(profile_widget_key(prefix, "use_build_attack_bonus"), True)
@@ -485,7 +494,7 @@ def _attack_profile_inputs(
 
     if resolution_type is ResolutionType.ATTACK_ROLL:
         attack_bonus_key = profile_widget_key(prefix, "attack_bonus")
-        attack_row = st.columns(4)
+        attack_row = _compact_row_columns([1.1, 1.9, 0.65, 1.4, 6.0])
         _row_text(attack_row[0], "**Attack Bonus**")
         use_build_attack_bonus = _safe_checkbox(
             attack_row[1],
@@ -544,7 +553,7 @@ def _attack_profile_inputs(
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
         save_dc_key = profile_widget_key(prefix, "save_dc")
-        save_row = st.columns(4)
+        save_row = _compact_row_columns([1.1, 1.9, 0.65, 1.4, 6.0])
         _row_text(save_row[0], "**Save DC**")
         use_build_save_dc = _safe_checkbox(
             save_row[1],
@@ -606,7 +615,7 @@ def _attack_profile_inputs(
         save_dc = None
 
     damage_key = profile_widget_key(prefix, "damage_formula")
-    damage_row = st.columns(5)
+    damage_row = _compact_row_columns([1.1, 1.6, 1.9, 0.65, 1.8, 4.0])
     _row_text(damage_row[0], "**Damage**")
     if damage_key in session_state:
         damage_dice = damage_row[1].text_input(
