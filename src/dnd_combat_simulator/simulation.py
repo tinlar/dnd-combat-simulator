@@ -242,6 +242,9 @@ class SimulationResult:
     resource_usage_results: tuple[ResourceUsageResult, ...] = field(
         default_factory=tuple, compare=False
     )
+    total_resource_blocked_executions: int = field(default=0, compare=False)
+    average_resource_blocked_executions_per_combat: float = field(default=0, compare=False)
+    resource_limited_combat_rate: float = field(default=0, compare=False)
 
 
 @dataclass(frozen=True)
@@ -713,17 +716,21 @@ def _record_target_resolution(
         round_stat.damaging_resolutions += 1
 
 
+def _unavailable_resource_indexes(
+    costs: tuple[CompiledResourceCost, ...], remaining_resources: list[int]
+) -> tuple[int, ...]:
+    return tuple(
+        cost.resource_index
+        for cost in costs
+        if remaining_resources[cost.resource_index] < cost.amount
+    )
+
+
 def _has_available_resources(
     costs: tuple[CompiledResourceCost, ...], remaining_resources: list[int]
 ) -> int | None:
-    return next(
-        (
-            cost.resource_index
-            for cost in costs
-            if remaining_resources[cost.resource_index] < cost.amount
-        ),
-        None,
-    )
+    unavailable = _unavailable_resource_indexes(costs, remaining_resources)
+    return unavailable[0] if unavailable else None
 
 
 def _consume_resources(
@@ -965,6 +972,8 @@ def run_damage_simulations(
     resource_ended_at_zero_combats = [0 for _ in managed_resources]
     resource_skipped_totals = [0 for _ in managed_resources]
     resource_blocked_combats = [0 for _ in managed_resources]
+    total_resource_blocked_executions = 0
+    resource_limited_combats = 0
 
     for _ in range(simulations):
         simulation_damage = 0
@@ -972,6 +981,7 @@ def run_damage_simulations(
             resource.starting_value for resource in managed_resources
         ]
         resources_blocked_this_combat: set[int] = set()
+        combat_had_resource_block = False
         combat_trigger_state = CombatTriggerState(
             successful_resolutions_by_profile=[0 for _ in profiles],
             failed_resolutions_by_profile=[0 for _ in profiles],
@@ -1010,14 +1020,17 @@ def run_damage_simulations(
                         overall.skipped_attacks += skipped
                         profile_stats[profile_index].skipped_attacks += skipped
                         break
-                    unavailable_resource_index = _has_available_resources(
+                    unavailable_resource_indexes = _unavailable_resource_indexes(
                         plan.resource_costs, remaining_resources
                     )
-                    if unavailable_resource_index is not None:
+                    if unavailable_resource_indexes:
                         overall.skipped_attacks += 1
                         profile_stats[profile_index].skipped_attacks += 1
-                        resource_skipped_totals[unavailable_resource_index] += 1
-                        resources_blocked_this_combat.add(unavailable_resource_index)
+                        total_resource_blocked_executions += 1
+                        combat_had_resource_block = True
+                        for unavailable_resource_index in unavailable_resource_indexes:
+                            resource_skipped_totals[unavailable_resource_index] += 1
+                            resources_blocked_this_combat.add(unavailable_resource_index)
                         continue
                     _consume_resources(
                         plan.resource_costs,
@@ -1191,6 +1204,8 @@ def run_damage_simulations(
                                 profile_index
                             ] += 1
 
+        if combat_had_resource_block:
+            resource_limited_combats += 1
         for resource_index, remaining in enumerate(remaining_resources):
             resource_remaining_totals[resource_index] += remaining
             resource_ended_at_zero_combats[resource_index] += int(remaining == 0)
@@ -1300,6 +1315,11 @@ def run_damage_simulations(
         )
         / simulations,
         resource_usage_results=resource_usage_results,
+        total_resource_blocked_executions=total_resource_blocked_executions,
+        average_resource_blocked_executions_per_combat=(
+            total_resource_blocked_executions / simulations
+        ),
+        resource_limited_combat_rate=resource_limited_combats / simulations,
     )
 
 
