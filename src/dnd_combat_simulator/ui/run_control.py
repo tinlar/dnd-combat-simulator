@@ -22,6 +22,12 @@ from dnd_combat_simulator.ui.constants import (
     SIMULATION_PENDING_KEY,
     SIMULATION_RUNNING_KEY,
 )
+from dnd_combat_simulator.ui.validation import (
+    ValidationIssue,
+    ValidationScope,
+    validate_build_fields,
+    validate_scenario_fields,
+)
 
 logger = logging.getLogger(__name__)
 SIMULATION_CACHE_VERSION = 1
@@ -166,12 +172,70 @@ else:
     _cached_execute_canonical_request = _execute_canonical_request_uncached
 
 
+def validate_canonical_request(
+    request: CanonicalSimulationRequest,
+) -> tuple[ValidationIssue, ...]:
+    """Validate the complete immutable request before it reaches the cache."""
+    issues: list[ValidationIssue] = []
+    issues.extend(validate_scenario_fields(request.scenario))
+    issues.extend(
+        issue
+        for issue in validate_build_fields(request.first_build, prefix="first")
+        if "empty attack ID" not in issue.message
+    )
+    if request.comparison_enabled:
+        if request.second_build is None:
+            issues.append(
+                ValidationIssue(
+                    scope=ValidationScope.BUILD,
+                    message="Comparison request requires Build B.",
+                    field="second_build",
+                    build_key="second",
+                )
+            )
+        else:
+            issues.extend(
+                issue
+                for issue in validate_build_fields(
+                    request.second_build, prefix="second"
+                )
+                if "empty attack ID" not in issue.message
+            )
+    elif request.second_build is not None:
+        issues.append(
+            ValidationIssue(
+                scope=ValidationScope.BUILD,
+                message="Single-build request must not include Build B.",
+                field="second_build",
+                build_key="second",
+            )
+        )
+    if request.simulations < 1:
+        issues.append(
+            ValidationIssue(
+                scope=ValidationScope.SCENARIO,
+                message="Number of simulations must be at least 1.",
+                field="simulations",
+                widget_key="simulations",
+            )
+        )
+    return tuple(issues)
+
+
+def _raise_for_canonical_issues(issues: tuple[ValidationIssue, ...]) -> None:
+    if not issues:
+        return
+    summary = "; ".join(issue.message for issue in issues[:3])
+    if len(issues) > 3:
+        summary += f"; and {len(issues) - 3} more validation issue(s)"
+    raise ValueError(f"Invalid simulation request: {summary}")
+
+
 def execute_canonical_request(
     request: CanonicalSimulationRequest,
 ) -> SimulationResult | BuildComparisonResult:
-    if request.scenario.simulations < 1:
-        msg = "Number of simulations must be at least 1."
-        raise ValueError(msg)
+    issues = validate_canonical_request(request)
+    _raise_for_canonical_issues(issues)
     return _cached_execute_canonical_request(request)
 
 
@@ -282,6 +346,7 @@ __all__ = [
     "canonical_comparison_request",
     "canonical_single_build_request",
     "execute_canonical_request",
+    "validate_canonical_request",
     "run_comparison_from_inputs",
     "run_simulation_from_inputs",
     "run_single_build_from_inputs",
