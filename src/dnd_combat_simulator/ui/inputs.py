@@ -61,11 +61,8 @@ from dnd_combat_simulator.ui.state import (
     resource_summary,
     trigger_summary,
 )
-from dnd_combat_simulator.ui.validation import (
-    _field_error,
-    _render_error,
-    _validate_profile_fields,
-)
+from dnd_combat_simulator.ui.validation import _validate_profile_fields
+from dnd_combat_simulator.ui.validation_rendering import _field_error, _render_error
 from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
     attack_widget_prefix,

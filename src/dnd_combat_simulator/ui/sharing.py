@@ -46,8 +46,8 @@ from dnd_combat_simulator.ui.state import (
     hydrate_session_state_from_shared_configuration,
 )
 from dnd_combat_simulator.ui.validation import (
-    _configuration_errors_for_current_state,
     _validation_errors_for_configuration,
+    validate_configuration_for_ui,
 )
 
 logger = logging.getLogger(__name__)
@@ -263,7 +263,7 @@ def _render_share_configuration_button() -> None:
         "message": state.pop(SHARE_ERROR_MESSAGE_KEY, ""),
     }
 
-    if _configuration_errors_for_current_state():
+    if validate_configuration_for_ui(_current_shared_configuration()):
         state.pop(GENERATED_SHARE_URL_KEY, None)
         state.pop(GENERATED_SHARE_FINGERPRINT_KEY, None)
         base_data.update(
