@@ -3385,6 +3385,27 @@ def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
     )
 
 
+def test_attack_card_css_targets_keyed_card_directly() -> None:
+    from dnd_combat_simulator.ui.components import ATTACK_CARD_CSS
+
+    css = ATTACK_CARD_CSS
+    direct_card_selector = """:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card"] {"""
+    nested_expander_selector = """:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card"] [data-testid="stExpander"] details {"""
+
+    assert "stVerticalBlockBorderWrapper" not in css
+    assert "attack-card-marker" not in css
+    assert direct_card_selector in css
+    assert nested_expander_selector in css
+    assert "background-color: var(--attack-card-background) !important;" in css
+    assert "border-color: var(--attack-card-border) !important;" in css
+    assert "padding: clamp" not in css
+
 def test_attack_toolbar_css_is_scoped_and_compact() -> None:
     import ui_test_api as app
 
