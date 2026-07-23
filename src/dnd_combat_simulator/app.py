@@ -32,6 +32,7 @@ from dnd_combat_simulator.sharing import (
     SharedBuildConfiguration,
     SharedConfiguration,
     SharedConfigurationError,
+    migrate_shared_build_attack_ids,
     build_share_url,
     build_short_share_url,
     deserialize_shared_configuration,
@@ -166,6 +167,8 @@ SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
 TRIGGER_EXPANDED_KEY_SUFFIX = "trigger-expanded"
 MANAGED_RESOURCE_COUNT_KEY = "scenario-managed-resource-count"
 MANAGED_RESOURCE_EXPANDED_KEY = "scenario-managed-resources-expanded"
+ATTACK_DELETE_CONFIRMATION_KEY = "attack-delete-confirmation-id"
+RESOURCE_DELETE_CONFIRMATION_KEY = "resource-delete-confirmation-id"
 MANAGED_RESOURCE_IDS_KEY = "scenario-managed-resource-ids"
 
 MAX_ATTACKS_PER_BUILD = 11
@@ -429,6 +432,17 @@ def validate_build_fields(
         widget_prefix = profile.attack_id or profile_prefix(prefix, index)
         errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
     profile_ids = [profile.attack_id for profile in profiles]
+    if any(not attack_id.strip() for attack_id in profile_ids):
+        _add_error(errors, f"{prefix}-attack-ids", f"{build.name or 'Build'} contains an empty attack ID.")
+    duplicate_ids = {attack_id for attack_id in profile_ids if profile_ids.count(attack_id) > 1}
+    if duplicate_ids:
+        _add_error(
+            errors,
+            f"{prefix}-attack-ids",
+            f"{build.name or 'Build'} contains duplicate attack IDs: "
+            + ", ".join(sorted(duplicate_ids)),
+        )
+        return errors
     trigger_source_error_keys: set[str] = set()
 
     def has_path_to_current(source_id: str, current_id: str) -> bool:
@@ -578,19 +592,28 @@ def validate_configuration_for_ui(
         ("build_a", "first", configuration.build_a),
         ("build_b", "second", configuration.build_b),
     ):
+        attack_ids = [profile.attack_id for profile in build.attack_profiles]
+        widget_to_attack = {
+            attack_widget_prefix(prefix, attack_id): attack_id for attack_id in attack_ids
+        }
+        for index, attack_id in enumerate(attack_ids):
+            widget_to_attack[profile_prefix(prefix, index)] = attack_id
         for error in validate_build_fields(build.to_build_config(), prefix=prefix):
             profile_id: str | None = None
             field = error.key
-            if error.key.startswith(f"{prefix}-primary-"):
-                profile_id = "profile_1"
-                field = error.key.removeprefix(f"{prefix}-primary-").replace("-", "_")
-            elif error.key.startswith(f"{prefix}-additional-"):
-                parts = error.key.split("-")
-                if len(parts) >= 4 and parts[2].isdigit():
-                    profile_id = f"profile_{int(parts[2]) + 1}"
-                    field = "_".join(parts[3:])
-            elif error.key == f"{prefix}-build-name":
+            if error.key == f"{prefix}-build-name":
                 field = "name"
+            elif error.key == f"{prefix}-attack-ids":
+                field = "attack_ids"
+            else:
+                for widget_prefix, attack_id in sorted(
+                    widget_to_attack.items(), key=lambda item: len(item[0]), reverse=True
+                ):
+                    marker = f"{widget_prefix}-"
+                    if error.key.startswith(marker):
+                        profile_id = attack_id
+                        field = error.key.removeprefix(marker).replace("-", "_")
+                        break
             structured[(build_key, profile_id, field)] = error.message
     return structured
 
@@ -984,6 +1007,10 @@ def profile_prefix(build_prefix: str, index: int) -> str:
         if index == 0
         else f"{build_prefix}-additional-{index}"
     )
+
+
+def attack_widget_prefix(build_prefix: str, attack_id: str) -> str:
+    return f"{build_prefix}-{attack_id}"
 
 
 def profile_widget_key(prefix: str, field: str) -> str:
@@ -1942,11 +1969,10 @@ def _render_resource_usage(result: SimulationResult) -> None:
 
 
 def _resource_limited_metric(result: SimulationResult) -> tuple[str, str]:
-    blocked = sum(
-        usage.average_blocked_executions_per_combat
-        for usage in result.resource_usage_results
+    return (
+        "Blocked executions per combat",
+        format_compact_decimal(result.average_resource_blocked_executions_per_combat),
     )
-    return "Blocked executions per combat", format_compact_decimal(blocked)
 
 
 def _render_single_build_results(build: BuildConfig, result: SimulationResult) -> None:
@@ -2404,7 +2430,8 @@ def _render_managed_resources(
     with (
         expander(
             "Managed Resources",
-            expanded=bool(state.get(MANAGED_RESOURCE_EXPANDED_KEY, False)),
+            expanded=False,
+            key=MANAGED_RESOURCE_EXPANDED_KEY,
         )
         if expander is not None
         else nullcontext()
@@ -2441,32 +2468,39 @@ def _render_managed_resources(
             )
             resource_id = str(state[id_key])
             used_by = _resource_usage_profile_keys(resource_id)
-            if used_by:
-                getattr(st, "warning", lambda *args, **kwargs: None)(
-                    "Resource is used by: "
-                    + ", ".join(used_by)
-                    + (
-                        ". Confirm deletion to reset those profiles to no "
-                        "resource required."
-                    )
-                )
-                confirmed = cols[2].checkbox(
-                    "Confirm delete",
-                    key=managed_resource_widget_key(resource_id, "confirm-delete"),
-                )
-            else:
-                confirmed = True
-            if (
-                cols[2].button(
-                    "Delete", key=managed_resource_widget_key(resource_id, "delete")
-                )
-                and confirmed
+            if cols[2].button(
+                ":material/delete:",
+                key=managed_resource_widget_key(resource_id, "delete"),
+                help=f"Delete {name}. Requires confirmation.",
+                type="secondary",
             ):
-                _clear_resource_from_profiles(resource_id)
-                _delete_managed_resource_state(resource_id)
-                rerun = getattr(st, "rerun", None)
-                if rerun is not None:
-                    rerun()
+                state[RESOURCE_DELETE_CONFIRMATION_KEY] = resource_id
+            if state.get(RESOURCE_DELETE_CONFIRMATION_KEY) == resource_id:
+                getattr(st, "warning", lambda *args, **kwargs: None)(
+                    f"Delete resource {name}? Dependent attacks in Build A and Build B: "
+                    + (", ".join(used_by) if used_by else "None")
+                    + ". Dependent resource requirements will be cleared."
+                )
+                confirm_cols = st.columns([1, 1, 4])
+                if confirm_cols[0].button(
+                    "Confirm Delete",
+                    key=managed_resource_widget_key(resource_id, "confirm-delete"),
+                    type="secondary",
+                ):
+                    _clear_resource_from_profiles(resource_id)
+                    _delete_managed_resource_state(resource_id)
+                    state.pop(RESOURCE_DELETE_CONFIRMATION_KEY, None)
+                    rerun = getattr(st, "rerun", None)
+                    if rerun is not None:
+                        rerun()
+                if confirm_cols[1].button(
+                    "Cancel",
+                    key=managed_resource_widget_key(resource_id, "cancel-delete"),
+                ):
+                    state.pop(RESOURCE_DELETE_CONFIRMATION_KEY, None)
+                    rerun = getattr(st, "rerun", None)
+                    if rerun is not None:
+                        rerun()
             resources.append(ManagedResource(resource_id, str(name), int(starting)))
         if getattr(st, "button", lambda *args, **kwargs: False)(
             "Add Resource", key="scenario-add-managed-resource"
@@ -2483,7 +2517,11 @@ def _render_managed_resources(
 
 
 def _attack_profile_inputs(
-    prefix: str, default_name: str, errors_by_key: dict[str, str] | None = None
+    prefix: str,
+    default_name: str,
+    errors_by_key: dict[str, str] | None = None,
+    *,
+    attack_id: str | None = None,
 ) -> AttackProfile:
     """Render and collect one attack profile's input controls."""
     import streamlit as st
@@ -2776,7 +2814,7 @@ def _attack_profile_inputs(
         save_dc=None if save_dc is None else int(save_dc),
         successful_save_damage=successful_save_damage,
         features=features,
-        attack_id=prefix,
+        attack_id=attack_id or prefix,
         trigger_type=trigger_type,
         trigger_source_attack_id=trigger_source_attack_id,
         trigger_frequency=trigger_frequency,
@@ -2872,7 +2910,7 @@ def _build_inputs(
                 current_name = (
                     str(
                         getattr(st, "session_state", {}).get(
-                            profile_widget_key(attack_id, "name"), default_attack_name
+                            profile_widget_key(attack_widget_prefix(prefix, attack_id), "name"), default_attack_name
                         )
                     ).strip()
                     or default_attack_name
@@ -2882,7 +2920,7 @@ def _build_inputs(
                 action_cols = st.columns([0.18, 0.18, 0.18, 0.18, 1.0])
                 at_max = len(ids) >= MAX_ATTACKS_PER_BUILD
                 if getattr(action_cols[0], "button", st.button)(
-                    "Duplicate",
+                    ":material/content_copy:",
                     key=f"{attack_id}-duplicate",
                     disabled=at_max,
                     help=(
@@ -2890,18 +2928,24 @@ def _build_inputs(
                         if at_max
                         else f"Duplicate {current_name}."
                     ),
-                    icon=":material/content_copy:",
                 ):
                     new_id = _new_attack_id(prefix, profile_index)
+                    state = getattr(st, "session_state", {})
+                    new_widget_prefix = attack_widget_prefix(prefix, new_id)
                     _duplicate_attack_state(
-                        getattr(st, "session_state", {}), attack_id, new_id
+                        state,
+                        attack_widget_prefix(prefix, attack_id),
+                        new_widget_prefix,
                     )
+                    if state.get(profile_widget_key(new_widget_prefix, "trigger_source_attack_id")) == attack_id:
+                        state[profile_widget_key(new_widget_prefix, "trigger_type")] = "Always"
+                        state[profile_widget_key(new_widget_prefix, "trigger_source_attack_id")] = None
                     getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = (
                         ids[: profile_index + 1] + [new_id] + ids[profile_index + 1 :]
                     )
                     getattr(st, "rerun", lambda: None)()
                 if getattr(action_cols[1], "button", st.button)(
-                    "Move up",
+                    ":material/arrow_upward:",
                     key=f"{attack_id}-up",
                     disabled=profile_index == 0,
                     help=(
@@ -2909,7 +2953,6 @@ def _build_inputs(
                         if profile_index == 0
                         else f"Move {current_name} up."
                     ),
-                    icon=":material/arrow_upward:",
                 ):
                     ids[profile_index - 1], ids[profile_index] = (
                         ids[profile_index],
@@ -2918,7 +2961,7 @@ def _build_inputs(
                     getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = ids
                     getattr(st, "rerun", lambda: None)()
                 if getattr(action_cols[2], "button", st.button)(
-                    "Move down",
+                    ":material/arrow_downward:",
                     key=f"{attack_id}-down",
                     disabled=profile_index == len(ids) - 1,
                     help=(
@@ -2926,7 +2969,6 @@ def _build_inputs(
                         if profile_index == len(ids) - 1
                         else f"Move {current_name} down."
                     ),
-                    icon=":material/arrow_downward:",
                 ):
                     ids[profile_index + 1], ids[profile_index] = (
                         ids[profile_index],
@@ -2937,17 +2979,8 @@ def _build_inputs(
                 dependents = _dependent_attack_names(
                     getattr(st, "session_state", {}), prefix, attack_id
                 )
-                if dependents:
-                    getattr(st, "warning", lambda *args, **kwargs: None)(
-                        "Deleting this attack resets triggers on: "
-                        + ", ".join(dependents)
-                    )
-                confirm = getattr(st, "checkbox", lambda *args, **kwargs: False)(
-                    f"Confirm deleting {current_name}",
-                    key=f"{attack_id}-confirm-delete",
-                )
                 delete_clicked = getattr(action_cols[3], "button", st.button)(
-                    "Delete",
+                    ":material/delete:",
                     key=f"{attack_id}-delete",
                     disabled=len(ids) == 1,
                     help=(
@@ -2956,20 +2989,40 @@ def _build_inputs(
                         else f"Delete {current_name}. Requires confirmation."
                     ),
                     type="secondary",
-                    icon=":material/delete:",
                 )
-                if delete_clicked and confirm:
-                    _reset_triggers_referencing_attack(
-                        getattr(st, "session_state", {}), prefix, attack_id
-                    )
-                    getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = [
-                        current_id for current_id in ids if current_id != attack_id
-                    ]
-                    _delete_attack_state(getattr(st, "session_state", {}), attack_id)
-                    getattr(st, "rerun", lambda: None)()
+                state = getattr(st, "session_state", {})
+                if delete_clicked:
+                    state[ATTACK_DELETE_CONFIRMATION_KEY] = attack_id
+                if state.get(ATTACK_DELETE_CONFIRMATION_KEY) == attack_id:
+                    if dependents:
+                        getattr(st, "warning", lambda *args, **kwargs: None)(
+                            f"Delete {current_name}? Triggers reset on: "
+                            + ", ".join(dependents)
+                        )
+                    else:
+                        getattr(st, "warning", lambda *args, **kwargs: None)(
+                            f"Delete {current_name}? No dependent attacks will reset."
+                        )
+                    confirm_cols = st.columns([1, 1, 4])
+                    if confirm_cols[0].button(
+                        "Confirm Delete", key=f"{attack_id}-confirm-delete"
+                    ):
+                        _reset_triggers_referencing_attack(state, prefix, attack_id)
+                        state[build_attack_ids_key(prefix)] = [
+                            current_id for current_id in ids if current_id != attack_id
+                        ]
+                        _delete_attack_state(state, attack_widget_prefix(prefix, attack_id))
+                        state.pop(ATTACK_DELETE_CONFIRMATION_KEY, None)
+                        getattr(st, "rerun", lambda: None)()
+                    if confirm_cols[1].button("Cancel", key=f"{attack_id}-cancel-delete"):
+                        state.pop(ATTACK_DELETE_CONFIRMATION_KEY, None)
+                        getattr(st, "rerun", lambda: None)()
                 profiles.append(
                     _attack_profile_inputs(
-                        attack_id, default_attack_name, errors_by_key
+                        attack_widget_prefix(prefix, attack_id),
+                        default_attack_name,
+                        errors_by_key,
+                        attack_id=attack_id,
                     )
                 )
 
@@ -2993,13 +3046,13 @@ def _hydrate_build_session_state(
 ) -> None:
     session_state[f"{prefix}-build-name"] = build.name
     attack_ids = [
-        profile.attack_id or profile_prefix(prefix, index)
+        profile.attack_id or _new_attack_id(prefix, index)
         for index, profile in enumerate(build.attack_profiles)
     ]
     session_state[build_attack_ids_key(prefix)] = attack_ids
     session_state[f"{prefix}-additional-attack-count"] = len(build.attack_profiles) - 1
     for index, profile in enumerate(build.attack_profiles):
-        widget_prefix = attack_ids[index]
+        widget_prefix = attack_widget_prefix(prefix, attack_ids[index])
         session_state[profile_widget_key(widget_prefix, "name")] = profile.name
         session_state[profile_widget_key(widget_prefix, "resolution_type")] = (
             _resolution_type_label(profile.resolution_type)
@@ -3089,8 +3142,12 @@ def hydrate_session_state_from_shared_configuration(
         session_state[
             managed_resource_widget_key(resource.resource_id, "starting-value")
         ] = resource.starting_value
-    _hydrate_build_session_state(session_state, "first", configuration.build_a)
-    _hydrate_build_session_state(session_state, "second", configuration.build_b)
+    _hydrate_build_session_state(
+        session_state, "first", migrate_shared_build_attack_ids("first", configuration.build_a)
+    )
+    _hydrate_build_session_state(
+        session_state, "second", migrate_shared_build_attack_ids("second", configuration.build_b)
+    )
 
 
 def share_store_ui_message(error: Exception) -> str:

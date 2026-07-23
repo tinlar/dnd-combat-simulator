@@ -7,6 +7,7 @@ import binascii
 import json
 import re
 import zlib
+from uuid import NAMESPACE_URL, uuid5
 from dataclasses import dataclass, replace
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
@@ -272,6 +273,75 @@ def shared_configuration_from_configs(
     )
 
 
+def _is_legacy_positional_attack_id(value: str) -> bool:
+    return (
+        not value.strip()
+        or value.startswith("first-primary")
+        or value.startswith("first-additional-")
+        or value.startswith("second-primary")
+        or value.startswith("second-additional-")
+        or value.startswith("profile-")
+    )
+
+
+def _migrated_attack_id(build_prefix: str, index: int, profile: SharedAttackProfileConfiguration) -> str:
+    seed = f"tinlar/dnd-combat-simulator/{build_prefix}/{index}/{profile.name}/{profile.damage_formula}"
+    return f"attack-{uuid5(NAMESPACE_URL, seed).hex}"
+
+
+def migrate_shared_build_attack_ids(
+    build_prefix: str, shared_build: SharedBuildConfiguration
+) -> SharedBuildConfiguration:
+    profiles = shared_build.attack_profiles
+    raw_ids = [profile.attack_id for profile in profiles]
+    used: set[str] = set()
+    migrated_ids: list[str] = []
+    legacy_to_stable: dict[str, str] = {}
+    for index, profile in enumerate(profiles):
+        raw_id = (profile.attack_id or "").strip()
+        candidate = raw_id
+        if _is_legacy_positional_attack_id(raw_id) or candidate in used:
+            candidate = _migrated_attack_id(build_prefix, index, profile)
+            suffix = 1
+            while candidate in used:
+                candidate = f"{_migrated_attack_id(build_prefix, index, profile)}-{suffix}"
+                suffix += 1
+        used.add(candidate)
+        migrated_ids.append(candidate)
+        if raw_id:
+            legacy_to_stable[raw_id] = candidate
+        legacy_to_stable[str(index)] = candidate
+        legacy_to_stable[str(index + 1)] = candidate
+        legacy_to_stable[f"profile-{index + 1}"] = candidate
+    names: dict[str, list[str]] = {}
+    for profile, stable_id in zip(profiles, migrated_ids, strict=True):
+        names.setdefault(profile.name, []).append(stable_id)
+    migrated = []
+    for index, profile in enumerate(profiles):
+        source_id = profile.trigger_source_attack_id
+        if source_id in legacy_to_stable:
+            source_id = legacy_to_stable[source_id or ""]
+        elif source_id in names:
+            matches = names[source_id]
+            if len(matches) != 1:
+                raise SharedConfigurationError(
+                    f"{build_prefix} profile {index + 1} trigger source name is ambiguous."
+                )
+            source_id = matches[0]
+        elif profile.trigger_type not in (TriggerType.ALWAYS, TriggerType.SOMETIMES) and source_id:
+            try:
+                legacy_index = int(source_id)
+            except (TypeError, ValueError):
+                pass
+            else:
+                if legacy_index < 0 or legacy_index >= len(profiles):
+                    raise SharedConfigurationError(
+                        f"{build_prefix} profile {index + 1} trigger source index is invalid."
+                    )
+        migrated.append(replace(profile, attack_id=migrated_ids[index], trigger_source_attack_id=source_id))
+    return replace(shared_build, attack_profiles=tuple(migrated))
+
+
 def serialize_shared_configuration(configuration: SharedConfiguration) -> str:
     _validate_shared_configuration(configuration)
     payload = json.dumps(
@@ -417,7 +487,9 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
             elif isinstance(legacy_name, str) and names.count(legacy_name) == 1:
                 source_id = profiles[names.index(legacy_name)].attack_id
         migrated.append(replace(profile, trigger_source_attack_id=source_id))
-    return SharedBuildConfiguration(_expect(obj, "name", str, name), tuple(migrated))
+    return migrate_shared_build_attack_ids(
+        name, SharedBuildConfiguration(_expect(obj, "name", str, name), tuple(migrated))
+    )
 
 
 def _enum(enum_type, value: object, ctx: str):
@@ -520,6 +592,11 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
             )
         if len(build.attack_profiles) > MAX_ATTACK_PROFILES_PER_BUILD:
             raise SharedConfigurationError(f"{label} has too many attack profiles.")
+        attack_ids = [profile.attack_id for profile in build.attack_profiles]
+        if any(not attack_id.strip() for attack_id in attack_ids):
+            raise SharedConfigurationError(f"{label} contains an attack with an empty ID.")
+        if len(set(attack_ids)) != len(attack_ids):
+            raise SharedConfigurationError(f"{label} contains duplicate attack IDs.")
         for i, profile in enumerate(build.attack_profiles, 1):
             _validate_profile(profile, f"{label} profile {i}", resource_ids)
         try:
