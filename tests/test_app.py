@@ -3550,10 +3550,202 @@ def test_stage43_build_math_controls_render_and_update() -> None:
         ("Save DC", "18"),
     ]
     assert at.session_state[app.build_math_state_key("first", "ability_modifier")] == 5
-    assert (
-        controls[app.profile_widget_key(first_attack_prefix, "attack_bonus")].value == 5
-    )
+    refreshed_controls = {node.key: node for node in at.number_input}
+    default_attack_bonus = refreshed_controls[
+        app.profile_widget_key(first_attack_prefix, "attack_bonus")
+    ]
+    assert default_attack_bonus.value == 10
+    assert default_attack_bonus.disabled is True
 
     next(button for button in at.button if button.label == "Run Simulation").click()
     at.run(timeout=10)
     assert not at.exception
+
+
+def test_compact_profile_rows_track_build_defaults_and_preserve_custom_values(
+    monkeypatch,
+):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+    from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
+    from dnd_combat_simulator.ui.widget_keys import profile_widget_key
+
+    calls = []
+    state = {
+        profile_widget_key("first-primary", "attack_bonus"): 11,
+        profile_widget_key("first-primary", "use_build_attack_bonus"): True,
+        profile_widget_key("first-primary", "damage_formula"): "1d8",
+        profile_widget_key("first-primary", "use_build_damage_modifier"): True,
+    }
+
+    class Context:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Column:
+        def number_input(self, label, **kwargs):
+            calls.append(("number", label, kwargs))
+            return kwargs.get("value", state.get(kwargs.get("key"), 1))
+
+        def text_input(self, label, **kwargs):
+            calls.append(("text", label, kwargs))
+            return kwargs.get("value", state.get(kwargs.get("key"), ""))
+
+        def selectbox(self, label, **kwargs):
+            return kwargs["options"][kwargs.get("index", 0)]
+
+        def checkbox(self, label, **kwargs):
+            calls.append(("checkbox", label, kwargs))
+            return state.get(kwargs["key"], kwargs.get("value", False))
+
+        def markdown(self, text):
+            calls.append(("markdown", text, {}))
+
+    col = Column()
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state=state,
+            selectbox=col.selectbox,
+            text_input=col.text_input,
+            number_input=col.number_input,
+            columns=lambda spec, **kwargs: [col for _ in range(spec)],
+            expander=lambda *args, **kwargs: Context(),
+            checkbox=col.checkbox,
+            caption=lambda *args, **kwargs: None,
+        ),
+    )
+
+    profile = _attack_profile_inputs(
+        "first-primary",
+        "Attack",
+        math_defaults=BuildMathDefaults(
+            ability_modifier=4,
+            proficiency_bonus=4,
+            damage_bonus_adjustment=1,
+        ),
+    )
+
+    attack_field = next(call for call in calls if call[1] == "Attack Bonus value")
+    damage_modifier = next(call for call in calls if call[1] == "Damage modifier value")
+    assert attack_field[2]["value"] == 8
+    assert attack_field[2]["disabled"] is True
+    assert attack_field[2]["key"] == "first-primary-attack-bonus"
+    assert damage_modifier[2]["value"] == 5
+    assert damage_modifier[2]["disabled"] is True
+    assert profile.attack_bonus == 11
+    assert profile.use_build_attack_bonus is True
+    assert profile.use_build_damage_modifier is True
+    assert ("markdown", "Effective: +8", {}) in calls
+    assert ("markdown", "Effective: 1d8+5", {}) in calls
+
+    calls.clear()
+    state[profile_widget_key("first-primary", "use_build_attack_bonus")] = False
+    profile = _attack_profile_inputs(
+        "first-primary", "Attack", math_defaults=BuildMathDefaults()
+    )
+    attack_field = next(call for call in calls if call[1] == "Attack Bonus value")
+    assert attack_field[2]["key"] == "first-primary-attack-bonus"
+    assert "disabled" not in attack_field[2]
+    assert profile.attack_bonus == 11
+    assert profile.use_build_attack_bonus is False
+
+
+def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
+    from dnd_combat_simulator.ui.widget_keys import profile_widget_key
+
+    def render(resolution_label: str, state: dict[str, object]):
+        calls = []
+
+        class Context:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        class Column:
+            def number_input(self, label, **kwargs):
+                calls.append(("number", label, kwargs))
+                return kwargs.get("value", state.get(kwargs.get("key"), 1))
+
+            def text_input(self, label, **kwargs):
+                calls.append(("text", label, kwargs))
+                return kwargs.get("value", state.get(kwargs.get("key"), ""))
+
+            def selectbox(self, label, **kwargs):
+                calls.append(("select", label, kwargs))
+                if label == "Resolution Type":
+                    return resolution_label
+                return kwargs["options"][kwargs.get("index", 0)]
+
+            def checkbox(self, label, **kwargs):
+                calls.append(("checkbox", label, kwargs))
+                return state.get(kwargs["key"], kwargs.get("value", False))
+
+            def markdown(self, text):
+                calls.append(("markdown", text, {}))
+
+        col = Column()
+        monkeypatch.setitem(
+            sys.modules,
+            "streamlit",
+            SimpleNamespace(
+                session_state=state,
+                selectbox=col.selectbox,
+                text_input=col.text_input,
+                number_input=col.number_input,
+                columns=lambda spec, **kwargs: [col for _ in range(spec)],
+                expander=lambda *args, **kwargs: Context(),
+                checkbox=col.checkbox,
+                caption=lambda *args, **kwargs: None,
+            ),
+        )
+        profile = _attack_profile_inputs(
+            "first-primary", "Attack", math_defaults=BuildMathDefaults()
+        )
+        return profile, calls
+
+    save_state = {
+        profile_widget_key("first-primary", "save_dc"): 19,
+        profile_widget_key("first-primary", "use_build_save_dc"): True,
+        profile_widget_key("first-primary", "damage_formula"): "2d6",
+    }
+    save_profile, save_calls = render("Saving Throw", save_state)
+    save_field = next(call for call in save_calls if call[1] == "Save DC value")
+    assert save_field[2]["value"] == 13
+    assert save_field[2]["disabled"] is True
+    assert save_profile.save_dc == 19
+    assert save_profile.resolution_type is ResolutionType.SAVING_THROW
+    assert "Attack Bonus value" not in [call[1] for call in save_calls]
+
+    custom_state = {
+        profile_widget_key("first-primary", "save_dc"): 18,
+        profile_widget_key("first-primary", "use_build_save_dc"): False,
+        profile_widget_key("first-primary", "damage_formula"): "2d6",
+    }
+    custom_profile, custom_calls = render("Saving Throw", custom_state)
+    custom_field = next(call for call in custom_calls if call[1] == "Save DC value")
+    assert "disabled" not in custom_field[2]
+    assert custom_profile.save_dc == 18
+
+    auto_profile, auto_calls = render(
+        "Automatic Damage",
+        {profile_widget_key("first-primary", "damage_formula"): "3d4"},
+    )
+    assert auto_profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE
+    assert "Attack Bonus value" not in [call[1] for call in auto_calls]
+    assert "Save DC value" not in [call[1] for call in auto_calls]
+    assert "Damage Formula" in [call[1] for call in auto_calls]
