@@ -86,6 +86,51 @@ class AttackProfile:
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
     trigger_chance_percent: int | None = None
     resource_costs: tuple[ResourceCost, ...] = field(default_factory=tuple)
+    use_build_attack_bonus: bool = False
+    use_build_save_dc: bool = False
+    use_build_damage_modifier: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "use_build_attack_bonus",
+            "use_build_save_dc",
+            "use_build_damage_modifier",
+        ):
+            if type(getattr(self, field_name)) is not bool:
+                raise ValueError(f"{field_name} must be a boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedAttackProfileValues:
+    attack_bonus: int | None
+    save_dc: int | None
+    damage_formula: str
+
+
+def resolve_attack_profile_values(
+    profile: AttackProfile, math_defaults: BuildMathDefaults
+) -> ResolvedAttackProfileValues:
+    """Return effective attack math without mutating the stored profile."""
+    damage_formula = profile.damage_dice.strip()
+    if profile.use_build_damage_modifier:
+        modifier = math_defaults.damage_modifier
+        if modifier > 0:
+            damage_formula = f"{damage_formula}+{modifier}"
+        elif modifier < 0:
+            damage_formula = f"{damage_formula}{modifier}"
+    resolution_type = ResolutionType(profile.resolution_type)
+    attack_bonus = (
+        math_defaults.attack_bonus
+        if resolution_type is ResolutionType.ATTACK_ROLL
+        and profile.use_build_attack_bonus
+        else profile.attack_bonus
+    )
+    save_dc = (
+        math_defaults.save_dc
+        if resolution_type is ResolutionType.SAVING_THROW and profile.use_build_save_dc
+        else profile.save_dc
+    )
+    return ResolvedAttackProfileValues(attack_bonus, save_dc, damage_formula)
 
 
 @dataclass(frozen=True, init=False)
@@ -335,6 +380,8 @@ class ProfileExecutionPlan:
     trigger_chance_percent: int | None
     resource_costs: tuple[CompiledResourceCost, ...]
     stop_on_miss: bool
+    effective_attack_bonus: int | None
+    effective_save_dc: int | None
 
 
 @dataclass
@@ -534,7 +581,9 @@ def _validate_resource_costs(
 
 
 def _build_execution_plan(
-    profiles: tuple[AttackProfile, ...], resources: tuple[ManagedResource, ...]
+    profiles: tuple[AttackProfile, ...],
+    resources: tuple[ManagedResource, ...],
+    math_defaults: BuildMathDefaults,
 ) -> tuple[ProfileExecutionPlan, ...]:
     profile_indexes = {
         _profile_id(profile): index for index, profile in enumerate(profiles)
@@ -555,6 +604,7 @@ def _build_execution_plan(
             if trigger_type in (TriggerType.ALWAYS, TriggerType.SOMETIMES)
             else profile_indexes[str(source_id)]
         )
+        resolved = resolve_attack_profile_values(profile, math_defaults)
         plans.append(
             ProfileExecutionPlan(
                 profile=profile,
@@ -566,7 +616,7 @@ def _build_execution_plan(
                 ),
                 active_rounds=parse_active_rounds(profile.active_rounds),
                 compiled_damage_expression=parse_damage_expression(
-                    profile.damage_dice.strip()
+                    resolved.damage_formula
                 ),
                 damage_features=frozenset(feature.value for feature in attack_features),
                 attack_features=attack_features,
@@ -584,15 +634,32 @@ def _build_execution_plan(
                     for cost in profile.resource_costs
                 ),
                 stop_on_miss=AttackFeature.STOP_ON_MISS in attack_features,
+                effective_attack_bonus=resolved.attack_bonus,
+                effective_save_dc=resolved.save_dc,
             )
         )
     return tuple(plans)
 
 
-def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
+def _validate_attack_profile(
+    profile: AttackProfile,
+    *,
+    label: str,
+    math_defaults: BuildMathDefaults | None = None,
+) -> None:
     if not profile.name.strip():
         msg = f"{label} attack name is required."
         raise ValueError(msg)
+    resolved_math_defaults = (
+        BuildMathDefaults() if math_defaults is None else math_defaults
+    )
+    for field_name in (
+        "use_build_attack_bonus",
+        "use_build_save_dc",
+        "use_build_damage_modifier",
+    ):
+        if type(getattr(profile, field_name)) is not bool:
+            raise ValueError(f"{label} {field_name} must be a boolean.")
     if not profile.damage_dice.strip():
         msg = f"{label} damage dice is required. Use notation such as 1d8."
         raise ValueError(msg)
@@ -612,7 +679,11 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
         label=label,
         affected_targets=profile.affected_targets,
     )
-    if resolution_type is ResolutionType.ATTACK_ROLL and profile.attack_bonus is None:
+    if (
+        resolution_type is ResolutionType.ATTACK_ROLL
+        and not profile.use_build_attack_bonus
+        and profile.attack_bonus is None
+    ):
         msg = f"{label} Attack Bonus is required for attack-roll profiles."
         raise ValueError(msg)
     if TriggerType(profile.trigger_type) is TriggerType.SOMETIMES:
@@ -627,12 +698,25 @@ def _validate_attack_profile(profile: AttackProfile, *, label: str) -> None:
             )
             raise ValueError(msg)
     if resolution_type is ResolutionType.SAVING_THROW:
-        if profile.save_dc is None:
+        if profile.use_build_save_dc:
+            if resolved_math_defaults.save_dc < 1:
+                msg = (
+                    "Calculated Build Save DC must be at least 1 when an attack "
+                    "inherits it."
+                )
+                raise ValueError(msg)
+        elif profile.save_dc is None:
             msg = f"{label} Save DC is required for saving-throw profiles."
             raise ValueError(msg)
-        if profile.save_dc < 1:
+        elif profile.save_dc < 1:
             msg = f"{label} Save DC must be a positive integer."
             raise ValueError(msg)
+    if profile.use_build_damage_modifier:
+        parse_damage_expression(
+            resolve_attack_profile_values(
+                profile, resolved_math_defaults
+            ).damage_formula
+        )
 
 
 def _validate_build(
@@ -646,7 +730,9 @@ def _validate_build(
         msg = f"{label} build must include at least one attack profile."
         raise ValueError(msg)
     for index, profile in enumerate(profiles, start=1):
-        _validate_attack_profile(profile, label=f"{label} profile {index}")
+        _validate_attack_profile(
+            profile, label=f"{label} profile {index}", math_defaults=build.math_defaults
+        )
     validate_trigger_dependencies(profiles, label=label)
     _validate_resource_costs(profiles, resources, label=label)
 
@@ -754,7 +840,7 @@ def _resolve_attack_roll_profile_execution(
     rng: RandomNumberGenerator,
 ) -> tuple[int, bool, bool]:
     attack = resolve_compiled_weapon_attack(
-        attack_bonus=plan.profile.attack_bonus or 0,
+        attack_bonus=plan.effective_attack_bonus or 0,
         target_armor_class=target_armor_class,
         damage_expression=plan.compiled_damage_expression,
         attack_roll_mode=plan.attack_roll_mode,
@@ -772,7 +858,7 @@ def _resolve_saving_throw_profile_execution(
     rng: RandomNumberGenerator,
 ) -> tuple[int, bool, bool]:
     save = resolve_compiled_saving_throw_damage(
-        save_dc=plan.profile.save_dc or 0,
+        save_dc=plan.effective_save_dc or 0,
         enemy_save_bonus=enemy_save_bonus,
         damage_expression=plan.compiled_damage_expression,
         successful_save_damage=plan.successful_save_damage,
@@ -923,6 +1009,7 @@ def run_damage_simulations(
     attack_profiles: tuple[AttackProfile, ...] | None = None,
     rng: RandomNumberGenerator | None = None,
     managed_resources: tuple[ManagedResource, ...] = (),
+    math_defaults: BuildMathDefaults | None = None,
 ) -> SimulationResult:
     """Run repeated damage simulations with one or more active attack profiles.
 
@@ -931,6 +1018,9 @@ def run_damage_simulations(
     target's damage if it hits. Multi-target saving-throw profiles roll one
     shared damage result for the profile use before each target's saving throw.
     """
+    resolved_math_defaults = (
+        BuildMathDefaults() if math_defaults is None else math_defaults
+    )
     if rounds < 1:
         msg = "Number of rounds must be at least 1."
         raise ValueError(msg)
@@ -955,11 +1045,17 @@ def run_damage_simulations(
         msg = "At least one attack profile is required."
         raise ValueError(msg)
     for index, profile in enumerate(profiles, start=1):
-        _validate_attack_profile(profile, label=f"Attack profile {index}")
+        _validate_attack_profile(
+            profile,
+            label=f"Attack profile {index}",
+            math_defaults=resolved_math_defaults,
+        )
     validate_trigger_dependencies(profiles, label="Attack profiles")
     _validate_managed_resources(managed_resources)
     _validate_resource_costs(profiles, managed_resources, label="Attack profiles")
-    execution_plan = _build_execution_plan(profiles, managed_resources)
+    execution_plan = _build_execution_plan(
+        profiles, managed_resources, resolved_math_defaults
+    )
 
     random_number_generator = rng if rng is not None else Random()
     total_rounds = rounds * simulations
@@ -1138,7 +1234,7 @@ def run_damage_simulations(
                         for _target_index in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
                             successful_save = natural_save + enemy_save_bonus >= (
-                                profile.save_dc or 0
+                                plan.effective_save_dc or 0
                             )
                             failed_save = not successful_save
                             if failed_save:
@@ -1351,6 +1447,7 @@ def simulate_build(
         attack_profiles=build.resolved_attack_profiles(),
         rng=Random(seed),
         managed_resources=scenario.managed_resources,
+        math_defaults=build.math_defaults,
     )
 
 

@@ -168,3 +168,27 @@ storage, or any new combat mechanics. It also does not change
 `SIMULATION_CACHE_VERSION`; Stage 4.2 already handled the cache schema update, and
 Stage 4.3 simply ensures the visible controls attach the edited defaults to
 `BuildConfig` so the existing canonical cache identity remains accurate.
+
+## Stage 4.4: Optional per-attack Build Setup inheritance
+
+Stage 4.4 lets each attack profile independently choose whether to inherit the build's calculated Attack Bonus, Save DC, and Damage Modifier. The stored profile remains the configuration source of truth and keeps its manual fallback values while inheritance is enabled.
+
+Stored attack-profile fields:
+
+- `use_build_attack_bonus`
+- `use_build_save_dc`
+- `use_build_damage_modifier`
+
+Programmatic `AttackProfile` construction and legacy shared links default all three fields to `False` for manual compatibility. New attacks created in the visible interface default all three fields to `True`, with a base `1d8` formula so the fresh effective result remains `+5` to hit and `1d8+3` damage under the standard Build Setup.
+
+Effective values are resolved centrally by `resolve_attack_profile_values()`:
+
+- Attack-roll profiles use `BuildMathDefaults.attack_bonus` only when `use_build_attack_bonus` is true; otherwise they use the stored manual `attack_bonus`.
+- Saving-throw profiles use `BuildMathDefaults.save_dc` only when `use_build_save_dc` is true; otherwise they use the stored manual `save_dc`.
+- Damage uses the stored formula with surrounding whitespace stripped. When `use_build_damage_modifier` is true, the calculated build damage modifier is appended once as a signed constant. `+0` is omitted.
+
+Critical hits continue doubling only damage dice according to the existing engine rules; the inherited build damage modifier is a constant and is not doubled. Half damage continues using the existing total-damage halving behavior and rounding rule.
+
+Shared configuration version remains unchanged because the new fields are additive. Modern shared configurations serialize all three booleans, while legacy links that omit them remain manual. Cache identity is incremented so inherited effective values participate in cached simulation requests. Build A and Build B each resolve attack inheritance against their own Build Setup values, with no cross-build state sharing.
+
+This stage does not add accounts, authentication, classes, subclasses, character levels, character sheets, equipment inventories, spell lists, persistent preset libraries, or browser/database storage.

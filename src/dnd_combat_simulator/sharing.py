@@ -68,6 +68,9 @@ class SharedAttackProfileConfiguration:
     trigger_frequency: TriggerFrequency = TriggerFrequency.PER_SUCCESS
     trigger_chance_percent: int | None = None
     resource_costs: tuple[ResourceCost, ...] = ()
+    use_build_attack_bonus: bool = False
+    use_build_save_dc: bool = False
+    use_build_damage_modifier: bool = False
 
     @classmethod
     def from_attack_profile(
@@ -91,6 +94,9 @@ class SharedAttackProfileConfiguration:
             trigger_frequency=TriggerFrequency(profile.trigger_frequency),
             trigger_chance_percent=profile.trigger_chance_percent,
             resource_costs=profile.resource_costs,
+            use_build_attack_bonus=profile.use_build_attack_bonus,
+            use_build_save_dc=profile.use_build_save_dc,
+            use_build_damage_modifier=profile.use_build_damage_modifier,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -112,6 +118,9 @@ class SharedAttackProfileConfiguration:
             trigger_frequency=self.trigger_frequency,
             trigger_chance_percent=self.trigger_chance_percent,
             resource_costs=self.resource_costs,
+            use_build_attack_bonus=self.use_build_attack_bonus,
+            use_build_save_dc=self.use_build_save_dc,
+            use_build_damage_modifier=self.use_build_damage_modifier,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -138,6 +147,9 @@ class SharedAttackProfileConfiguration:
                 {"resource_id": cost.resource_id, "amount": cost.amount}
                 for cost in self.resource_costs
             ],
+            "use_build_attack_bonus": self.use_build_attack_bonus,
+            "use_build_save_dc": self.use_build_save_dc,
+            "use_build_damage_modifier": self.use_build_damage_modifier,
         }
 
 
@@ -565,6 +577,15 @@ def _enum(enum_type, value: object, ctx: str):
         ) from error
 
 
+def _optional_bool(obj: dict[str, object], key: str, ctx: str) -> bool:
+    if key not in obj:
+        return False
+    value = obj[key]
+    if type(value) is not bool:
+        raise SharedConfigurationError(f"{ctx}.{key} must be a boolean.")
+    return value
+
+
 def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguration:
     obj = _required_dict(raw, ctx)
     features_raw = _expect(obj, "features", list, ctx)
@@ -596,6 +617,9 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
             _resource_cost_from_json(cost, f"{ctx} resource cost {i}")
             for i, cost in enumerate(obj.get("resource_costs", []), 1)
         ),
+        _optional_bool(obj, "use_build_attack_bonus", ctx),
+        _optional_bool(obj, "use_build_save_dc", ctx),
+        _optional_bool(obj, "use_build_damage_modifier", ctx),
     )
 
 
@@ -683,6 +707,13 @@ def _validate_profile(
         profile.save_dc, int | None
     ):
         raise SharedConfigurationError(f"{label} has invalid numeric fields.")
+    for field_name in (
+        "use_build_attack_bonus",
+        "use_build_save_dc",
+        "use_build_damage_modifier",
+    ):
+        if type(getattr(profile, field_name)) is not bool:
+            raise SharedConfigurationError(f"{label} has invalid inheritance fields.")
     if profile.attacks_per_round < 1 or profile.affected_targets < 1:
         raise SharedConfigurationError(f"{label} has invalid attack counts.")
     if profile.trigger_type is TriggerType.SOMETIMES and (
@@ -706,11 +737,14 @@ def _validate_profile(
         raise SharedConfigurationError(f"{label} has invalid data: {error}") from error
     if (
         profile.resolution_type is ResolutionType.ATTACK_ROLL
+        and not profile.use_build_attack_bonus
         and profile.attack_bonus is None
     ):
         raise SharedConfigurationError(f"{label} requires Attack Bonus.")
-    if profile.resolution_type is ResolutionType.SAVING_THROW and (
-        profile.save_dc is None or profile.save_dc < 1
+    if (
+        profile.resolution_type is ResolutionType.SAVING_THROW
+        and not profile.use_build_save_dc
+        and (profile.save_dc is None or profile.save_dc < 1)
     ):
         raise SharedConfigurationError(f"{label} requires a positive Save DC.")
     try:

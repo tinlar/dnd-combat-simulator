@@ -79,6 +79,9 @@ ATTACK_WIDGET_STATE_FIELDS = (
     "resource_enabled",
     "resource_id",
     "resource_amount",
+    "use_build_attack_bonus",
+    "use_build_save_dc",
+    "use_build_damage_modifier",
 )
 
 
@@ -499,6 +502,15 @@ def _hydrate_build_session_state(
         session_state[profile_widget_key(widget_prefix, "damage_formula")] = (
             profile.damage_formula
         )
+        session_state[profile_widget_key(widget_prefix, "use_build_attack_bonus")] = (
+            profile.use_build_attack_bonus
+        )
+        session_state[profile_widget_key(widget_prefix, "use_build_save_dc")] = (
+            profile.use_build_save_dc
+        )
+        session_state[
+            profile_widget_key(widget_prefix, "use_build_damage_modifier")
+        ] = profile.use_build_damage_modifier
         session_state[profile_widget_key(widget_prefix, "attacks_per_round")] = (
             profile.attacks_per_round
         )
@@ -651,7 +663,18 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
         attack_id = _attack_ids_from_state(session_state, prefix)[0]
         return _build_config_from_profiles(
             default_build_name,
-            (AttackProfile("Attack 1", 5, "1d8+3", 1, attack_id=attack_id),),
+            (
+                AttackProfile(
+                    name="Attack 1",
+                    attack_bonus=5,
+                    damage_dice="1d8",
+                    attacks_per_round=1,
+                    attack_id=attack_id,
+                    use_build_attack_bonus=True,
+                    use_build_save_dc=True,
+                    use_build_damage_modifier=True,
+                ),
+            ),
             BuildMathDefaults(),
         )
     profiles = []
@@ -812,6 +835,16 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         profile_widget_key(widget_prefix, "resource_enabled"), False
                     )
                     else ()
+                ),
+                use_build_attack_bonus=session_state.get(
+                    profile_widget_key(widget_prefix, "use_build_attack_bonus"), False
+                ),
+                use_build_save_dc=session_state.get(
+                    profile_widget_key(widget_prefix, "use_build_save_dc"), False
+                ),
+                use_build_damage_modifier=session_state.get(
+                    profile_widget_key(widget_prefix, "use_build_damage_modifier"),
+                    False,
                 ),
             )
         )
