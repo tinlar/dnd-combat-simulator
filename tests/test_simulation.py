@@ -2637,7 +2637,7 @@ def test_build_math_defaults_do_not_affect_simulation_results_or_comparison() ->
         attacks_per_round=1,
         attack_profiles=(profile,),
     )
-    custom_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
+    custom_defaults = BuildMathDefaults(5, 4, 2, 1)
     custom = replace(base, math_defaults=custom_defaults)
     scenario = ScenarioConfig(15, 3, 20)
 
@@ -2648,7 +2648,7 @@ def test_build_math_defaults_do_not_affect_simulation_results_or_comparison() ->
     comparison = compare_builds(
         first_build=custom,
         second_build=replace(
-            base, name="Other", math_defaults=BuildMathDefaults(-1, 0, -2, -3, -4)
+            base, name="Other", math_defaults=BuildMathDefaults(-1, 0, -2, -4)
         ),
         scenario=scenario,
         seed=42,
@@ -2684,7 +2684,7 @@ def test_build_math_defaults_do_not_change_simulation_behavior_or_rng() -> None:
         "1d6+2",
         1,
         attack_profiles=(profile,),
-        math_defaults=BuildMathDefaults(5, 4, 1, 2, 1),
+        math_defaults=BuildMathDefaults(5, 4, 1, 1),
     )
 
     assert base.math_defaults != edited.math_defaults
@@ -2735,7 +2735,6 @@ def test_stage44_resolves_build_inheritance_without_mutating_profile() -> None:
         damage_dice=" 2d6+1 ",
         attacks_per_round=1,
         use_build_attack_bonus=True,
-        use_build_damage_modifier=True,
     )
     resolved = resolve_attack_profile_values(
         profile,
@@ -2743,13 +2742,12 @@ def test_stage44_resolves_build_inheritance_without_mutating_profile() -> None:
             ability_modifier=4,
             proficiency_bonus=3,
             attack_bonus_adjustment=2,
-            damage_bonus_adjustment=-1,
         ),
     )
 
     assert resolved.attack_bonus == 9
     assert resolved.save_dc is None
-    assert resolved.damage_formula == "2d6+1+3"
+    assert resolved.damage_formula == "2d6+1"
     assert profile.attack_bonus == 1
     assert profile.damage_dice == " 2d6+1 "
 
@@ -2766,10 +2764,9 @@ def test_stage44_inherited_attack_bonus_and_damage_match_manual_effective_values
     inherited = AttackProfile(
         name="Manual",
         attack_bonus=-10,
-        damage_dice="1d8",
+        damage_dice="1d8+3",
         attacks_per_round=1,
         use_build_attack_bonus=True,
-        use_build_damage_modifier=True,
     )
     kwargs = dict(
         attack_bonus=0,
@@ -2827,9 +2824,8 @@ def test_stage44_build_damage_modifier_is_not_doubled_on_critical_hit() -> None:
     profile = AttackProfile(
         name="Crit",
         attack_bonus=99,
-        damage_dice="1d8",
+        damage_dice="1d8+3",
         attacks_per_round=1,
-        use_build_damage_modifier=True,
     )
 
     result = run_damage_simulations(

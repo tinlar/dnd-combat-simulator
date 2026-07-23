@@ -57,7 +57,6 @@ BUILD_MATH_DEFAULT_FIELDS = (
     "ability_modifier",
     "proficiency_bonus",
     "attack_bonus_adjustment",
-    "damage_bonus_adjustment",
     "save_dc_adjustment",
 )
 
@@ -81,7 +80,6 @@ ATTACK_WIDGET_STATE_FIELDS = (
     "resource_amount",
     "use_build_attack_bonus",
     "use_build_save_dc",
-    "use_build_damage_modifier",
 )
 
 
@@ -508,9 +506,6 @@ def _hydrate_build_session_state(
         session_state[profile_widget_key(widget_prefix, "use_build_save_dc")] = (
             profile.use_build_save_dc
         )
-        session_state[
-            profile_widget_key(widget_prefix, "use_build_damage_modifier")
-        ] = profile.use_build_damage_modifier
         session_state[profile_widget_key(widget_prefix, "attacks_per_round")] = (
             profile.attacks_per_round
         )
@@ -672,7 +667,6 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                     attack_id=attack_id,
                     use_build_attack_bonus=True,
                     use_build_save_dc=True,
-                    use_build_damage_modifier=True,
                 ),
             ),
             BuildMathDefaults(),
@@ -841,10 +835,6 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                 ),
                 use_build_save_dc=session_state.get(
                     profile_widget_key(widget_prefix, "use_build_save_dc"), False
-                ),
-                use_build_damage_modifier=session_state.get(
-                    profile_widget_key(widget_prefix, "use_build_damage_modifier"),
-                    False,
                 ),
             )
         )

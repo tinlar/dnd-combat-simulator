@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     ResolutionType,
     validate_feature_resolution_combination,
@@ -18,7 +17,6 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ScenarioConfig,
     TriggerType,
-    resolve_attack_profile_values,
 )
 from dnd_combat_simulator.ui.constants import (
     NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
@@ -112,7 +110,6 @@ def _validate_profile_fields(
     for field_name in (
         "use_build_attack_bonus",
         "use_build_save_dc",
-        "use_build_damage_modifier",
     ):
         if type(getattr(profile, field_name)) is not bool:
             _add_error(
@@ -129,12 +126,6 @@ def _validate_profile_fields(
     else:
         try:
             parse_damage_expression(profile.damage_dice)
-            if profile.use_build_damage_modifier:
-                parse_damage_expression(
-                    resolve_attack_profile_values(
-                        profile, BuildMathDefaults()
-                    ).damage_formula
-                )
         except ValueError as error:
             _add_error(
                 errors,

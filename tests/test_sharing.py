@@ -461,8 +461,8 @@ def _decode_payload(token: str) -> dict[str, object]:
 def test_math_defaults_round_trip_and_legacy_default() -> None:
     from dnd_combat_simulator.build_math import BuildMathDefaults
 
-    a_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
-    b_defaults = BuildMathDefaults(-1, 0, -2, -3, -4)
+    a_defaults = BuildMathDefaults(5, 4, 2, 1)
+    b_defaults = BuildMathDefaults(-1, 0, -2, -4)
     config = shared_configuration_from_configs(
         compare_enabled=True,
         scenario=ScenarioConfig(15, 2, 3),
@@ -477,7 +477,6 @@ def test_math_defaults_round_trip_and_legacy_default() -> None:
         "ability_modifier": 5,
         "proficiency_bonus": 4,
         "attack_bonus_adjustment": 2,
-        "damage_bonus_adjustment": 3,
         "save_dc_adjustment": 1,
     }
     restored = deserialize_shared_configuration(token)
@@ -552,7 +551,6 @@ def test_stage44_shared_profile_inheritance_round_trip() -> None:
         attack_id="attack-inherited",
         use_build_attack_bonus=True,
         use_build_save_dc=True,
-        use_build_damage_modifier=True,
     )
     config = shared_configuration_from_configs(
         compare_enabled=False,
@@ -565,14 +563,13 @@ def test_stage44_shared_profile_inheritance_round_trip() -> None:
     raw = config.to_json_dict()["build_a"]["attack_profiles"][0]
     assert raw["use_build_attack_bonus"] is True
     assert raw["use_build_save_dc"] is True
-    assert raw["use_build_damage_modifier"] is True
+    assert "use_build_damage_modifier" not in raw
     token = serialize_shared_configuration(config)
     decoded = deserialize_shared_configuration(token)
 
     round_tripped = decoded.build_a.attack_profiles[0].to_attack_profile()
     assert round_tripped.use_build_attack_bonus is True
     assert round_tripped.use_build_save_dc is True
-    assert round_tripped.use_build_damage_modifier is True
 
 
 def test_stage44_legacy_shared_profile_defaults_to_manual() -> None:
@@ -599,18 +596,87 @@ def test_stage44_legacy_shared_profile_defaults_to_manual() -> None:
         for key in (
             "use_build_attack_bonus",
             "use_build_save_dc",
-            "use_build_damage_modifier",
         ):
             config[build_key]["attack_profiles"][0].pop(key)
-    token = base64.urlsafe_b64encode(
-        zlib.compress(json.dumps(config).encode())
-    ).decode()
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(config).encode()))
+        .decode()
+        .rstrip("=")
+    )
 
     decoded = deserialize_shared_configuration(token)
 
     assert decoded.build_a.attack_profiles[0].use_build_attack_bonus is False
     assert decoded.build_a.attack_profiles[0].use_build_save_dc is False
-    assert decoded.build_a.attack_profiles[0].use_build_damage_modifier is False
+
+
+def test_legacy_enabled_build_damage_modifier_merges_into_formula() -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 1, 10),
+        seed=7,
+        build_a=BuildConfig(
+            "A",
+            5,
+            "1d8",
+            1,
+            attack_profiles=(AttackProfile("Legacy", 5, "1d8", 1, attack_id="a"),),
+        ),
+        build_b=BuildConfig(
+            "B",
+            5,
+            "1d8",
+            1,
+            attack_profiles=(AttackProfile("Legacy", 5, "1d8", 1, attack_id="b"),),
+        ),
+    ).to_json_dict()
+    config["build_a"]["math_defaults"]["damage_bonus_adjustment"] = -5
+    config["build_a"]["attack_profiles"][0]["use_build_damage_modifier"] = True
+    config["build_b"]["math_defaults"]["damage_bonus_adjustment"] = 2
+    config["build_b"]["attack_profiles"][0]["use_build_damage_modifier"] = True
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(config).encode()))
+        .decode()
+        .rstrip("=")
+    )
+
+    decoded = deserialize_shared_configuration(token)
+
+    assert decoded.build_a.attack_profiles[0].damage_formula == "1d8-2"
+    assert decoded.build_b.attack_profiles[0].damage_formula == "1d8+5"
+
+
+def test_legacy_disabled_build_damage_modifier_is_not_merged() -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 1, 10),
+        seed=7,
+        build_a=BuildConfig(
+            "A",
+            5,
+            "1d8",
+            1,
+            attack_profiles=(AttackProfile("Legacy", 5, "1d8", 1, attack_id="a"),),
+        ),
+        build_b=BuildConfig(
+            "B",
+            5,
+            "1d8",
+            1,
+            attack_profiles=(AttackProfile("Legacy", 5, "1d8", 1, attack_id="b"),),
+        ),
+    ).to_json_dict()
+    config["build_a"]["math_defaults"]["damage_bonus_adjustment"] = 3
+    config["build_a"]["attack_profiles"][0]["use_build_damage_modifier"] = False
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(config).encode()))
+        .decode()
+        .rstrip("=")
+    )
+
+    decoded = deserialize_shared_configuration(token)
+
+    assert decoded.build_a.attack_profiles[0].damage_formula == "1d8"
 
 
 def test_stage44_shared_profile_rejects_non_boolean_inheritance() -> None:

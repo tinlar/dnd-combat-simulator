@@ -101,7 +101,9 @@ def test_damage_formula_help_uses_native_formula_input_help(monkeypatch) -> None
 
     _attack_profile_inputs("test", "Attack")
 
-    damage_call = next(call for call in text_input_calls if call["label"] == "Formula")
+    damage_call = next(
+        call for call in text_input_calls if call["label"] == "Damage Formula"
+    )
     assert damage_call["help"] == DAMAGE_FORMULA_HELP
     assert any("white-space: nowrap;" in body for body, _ in markdown_calls)
 
@@ -3474,8 +3476,8 @@ def test_stage42_build_math_keys_and_state_round_trip(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "streamlit", FakeStreamlit)
     assert _build_math_defaults_from_state({}, "first") == BuildMathDefaults()
 
-    first_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
-    second_defaults = BuildMathDefaults(-1, 0, -2, -3, -4)
+    first_defaults = BuildMathDefaults(5, 4, 2, 1)
+    second_defaults = BuildMathDefaults(-1, 0, -2, -4)
     shared = shared_configuration_from_configs(
         compare_enabled=True,
         scenario=ScenarioConfig(15, 2, 3),
@@ -3537,29 +3539,22 @@ def test_stage43_build_math_controls_render_and_update() -> None:
         == "Other attack bonus"
     )
     assert (
-        controls[app.build_math_state_key("first", "damage_bonus_adjustment")].label
-        == "Other damage bonus"
-    )
-    assert (
         controls[app.build_math_state_key("first", "save_dc_adjustment")].label
         == "Other Save DC bonus"
     )
     assert [(node.label, node.value) for node in at.metric][:3] == [
         ("Attack bonus", "+5"),
-        ("Damage modifier", "+3"),
         ("Save DC", "13"),
     ]
 
     controls[app.build_math_state_key("first", "ability_modifier")].set_value(5)
     controls[app.build_math_state_key("first", "proficiency_bonus")].set_value(4)
     controls[app.build_math_state_key("first", "attack_bonus_adjustment")].set_value(1)
-    controls[app.build_math_state_key("first", "damage_bonus_adjustment")].set_value(2)
     controls[app.build_math_state_key("first", "save_dc_adjustment")].set_value(1)
     at.run(timeout=10)
     assert not at.exception
     assert [(node.label, node.value) for node in at.metric][:3] == [
         ("Attack bonus", "+10"),
-        ("Damage modifier", "+7"),
         ("Save DC", "18"),
     ]
     assert at.session_state[app.build_math_state_key("first", "ability_modifier")] == 5
@@ -3590,7 +3585,6 @@ def test_compact_profile_rows_track_build_defaults_and_preserve_custom_values(
         profile_widget_key("first-primary", "attack_bonus"): 11,
         profile_widget_key("first-primary", "use_build_attack_bonus"): True,
         profile_widget_key("first-primary", "damage_formula"): "1d8",
-        profile_widget_key("first-primary", "use_build_damage_modifier"): True,
     }
 
     class Context:
@@ -3641,22 +3635,16 @@ def test_compact_profile_rows_track_build_defaults_and_preserve_custom_values(
         math_defaults=BuildMathDefaults(
             ability_modifier=4,
             proficiency_bonus=4,
-            damage_bonus_adjustment=1,
         ),
     )
 
     attack_field = next(call for call in calls if call[1] == "Attack Bonus value")
-    damage_modifier = next(call for call in calls if call[1] == "Damage modifier value")
     assert attack_field[2]["value"] == 8
     assert attack_field[2]["disabled"] is True
     assert attack_field[2]["key"] == "first-primary-attack-bonus"
-    assert damage_modifier[2]["value"] == 5
-    assert damage_modifier[2]["disabled"] is True
     assert profile.attack_bonus == 11
     assert profile.use_build_attack_bonus is True
-    assert profile.use_build_damage_modifier is True
     assert ("markdown", "Effective: +8", {}) in calls
-    assert ("markdown", "Effective: 1d8+5", {}) in calls
 
     calls.clear()
     state[profile_widget_key("first-primary", "use_build_attack_bonus")] = False
@@ -3761,4 +3749,4 @@ def test_compact_profile_rows_save_dc_and_resolution_visibility(monkeypatch):
     assert auto_profile.resolution_type is ResolutionType.AUTOMATIC_DAMAGE
     assert "Attack Bonus value" not in [call[1] for call in auto_calls]
     assert "Save DC value" not in [call[1] for call in auto_calls]
-    assert "Formula" in [call[1] for call in auto_calls]
+    assert "Damage Formula" in [call[1] for call in auto_calls]
