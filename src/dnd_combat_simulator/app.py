@@ -1086,29 +1086,55 @@ export default function(component) {
 
 ATTACK_TOOLBAR_CSS = """
 <style>
-[class*="st-key-first-attack-"][class$="-toolbar"] [data-testid="stHorizontalBlock"],
-[class*="st-key-second-attack-"][class$="-toolbar"] [data-testid="stHorizontalBlock"] {
-    min-height: 38px;
+[class*="st-key-first-attack-"][class*="-toolbar"],
+[class*="st-key-second-attack-"][class*="-toolbar"] {
+    display: inline-flex;
+    width: max-content;
+    max-width: 100%;
+    line-height: 1;
+}
+
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-toolbar"] [data-testid="stVerticalBlockBorderWrapper"] {
+    padding: 2px 4px;
+}
+
+[class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stVerticalBlock"],
+[class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stVerticalBlock"],
+[class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stHorizontalBlock"],
+[class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stHorizontalBlock"] {
+    display: inline-flex;
+    width: max-content;
+    max-width: 100%;
     align-items: center;
     gap: 0.125rem;
+    padding: 0;
 }
 
-[class*="st-key-first-attack-"][class$="-toolbar"] [data-testid="stElementContainer"],
-[class*="st-key-second-attack-"][class$="-toolbar"] [data-testid="stElementContainer"] {
+[class*="st-key-first-attack-"][class*="-toolbar"] [data-testid="stElementContainer"],
+[class*="st-key-second-attack-"][class*="-toolbar"] [data-testid="stElementContainer"] {
     width: max-content;
+    height: 36px;
+    max-height: 36px;
+    padding: 0;
 }
 
-[class*="st-key-first-attack-"][class$="-toolbar"] button[kind="tertiary"],
-[class*="st-key-second-attack-"][class$="-toolbar"] button[kind="tertiary"] {
-    min-height: 36px;
+[class*="st-key-first-attack-"][class*="-toolbar"] button[kind="tertiary"],
+[class*="st-key-second-attack-"][class*="-toolbar"] button[kind="tertiary"] {
     min-width: 36px;
+    height: 36px;
+    max-height: 36px;
     padding-top: 0;
     padding-bottom: 0;
     margin-top: 0;
     margin-bottom: 0;
+    line-height: 1;
 }
 
-/* Keep native Streamlit focus-visible outlines intact. */
+/* Keep native Streamlit focus-visible outlines, disabled styling,
+   and tooltips intact. */
 </style>
 """
 
@@ -3161,7 +3187,6 @@ def _build_inputs(
                     ).strip()
                     or "Unnamed Attack"
                 )
-                st.markdown(f"##### {current_name}")
                 ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
                 container = getattr(st, "container", None)
                 toolbar = (
@@ -3481,10 +3506,20 @@ def resolve_shared_query_params(query_params) -> tuple[str, str | None] | None:
     return None
 
 
+def _optional_secret(secrets, key: str) -> object | None:
+    """Return an optional Streamlit secret without requiring a secrets file."""
+    if not hasattr(secrets, "get"):
+        return None
+    try:
+        return secrets.get(key)
+    except Exception:
+        return None
+
+
 def get_supabase_share_store_from_secrets(secrets) -> ShareStore | None:
     """Construct a Supabase share store from Streamlit secrets if configured."""
-    supabase_url = secrets.get("SUPABASE_URL") if hasattr(secrets, "get") else None
-    supabase_key = secrets.get("SUPABASE_KEY") if hasattr(secrets, "get") else None
+    supabase_url = _optional_secret(secrets, "SUPABASE_URL")
+    supabase_key = _optional_secret(secrets, "SUPABASE_KEY")
     if not supabase_url or not supabase_key:
         return None
     return SupabaseShareStore.from_url_and_key(str(supabase_url), str(supabase_key))
@@ -3501,8 +3536,8 @@ def get_streamlit_share_store() -> ShareStore | None:
         return SupabaseShareStore.from_url_and_key(supabase_url, supabase_key)
 
     secrets = getattr(st, "secrets", {})
-    supabase_url = secrets.get("SUPABASE_URL") if hasattr(secrets, "get") else None
-    supabase_key = secrets.get("SUPABASE_KEY") if hasattr(secrets, "get") else None
+    supabase_url = _optional_secret(secrets, "SUPABASE_URL")
+    supabase_key = _optional_secret(secrets, "SUPABASE_KEY")
     if not supabase_url or not supabase_key:
         return None
     try:
