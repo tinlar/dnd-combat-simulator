@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 from dnd_combat_simulator.simulation import (
@@ -56,6 +58,40 @@ def clear_streamlit_cache():
     _clear_cache()
     yield
     _clear_cache()
+
+
+def test_production_result_types_are_pickle_compatible() -> None:
+    first = _build("A", "1d8", ("a",), resource_id="focus")
+    second = _build("B", "1d6", ("b",), resource_id="focus")
+    scenario = _scenario(seed_resource=True)
+
+    result = run_control.simulate_build(first, scenario, seed=1)
+    restored = pickle.loads(pickle.dumps(result))
+
+    assert isinstance(restored, SimulationResult)
+    assert restored.average_damage_per_round == result.average_damage_per_round
+    assert restored.attack_profile_results
+    assert restored.round_results
+    assert restored.resource_usage_results
+
+    comparison = run_control.compare_builds(
+        first_build=first,
+        second_build=second,
+        scenario=scenario,
+        seed=1,
+    )
+    restored_comparison = pickle.loads(pickle.dumps(comparison))
+
+    assert isinstance(restored_comparison, BuildComparisonResult)
+    assert restored_comparison.first_build == comparison.first_build
+    assert restored_comparison.second_build == comparison.second_build
+    assert restored_comparison.difference == comparison.difference
+    assert restored_comparison.first_result.attack_profile_results
+    assert restored_comparison.first_result.round_results
+    assert restored_comparison.first_result.resource_usage_results
+    assert restored_comparison.second_result.attack_profile_results
+    assert restored_comparison.second_result.round_results
+    assert restored_comparison.second_result.resource_usage_results
 
 
 def test_actual_cache_reuses_identical_request_and_keys_result_affecting_changes(
