@@ -303,14 +303,23 @@ ATTACK_CARD_CSS = """
     }
 }
 
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.attack-card-marker) {
-    background: var(--attack-card-background);
-    border-color: var(--attack-card-border);
-    box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.08);
+[class*="st-key-first-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"],
+[class*="st-key-second-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--attack-card-background) !important;
+    border-color: var(--attack-card-border) !important;
+    border-radius: 14px;
+    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.12);
 }
 
-div[data-testid="stVerticalBlockBorderWrapper"]:has(.attack-card-marker)
-    [data-testid="stExpander"] details {
+[class*="st-key-first-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] > div,
+[class*="st-key-second-attack-"][class*="-card"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+    background: var(--attack-card-background) !important;
+    border-radius: inherit;
+    padding: clamp(0.85rem, 1.4vw, 1.35rem);
+}
+
+[class*="st-key-first-attack-"][class*="-card"] [data-testid="stExpander"] details,
+[class*="st-key-second-attack-"][class*="-card"] [data-testid="stExpander"] details {
     background: var(--attack-card-nested-background);
     border-color: var(--st-border-color);
 }
@@ -546,7 +555,7 @@ def configure_page() -> None:
     st.markdown(ATTACK_TOOLBAR_CSS, unsafe_allow_html=True)
 
 
-def _render_section_container():
+def _render_section_container(key: str | None = None):
     """Return a bordered Streamlit container when available."""
     import streamlit as st
 
@@ -554,9 +563,12 @@ def _render_section_container():
     if container is None:
         return nullcontext()
     try:
-        return container(border=True)
+        return container(border=True, key=key)
     except TypeError:
-        return container()
+        try:
+            return container(border=True)
+        except TypeError:
+            return container()
 
 
 def _mount_unified_share_component(
