@@ -7,10 +7,11 @@ import binascii
 import json
 import re
 import zlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, uuid5
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -144,18 +145,20 @@ class SharedAttackProfileConfiguration:
 class SharedBuildConfiguration:
     name: str
     attack_profiles: tuple[SharedAttackProfileConfiguration, ...]
+    math_defaults: BuildMathDefaults = field(default_factory=BuildMathDefaults)
 
     @classmethod
     def from_build_config(cls, build: BuildConfig) -> SharedBuildConfiguration:
         return cls(
-            build.name,
-            tuple(
+            name=build.name,
+            attack_profiles=tuple(
                 replace(
                     SharedAttackProfileConfiguration.from_attack_profile(p),
                     attack_id=p.attack_id or f"profile_{index + 1}",
                 )
                 for index, p in enumerate(build.resolved_attack_profiles())
             ),
+            math_defaults=build.math_defaults,
         )
 
     def to_build_config(self) -> BuildConfig:
@@ -164,18 +167,20 @@ class SharedBuildConfiguration:
         )
         primary = profiles[0]
         return BuildConfig(
-            self.name,
-            primary.attack_bonus or 0,
-            primary.damage_dice,
-            primary.attacks_per_round,
-            primary.attack_roll_mode,
-            profiles,
+            name=self.name,
+            attack_bonus=primary.attack_bonus or 0,
+            damage_dice=primary.damage_dice,
+            attacks_per_round=primary.attacks_per_round,
+            attack_roll_mode=primary.attack_roll_mode,
+            attack_profiles=profiles,
+            math_defaults=self.math_defaults,
         )
 
     def to_json_dict(self) -> dict[str, object]:
         return {
             "name": self.name,
             "attack_profiles": [p.to_json_dict() for p in self.attack_profiles],
+            "math_defaults": _build_math_defaults_to_json_dict(self.math_defaults),
         }
 
 
@@ -442,6 +447,34 @@ def _expect(raw: dict[str, object], key: str, typ: type, ctx: str):
     return value
 
 
+def _build_math_defaults_to_json_dict(defaults: BuildMathDefaults) -> dict[str, int]:
+    return {
+        "ability_modifier": defaults.ability_modifier,
+        "proficiency_bonus": defaults.proficiency_bonus,
+        "attack_bonus_adjustment": defaults.attack_bonus_adjustment,
+        "damage_bonus_adjustment": defaults.damage_bonus_adjustment,
+        "save_dc_adjustment": defaults.save_dc_adjustment,
+    }
+
+
+def _build_math_defaults_from_json(raw: object, ctx: str) -> BuildMathDefaults:
+    obj = _required_dict(raw, f"{ctx} math_defaults")
+    values = {}
+    for field_name in (
+        "ability_modifier",
+        "proficiency_bonus",
+        "attack_bonus_adjustment",
+        "damage_bonus_adjustment",
+        "save_dc_adjustment",
+    ):
+        value = _expect(obj, field_name, int, f"{ctx} math_defaults")
+        values[field_name] = value
+    try:
+        return BuildMathDefaults(**values)
+    except ValueError as error:
+        raise SharedConfigurationError(f"{ctx} math_defaults: {error}") from error
+
+
 def _configuration_from_json(raw: object) -> SharedConfiguration:
     obj = _required_dict(raw, "Shared configuration")
     version = _expect(obj, "version", int, "Shared configuration")
@@ -506,8 +539,18 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
             elif isinstance(legacy_name, str) and names.count(legacy_name) == 1:
                 source_id = profiles[names.index(legacy_name)].attack_id
         migrated.append(replace(profile, trigger_source_attack_id=source_id))
+    math_defaults = (
+        BuildMathDefaults()
+        if "math_defaults" not in obj
+        else _build_math_defaults_from_json(obj["math_defaults"], name)
+    )
     return migrate_shared_build_attack_ids(
-        name, SharedBuildConfiguration(_expect(obj, "name", str, name), tuple(migrated))
+        name,
+        SharedBuildConfiguration(
+            name=_expect(obj, "name", str, name),
+            attack_profiles=tuple(migrated),
+            math_defaults=math_defaults,
+        ),
     )
 
 

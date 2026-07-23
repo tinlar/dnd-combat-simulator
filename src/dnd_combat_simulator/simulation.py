@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from random import Random
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -259,6 +260,7 @@ class BuildConfig:
     attacks_per_round: int
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
     attack_profiles: tuple[AttackProfile, ...] = field(default_factory=tuple)
+    math_defaults: BuildMathDefaults = field(default_factory=BuildMathDefaults)
 
     def resolved_attack_profiles(self) -> tuple[AttackProfile, ...]:
         """Return explicit profiles or a compatibility profile from legacy fields."""

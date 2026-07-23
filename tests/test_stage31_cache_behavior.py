@@ -299,3 +299,44 @@ def test_production_result_types_cross_actual_streamlit_cache_boundary(monkeypat
     assert isinstance(cached_comparison_result, BuildComparisonResult)
     assert cached_comparison_result == comparison_result
     assert calls == [("single", "A"), ("comparison", "A", "B")]
+
+
+def test_math_defaults_participate_in_canonical_cache_identity_and_not_results() -> (
+    None
+):
+    from dataclasses import replace
+
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+
+    scenario = _scenario()
+    base = _build("A")
+    changed_a = replace(base, math_defaults=BuildMathDefaults(5, 4, 2, 3, 1))
+    second = _build("B")
+    changed_b = replace(second, math_defaults=BuildMathDefaults(-1, 0, -2, -3, -4))
+
+    base_request = canonical_single_build_request(SingleBuildInputs(base, scenario, 1))
+    changed_request = canonical_single_build_request(
+        SingleBuildInputs(changed_a, scenario, 1)
+    )
+    assert base_request != changed_request
+    assert (
+        canonical_single_build_request(SingleBuildInputs(changed_a, scenario, 1))
+        == changed_request
+    )
+
+    comparison = canonical_comparison_request(
+        ComparisonInputs(base, second, scenario, 1)
+    )
+    changed_second_comparison = canonical_comparison_request(
+        ComparisonInputs(base, changed_b, scenario, 1)
+    )
+    changed_first_comparison = canonical_comparison_request(
+        ComparisonInputs(changed_a, second, scenario, 1)
+    )
+    assert comparison != changed_second_comparison
+    assert comparison != changed_first_comparison
+    assert changed_second_comparison != changed_first_comparison
+
+    assert run_control.simulate_build(
+        base, scenario, seed=1
+    ) == run_control.simulate_build(changed_a, scenario, seed=1)

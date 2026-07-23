@@ -450,3 +450,93 @@ def test_sometimes_trigger_survives_serialization_round_trip() -> None:
 
     assert decoded_profile.trigger_type == TriggerType.SOMETIMES
     assert decoded_profile.trigger_chance_percent == 25
+
+
+def _decode_payload(token: str) -> dict[str, object]:
+    return json.loads(
+        zlib.decompress(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    )
+
+
+def test_math_defaults_round_trip_and_legacy_default() -> None:
+    from dnd_combat_simulator.build_math import BuildMathDefaults
+
+    a_defaults = BuildMathDefaults(5, 4, 2, 3, 1)
+    b_defaults = BuildMathDefaults(-1, 0, -2, -3, -4)
+    config = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 2, 3),
+        seed=7,
+        build_a=BuildConfig("A", 5, "1d8", 1, math_defaults=a_defaults),
+        build_b=BuildConfig("B", 5, "1d6", 1, math_defaults=b_defaults),
+    )
+    token = serialize_shared_configuration(config)
+    payload = _decode_payload(token)
+    assert payload["version"] == 1
+    assert payload["build_a"]["math_defaults"] == {
+        "ability_modifier": 5,
+        "proficiency_bonus": 4,
+        "attack_bonus_adjustment": 2,
+        "damage_bonus_adjustment": 3,
+        "save_dc_adjustment": 1,
+    }
+    restored = deserialize_shared_configuration(token)
+    assert restored.build_a.math_defaults == a_defaults
+    assert restored.build_b.math_defaults == b_defaults
+
+    del payload["build_a"]["math_defaults"]
+    legacy_token = (
+        base64.urlsafe_b64encode(
+            zlib.compress(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+            )
+        )
+        .decode()
+        .rstrip("=")
+    )
+    assert (
+        deserialize_shared_configuration(legacy_token).build_a.math_defaults
+        == BuildMathDefaults()
+    )
+
+
+@pytest.mark.parametrize("bad", [{}, {"ability_modifier": 1}, [], None])
+def test_malformed_math_defaults_are_rejected(bad: object) -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 2, 3),
+        seed=7,
+        build_a=BuildConfig("A", 5, "1d8", 1),
+        build_b=BuildConfig("B", 5, "1d6", 1),
+    )
+    payload = _decode_payload(serialize_shared_configuration(config))
+    payload["build_a"]["math_defaults"] = bad
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(payload).encode()))
+        .decode()
+        .rstrip("=")
+    )
+    with pytest.raises(SharedConfigurationError, match="build_a.*math_defaults"):
+        deserialize_shared_configuration(token)
+
+
+@pytest.mark.parametrize("value", [1.2, "1", True, None, [], {}])
+def test_malformed_math_default_values_are_rejected(value: object) -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 2, 3),
+        seed=7,
+        build_a=BuildConfig("A", 5, "1d8", 1),
+        build_b=BuildConfig("B", 5, "1d6", 1),
+    )
+    payload = _decode_payload(serialize_shared_configuration(config))
+    payload["build_b"]["math_defaults"]["ability_modifier"] = value
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(payload).encode()))
+        .decode()
+        .rstrip("=")
+    )
+    with pytest.raises(
+        SharedConfigurationError, match="build_b.*math_defaults.*ability_modifier"
+    ):
+        deserialize_shared_configuration(token)
