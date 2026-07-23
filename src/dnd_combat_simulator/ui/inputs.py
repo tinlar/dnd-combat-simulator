@@ -409,9 +409,14 @@ def _attack_profile_inputs(
     errors_by_key = errors_by_key or {}
     build_prefix = prefix.split("-", 1)[0]
     domain_attack_id = attack_id or prefix
-    attack_name = st.text_input(
-        "Attack name", value=default_name, key=profile_widget_key(prefix, "name")
-    )
+    attack_name_key = profile_widget_key(prefix, "name")
+    session_state = getattr(st, "session_state", {})
+    if attack_name_key in session_state:
+        attack_name = st.text_input("Attack name", key=attack_name_key)
+    else:
+        attack_name = st.text_input(
+            "Attack name", value=default_name, key=attack_name_key
+        )
     _field_error(errors_by_key, profile_widget_key(prefix, "name"))
     resolution_type_label = st.selectbox(
         "Resolution Type",
