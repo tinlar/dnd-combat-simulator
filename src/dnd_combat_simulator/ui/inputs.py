@@ -20,6 +20,7 @@ from dnd_combat_simulator.simulation import (
     ResourceCost,
     TriggerFrequency,
     TriggerType,
+    resolve_attack_profile_values,
 )
 from dnd_combat_simulator.ui.components import (
     CONFIGURATION_TOOLBAR_CSS,
@@ -163,6 +164,15 @@ def _profile_from_state_for_summary(build_prefix: str, attack_id: str) -> Attack
             else None
         ),
         resource_costs=resource_costs,
+        use_build_attack_bonus=state.get(
+            profile_widget_key(prefix, "use_build_attack_bonus"), False
+        ),
+        use_build_save_dc=state.get(
+            profile_widget_key(prefix, "use_build_save_dc"), False
+        ),
+        use_build_damage_modifier=state.get(
+            profile_widget_key(prefix, "use_build_damage_modifier"), False
+        ),
     )
 
 
@@ -399,12 +409,29 @@ def _render_managed_resources(
     return tuple(resources)
 
 
+def _safe_checkbox(st: Any, label: str, *, key: str, default: bool) -> bool:
+    state = getattr(st, "session_state", {})
+    kwargs: dict[str, object] = {"key": key}
+    if key not in state:
+        kwargs["value"] = default
+    checkbox = getattr(st, "checkbox", None)
+    if checkbox is None or not hasattr(st, "session_state"):
+        value = state.get(key, default)
+    else:
+        value = checkbox(label, **kwargs)
+    if type(value) is not bool:
+        msg = f"{key} must be a boolean"
+        raise ValueError(msg)
+    return value
+
+
 def _attack_profile_inputs(
     prefix: str,
     default_name: str,
     errors_by_key: dict[str, str] | None = None,
     *,
     attack_id: str | None = None,
+    math_defaults: BuildMathDefaults | None = None,
 ) -> AttackProfile:
     """Render and collect one attack profile's input controls."""
     import streamlit as st
@@ -414,6 +441,9 @@ def _attack_profile_inputs(
     domain_attack_id = attack_id or prefix
     attack_name_key = profile_widget_key(prefix, "name")
     session_state = getattr(st, "session_state", {})
+    resolved_math_defaults = (
+        BuildMathDefaults() if math_defaults is None else math_defaults
+    )
     if attack_name_key in session_state:
         attack_name = st.text_input("Attack name", key=attack_name_key)
     else:
@@ -434,43 +464,119 @@ def _attack_profile_inputs(
     }[resolution_type_label]
     _field_error(errors_by_key, profile_widget_key(prefix, "resolution_type"))
     row_one = st.columns(2)
+    use_build_attack_bonus = _safe_checkbox(
+        st,
+        f"Use Build Attack Bonus ({resolved_math_defaults.attack_bonus:+d})",
+        key=profile_widget_key(prefix, "use_build_attack_bonus"),
+        default=True,
+    )
+    use_build_save_dc = _safe_checkbox(
+        st,
+        f"Use Build Save DC ({resolved_math_defaults.save_dc})",
+        key=profile_widget_key(prefix, "use_build_save_dc"),
+        default=True,
+    )
     if resolution_type is ResolutionType.ATTACK_ROLL:
-        attack_bonus = row_one[0].number_input(
-            "Attack bonus",
-            value=5,
-            step=1,
-            key=profile_widget_key(prefix, "attack_bonus"),
-        )
+        attack_bonus_key = profile_widget_key(prefix, "attack_bonus")
+        if attack_bonus_key in session_state:
+            attack_bonus = row_one[0].number_input(
+                "Attack bonus",
+                step=1,
+                key=attack_bonus_key,
+                disabled=use_build_attack_bonus,
+            )
+        else:
+            attack_bonus = row_one[0].number_input(
+                "Attack bonus",
+                value=5,
+                step=1,
+                key=attack_bonus_key,
+                disabled=use_build_attack_bonus,
+            )
         _field_error(errors_by_key, profile_widget_key(prefix, "attack_bonus"))
         save_dc = None
     elif resolution_type is ResolutionType.SAVING_THROW:
         attack_bonus = None
-        save_dc = row_one[0].number_input(
-            "Save DC",
-            min_value=1,
-            value=13,
-            step=1,
-            key=profile_widget_key(prefix, "save_dc"),
-        )
+        save_dc_key = profile_widget_key(prefix, "save_dc")
+        if save_dc_key in session_state:
+            save_dc = row_one[0].number_input(
+                "Save DC",
+                min_value=1,
+                step=1,
+                key=save_dc_key,
+                disabled=use_build_save_dc,
+            )
+        else:
+            save_dc = row_one[0].number_input(
+                "Save DC",
+                min_value=1,
+                value=13,
+                step=1,
+                key=save_dc_key,
+                disabled=use_build_save_dc,
+            )
         _field_error(errors_by_key, profile_widget_key(prefix, "save_dc"))
     else:
         attack_bonus = None
         save_dc = None
-    damage_dice = row_one[1].text_input(
-        "Damage Formula",
-        value="1d8+3",
-        placeholder=DAMAGE_FORMULA_PLACEHOLDER,
-        help=DAMAGE_FORMULA_HELP,
-        key=profile_widget_key(prefix, "damage_formula"),
+    use_build_damage_modifier = _safe_checkbox(
+        st,
+        f"Add Build Damage Modifier ({resolved_math_defaults.damage_modifier:+d})",
+        key=profile_widget_key(prefix, "use_build_damage_modifier"),
+        default=True,
     )
+    damage_key = profile_widget_key(prefix, "damage_formula")
+    if damage_key in session_state:
+        damage_dice = row_one[1].text_input(
+            "Damage Formula",
+            placeholder=DAMAGE_FORMULA_PLACEHOLDER,
+            help=DAMAGE_FORMULA_HELP,
+            key=damage_key,
+        )
+    else:
+        damage_dice = row_one[1].text_input(
+            "Damage Formula",
+            value="1d8",
+            placeholder=DAMAGE_FORMULA_PLACEHOLDER,
+            help=DAMAGE_FORMULA_HELP,
+            key=damage_key,
+        )
     if not _field_error(errors_by_key, profile_widget_key(prefix, "damage_formula")):
         current_damage_errors = _validate_profile_fields(
-            AttackProfile(default_name, 0, damage_dice, 1), prefix=prefix
+            AttackProfile(
+                name=default_name,
+                attack_bonus=0,
+                damage_dice=damage_dice,
+                attacks_per_round=1,
+                use_build_damage_modifier=use_build_damage_modifier,
+            ),
+            prefix=prefix,
         )
         for error in current_damage_errors:
             if error.key == profile_widget_key(prefix, "damage_formula"):
                 _render_error(error.message)
                 break
+    preview_profile = AttackProfile(
+        name=attack_name or default_name,
+        attack_bonus=None if attack_bonus is None else int(attack_bonus),
+        damage_dice=damage_dice,
+        attacks_per_round=1,
+        resolution_type=resolution_type,
+        save_dc=None if save_dc is None else int(save_dc),
+        use_build_attack_bonus=use_build_attack_bonus,
+        use_build_save_dc=use_build_save_dc,
+        use_build_damage_modifier=use_build_damage_modifier,
+    )
+    resolved_values = resolve_attack_profile_values(
+        preview_profile, resolved_math_defaults
+    )
+    caption = getattr(st, "caption", lambda *args, **kwargs: None)
+    if resolution_type is ResolutionType.ATTACK_ROLL:
+        caption(f"Effective Attack Bonus: {resolved_values.attack_bonus or 0:+d}")
+    elif resolution_type is ResolutionType.SAVING_THROW:
+        caption(f"Effective Save DC: {resolved_values.save_dc or 0}")
+    caption(f"Effective Damage Formula: {resolved_values.damage_formula}")
+
     row_two = st.columns(3)
     attacks_per_round = row_two[0].number_input(
         "Attacks per round",
@@ -713,6 +819,9 @@ def _attack_profile_inputs(
         trigger_frequency=trigger_frequency,
         trigger_chance_percent=trigger_chance_percent,
         resource_costs=resource_costs,
+        use_build_attack_bonus=use_build_attack_bonus,
+        use_build_save_dc=use_build_save_dc,
+        use_build_damage_modifier=use_build_damage_modifier,
     )
 
 
@@ -802,8 +911,8 @@ def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
     with _render_section_container():
         st.markdown("##### Build Setup")
         _build_math_caption(
-            "Build defaults are saved with this build. Attacks below still use their "
-            "own Attack Bonus, Save DC, and Damage Formula values."
+            "Build defaults are saved with this build. Attacks can use these "
+            "Build Setup values or keep their own manual values."
         )
         first_row = st.columns(2)
         ability_modifier = _build_math_number_input(
@@ -1107,6 +1216,7 @@ def _build_inputs(
                         default_attack_name,
                         errors_by_key,
                         attack_id=attack_id,
+                        math_defaults=math_defaults,
                     )
                 )
 

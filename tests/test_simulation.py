@@ -2724,3 +2724,135 @@ def test_build_math_defaults_do_not_change_simulation_behavior_or_rng() -> None:
     assert result_a == result_b
     assert rng_a.getstate() == rng_b.getstate()
     assert result_a.resource_usage_results == result_b.resource_usage_results
+
+
+def test_stage44_resolves_build_inheritance_without_mutating_profile() -> None:
+    from dnd_combat_simulator.simulation import resolve_attack_profile_values
+
+    profile = AttackProfile(
+        name="Inherited",
+        attack_bonus=1,
+        damage_dice=" 2d6+1 ",
+        attacks_per_round=1,
+        use_build_attack_bonus=True,
+        use_build_damage_modifier=True,
+    )
+    resolved = resolve_attack_profile_values(
+        profile,
+        BuildMathDefaults(
+            ability_modifier=4,
+            proficiency_bonus=3,
+            attack_bonus_adjustment=2,
+            damage_bonus_adjustment=-1,
+        ),
+    )
+
+    assert resolved.attack_bonus == 9
+    assert resolved.save_dc is None
+    assert resolved.damage_formula == "2d6+1+3"
+    assert profile.attack_bonus == 1
+    assert profile.damage_dice == " 2d6+1 "
+
+
+def test_stage44_inherited_attack_bonus_and_damage_match_manual_effective_values() -> (
+    None
+):
+    manual = AttackProfile(
+        name="Manual",
+        attack_bonus=5,
+        damage_dice="1d8+3",
+        attacks_per_round=1,
+    )
+    inherited = AttackProfile(
+        name="Manual",
+        attack_bonus=-10,
+        damage_dice="1d8",
+        attacks_per_round=1,
+        use_build_attack_bonus=True,
+        use_build_damage_modifier=True,
+    )
+    kwargs = dict(
+        attack_bonus=0,
+        target_armor_class=12,
+        damage_dice="1d4",
+        rounds=3,
+        simulations=50,
+        rng=Random(42),
+    )
+
+    manual_result = run_damage_simulations(attack_profiles=(manual,), **kwargs)
+    kwargs["rng"] = Random(42)
+    inherited_result = run_damage_simulations(
+        attack_profiles=(inherited,),
+        math_defaults=BuildMathDefaults(),
+        **kwargs,
+    )
+
+    assert inherited_result == manual_result
+
+
+def test_stage44_multi_target_saving_throw_uses_inherited_save_dc() -> None:
+    profile = AttackProfile(
+        name="Blast",
+        attack_bonus=None,
+        damage_dice="4",
+        attacks_per_round=1,
+        affected_targets=2,
+        resolution_type=ResolutionType.SAVING_THROW,
+        save_dc=1,
+        use_build_save_dc=True,
+    )
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        enemy_save_bonus=0,
+        damage_dice="1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(profile,),
+        rng=PredictableRng([4, 2, 14]),
+        math_defaults=BuildMathDefaults(
+            ability_modifier=10,
+            proficiency_bonus=0,
+            save_dc_adjustment=0,
+        ),
+    )
+
+    assert result.failed_save_rate == 1
+    assert result.average_total_damage_per_simulation == 8
+
+
+def test_stage44_build_damage_modifier_is_not_doubled_on_critical_hit() -> None:
+    profile = AttackProfile(
+        name="Crit",
+        attack_bonus=99,
+        damage_dice="1d8",
+        attacks_per_round=1,
+        use_build_damage_modifier=True,
+    )
+
+    result = run_damage_simulations(
+        attack_bonus=0,
+        target_armor_class=10,
+        damage_dice="1",
+        rounds=1,
+        simulations=1,
+        attack_profiles=(profile,),
+        rng=PredictableRng([20, 4, 5]),
+        math_defaults=BuildMathDefaults(ability_modifier=3),
+    )
+
+    assert result.critical_hit_rate == 1
+    assert result.average_total_damage_per_simulation == 12
+
+
+def test_stage44_inheritance_fields_require_real_booleans() -> None:
+    with pytest.raises(ValueError, match="use_build_attack_bonus must be a boolean"):
+        AttackProfile(
+            name="Bad",
+            attack_bonus=1,
+            damage_dice="1d4",
+            attacks_per_round=1,
+            use_build_attack_bonus=1,  # type: ignore[arg-type]
+        )

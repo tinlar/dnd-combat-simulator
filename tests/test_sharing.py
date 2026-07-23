@@ -540,3 +540,105 @@ def test_malformed_math_default_values_are_rejected(value: object) -> None:
         SharedConfigurationError, match="build_b.*math_defaults.*ability_modifier"
     ):
         deserialize_shared_configuration(token)
+
+
+def test_stage44_shared_profile_inheritance_round_trip() -> None:
+    profile = AttackProfile(
+        name="Inherited",
+        attack_bonus=8,
+        save_dc=15,
+        damage_dice="2d6",
+        attacks_per_round=1,
+        attack_id="attack-inherited",
+        use_build_attack_bonus=True,
+        use_build_save_dc=True,
+        use_build_damage_modifier=True,
+    )
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 1, 10),
+        seed=7,
+        build_a=BuildConfig("A", 5, "1d8+3", 1, attack_profiles=(profile,)),
+        build_b=BuildConfig("B", 5, "1d8+3", 1, attack_profiles=(profile,)),
+    )
+
+    raw = config.to_json_dict()["build_a"]["attack_profiles"][0]
+    assert raw["use_build_attack_bonus"] is True
+    assert raw["use_build_save_dc"] is True
+    assert raw["use_build_damage_modifier"] is True
+    token = serialize_shared_configuration(config)
+    decoded = deserialize_shared_configuration(token)
+
+    round_tripped = decoded.build_a.attack_profiles[0].to_attack_profile()
+    assert round_tripped.use_build_attack_bonus is True
+    assert round_tripped.use_build_save_dc is True
+    assert round_tripped.use_build_damage_modifier is True
+
+
+def test_stage44_legacy_shared_profile_defaults_to_manual() -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 1, 10),
+        seed=7,
+        build_a=BuildConfig(
+            "A",
+            5,
+            "1d8+3",
+            1,
+            attack_profiles=(AttackProfile("Manual", 5, "1d8+3", 1, attack_id="a"),),
+        ),
+        build_b=BuildConfig(
+            "B",
+            5,
+            "1d8+3",
+            1,
+            attack_profiles=(AttackProfile("Manual", 5, "1d8+3", 1, attack_id="b"),),
+        ),
+    ).to_json_dict()
+    for build_key in ("build_a", "build_b"):
+        for key in (
+            "use_build_attack_bonus",
+            "use_build_save_dc",
+            "use_build_damage_modifier",
+        ):
+            config[build_key]["attack_profiles"][0].pop(key)
+    token = base64.urlsafe_b64encode(
+        zlib.compress(json.dumps(config).encode())
+    ).decode()
+
+    decoded = deserialize_shared_configuration(token)
+
+    assert decoded.build_a.attack_profiles[0].use_build_attack_bonus is False
+    assert decoded.build_a.attack_profiles[0].use_build_save_dc is False
+    assert decoded.build_a.attack_profiles[0].use_build_damage_modifier is False
+
+
+def test_stage44_shared_profile_rejects_non_boolean_inheritance() -> None:
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 1, 10),
+        seed=7,
+        build_a=BuildConfig(
+            "A",
+            5,
+            "1d8+3",
+            1,
+            attack_profiles=(AttackProfile("Manual", 5, "1d8+3", 1, attack_id="a"),),
+        ),
+        build_b=BuildConfig(
+            "B",
+            5,
+            "1d8+3",
+            1,
+            attack_profiles=(AttackProfile("Manual", 5, "1d8+3", 1, attack_id="b"),),
+        ),
+    ).to_json_dict()
+    config["build_a"]["attack_profiles"][0]["use_build_attack_bonus"] = 1
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(config).encode()))
+        .decode()
+        .rstrip("=")
+    )
+
+    with pytest.raises(SharedConfigurationError, match="must be a boolean"):
+        deserialize_shared_configuration(token)

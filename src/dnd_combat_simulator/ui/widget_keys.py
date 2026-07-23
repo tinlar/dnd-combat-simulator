@@ -58,6 +58,9 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "resource_enabled": "resource-enabled",
         "resource_id": "resource-id",
         "resource_amount": "resource-amount",
+        "use_build_attack_bonus": "use-build-attack-bonus",
+        "use_build_save_dc": "use-build-save-dc",
+        "use_build_damage_modifier": "use-build-damage-modifier",
     }
     return f"{prefix}-{suffixes[field]}"
 

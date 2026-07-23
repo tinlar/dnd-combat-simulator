@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     ResolutionType,
     validate_feature_resolution_combination,
@@ -17,6 +18,7 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ScenarioConfig,
     TriggerType,
+    resolve_attack_profile_values,
 )
 from dnd_combat_simulator.ui.constants import (
     NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
@@ -107,6 +109,17 @@ def _validate_profile_fields(
         _add_error(
             errors, profile_widget_key(prefix, "name"), "Attack name is required."
         )
+    for field_name in (
+        "use_build_attack_bonus",
+        "use_build_save_dc",
+        "use_build_damage_modifier",
+    ):
+        if type(getattr(profile, field_name)) is not bool:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, field_name),
+                "Inheritance setting must be a boolean.",
+            )
     if not profile.damage_dice.strip():
         _add_error(
             errors,
@@ -116,6 +129,12 @@ def _validate_profile_fields(
     else:
         try:
             parse_damage_expression(profile.damage_dice)
+            if profile.use_build_damage_modifier:
+                parse_damage_expression(
+                    resolve_attack_profile_values(
+                        profile, BuildMathDefaults()
+                    ).damage_formula
+                )
         except ValueError as error:
             _add_error(
                 errors,
@@ -136,6 +155,7 @@ def _validate_profile_fields(
         )
     if (
         profile.resolution_type is ResolutionType.ATTACK_ROLL
+        and not profile.use_build_attack_bonus
         and profile.attack_bonus is None
     ):
         _add_error(
@@ -144,7 +164,9 @@ def _validate_profile_fields(
             "Attack bonus is required.",
         )
     if profile.resolution_type is ResolutionType.SAVING_THROW:
-        if profile.save_dc is None:
+        if profile.use_build_save_dc:
+            pass
+        elif profile.save_dc is None:
             _add_error(
                 errors, profile_widget_key(prefix, "save_dc"), "Save DC is required."
             )
