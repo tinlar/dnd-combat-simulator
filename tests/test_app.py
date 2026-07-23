@@ -55,7 +55,7 @@ def test_damage_formula_help_uses_markdown_lists() -> None:
         assert matches[0].startswith(f"- `{example}`")
 
 
-def test_damage_formula_help_icon_moves_to_inline_damage_label(monkeypatch) -> None:
+def test_damage_formula_help_uses_native_formula_input_help(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
@@ -63,29 +63,23 @@ def test_damage_formula_help_icon_moves_to_inline_damage_label(monkeypatch) -> N
     from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
 
     text_input_calls: list[dict[str, object]] = []
-    popover_calls: list[dict[str, object]] = []
-    markdown_calls: list[str] = []
+    markdown_calls: list[tuple[str, dict[str, object]]] = []
 
-    class ContextColumn:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
+    class Column:
         def markdown(self, body, **kwargs):
-            markdown_calls.append(body)
-
-    class Column(ContextColumn):
-        def columns(self, spec, **kwargs):
-            return [self for _ in range(len(spec))]
+            markdown_calls.append((body, kwargs))
 
         def number_input(self, label, **kwargs):
             return kwargs.get("value", 1)
 
-        def popover(self, label, **kwargs):
-            popover_calls.append({"label": label, **kwargs})
-            return self
+        def popover(self, *args, **kwargs):
+            raise AssertionError("damage formula help must not render a popover")
+
+        def expander(self, *args, **kwargs):
+            raise AssertionError("damage formula help must not render an expander")
+
+        def button(self, *args, **kwargs):
+            raise AssertionError("damage formula help must not render a button")
 
         def text_input(self, label, **kwargs):
             text_input_calls.append({"label": label, **kwargs})
@@ -101,23 +95,15 @@ def test_damage_formula_help_icon_moves_to_inline_damage_label(monkeypatch) -> N
         columns=lambda spec, **kwargs: [
             col for _ in range(spec if isinstance(spec, int) else len(spec))
         ],
+        markdown=col.markdown,
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
     _attack_profile_inputs("test", "Attack")
 
     damage_call = next(call for call in text_input_calls if call["label"] == "Formula")
-    assert "help" not in damage_call
-    assert popover_calls == [
-        {
-            "label": "?",
-            "help": "Damage formula dice syntax help",
-            "width": "content",
-            "use_container_width": False,
-            "key": "test-damage-formula-help",
-        }
-    ]
-    assert DAMAGE_FORMULA_HELP in markdown_calls
+    assert damage_call["help"] == DAMAGE_FORMULA_HELP
+    assert any("white-space: nowrap;" in body for body, _ in markdown_calls)
 
 
 @pytest.mark.parametrize(
