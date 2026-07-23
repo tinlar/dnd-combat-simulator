@@ -2,10 +2,9 @@ import pytest
 
 from dnd_combat_simulator import APP_TITLE
 from dnd_combat_simulator.combat import AttackRollMode
-from dnd_combat_simulator.ui.page import (
+from dnd_combat_simulator.ui.results import format_damage, format_rate
+from dnd_combat_simulator.ui.run_control import (
     SimulationInputs,
-    format_damage,
-    format_rate,
     run_simulation_from_inputs,
     validate_simulation_inputs,
 )
@@ -25,7 +24,7 @@ def test_format_rate_uses_percentage() -> None:
 
 
 def test_damage_formula_help_uses_markdown_lists() -> None:
-    from dnd_combat_simulator.ui.page import DAMAGE_FORMULA_HELP
+    from dnd_combat_simulator.ui.constants import DAMAGE_FORMULA_HELP
 
     assert "•" not in DAMAGE_FORMULA_HELP
     examples = [
@@ -58,7 +57,8 @@ def test_damage_formula_input_keeps_streamlit_help_icon(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.ui.page import DAMAGE_FORMULA_HELP, _attack_profile_inputs
+    from dnd_combat_simulator.ui.constants import DAMAGE_FORMULA_HELP
+    from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
 
     text_input_calls: list[dict[str, object]] = []
 
@@ -549,7 +549,7 @@ def test_comparison_round_chart_data_uses_both_builds() -> None:
 
 
 def test_profile_contribution_data_keeps_order_and_automatic_profiles() -> None:
-    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
+    from dnd_combat_simulator.ui.results import _profile_contribution_chart_data
 
     build, result = _mixed_profile_result()
 
@@ -563,7 +563,7 @@ def test_profile_contribution_data_keeps_order_and_automatic_profiles() -> None:
 def test_single_build_and_comparison_chart_render_paths_are_separate(
     monkeypatch,
 ) -> None:
-    import dnd_combat_simulator.ui.page as app
+    import dnd_combat_simulator.ui.results as results
     from dnd_combat_simulator.simulation import (
         BuildConfig,
         ScenarioConfig,
@@ -573,10 +573,10 @@ def test_single_build_and_comparison_chart_render_paths_are_separate(
 
     calls: list[str] = []
     monkeypatch.setattr(
-        app, "_render_single_build_charts", lambda *args: calls.append("single")
+        results, "_render_single_build_charts", lambda *args: calls.append("single")
     )
     monkeypatch.setattr(
-        app, "_render_comparison_charts", lambda *args: calls.append("comparison")
+        results, "_render_comparison_charts", lambda *args: calls.append("comparison")
     )
 
     class DummyExpander:
@@ -616,14 +616,14 @@ def test_single_build_and_comparison_chart_render_paths_are_separate(
 
     build = BuildConfig("A", 20, "1d4", 1)
     result = simulate_build(build, ScenarioConfig(1, 1, 1), 1)
-    app._render_single_build_results(build, result)
+    results._render_single_build_results(build, result)
     comparison = compare_builds(
         first_build=build,
         second_build=BuildConfig("B", 20, "1d4", 1),
         scenario=ScenarioConfig(1, 1, 1),
         seed=1,
     )
-    app._render_comparison_results(comparison)
+    results._render_comparison_results(comparison)
 
     assert calls == ["single", "comparison"]
 
@@ -756,7 +756,7 @@ def test_profile_breakdown_rows_include_formatted_features() -> None:
 def test_profile_contribution_chart_data_sums_and_preserves_order() -> None:
     import pytest
 
-    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
+    from dnd_combat_simulator.ui.results import _profile_contribution_chart_data
 
     build, result = _mixed_profile_result()
 
@@ -775,7 +775,7 @@ def test_profile_contribution_percentages_zero_when_dpr_is_zero() -> None:
         ScenarioConfig,
         simulate_build,
     )
-    from dnd_combat_simulator.ui.page import _profile_contribution_chart_data
+    from dnd_combat_simulator.ui.results import _profile_contribution_chart_data
 
     result = simulate_build(
         BuildConfig("Zero", 0, "1d4", 1),
@@ -3053,7 +3053,9 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    from dnd_combat_simulator.ui.constants import ATTACK_DELETE_CONFIRMATION_KEY
+    from dnd_combat_simulator.ui.inputs import _build_inputs
+    from dnd_combat_simulator.ui.widget_keys import build_attack_ids_key
 
     class Context:
         def __enter__(self):
@@ -3081,7 +3083,7 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
         def radio(self, label, **kwargs):
             return kwargs["options"][0]
 
-    state = {app.build_attack_ids_key("first"): ["attack-a", "attack-b"]}
+    state = {build_attack_ids_key("first"): ["attack-a", "attack-b"]}
     fake_streamlit = SimpleNamespace(
         session_state=state,
         container=lambda **kwargs: FakeContainer(kwargs.get("key")),
@@ -3102,10 +3104,10 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
-    app._build_inputs("first", "Build A")
+    _build_inputs("first", "Build A")
 
-    assert state[app.ATTACK_DELETE_CONFIRMATION_KEY] == "first:attack-a"
-    assert state[app.build_attack_ids_key("first")] == ["attack-a", "attack-b"]
+    assert state[ATTACK_DELETE_CONFIRMATION_KEY] == "first:attack-a"
+    assert state[build_attack_ids_key("first")] == ["attack-a", "attack-b"]
 
 
 def test_build_inputs_uses_attack_name_input_without_markdown_heading(
@@ -3114,7 +3116,12 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    from dnd_combat_simulator.ui.inputs import _build_inputs
+    from dnd_combat_simulator.ui.widget_keys import (
+        attack_widget_prefix,
+        build_attack_ids_key,
+        profile_widget_key,
+    )
 
     class Context:
         def __enter__(self):
@@ -3142,10 +3149,8 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
     markdown_calls: list[str] = []
     text_input_calls: list[tuple[str, dict[str, object]]] = []
     state = {
-        app.build_attack_ids_key("first"): ["attack-a"],
-        app.profile_widget_key(
-            app.attack_widget_prefix("first", "attack-a"), "name"
-        ): "Slash",
+        build_attack_ids_key("first"): ["attack-a"],
+        profile_widget_key(attack_widget_prefix("first", "attack-a"), "name"): "Slash",
     }
 
     def markdown(body: str, **kwargs: object) -> None:
@@ -3175,16 +3180,17 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
     )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
-    app._build_inputs("first", "Build A")
+    _build_inputs("first", "Build A")
 
     assert "##### Slash" not in markdown_calls
     attack_name_inputs = [
         kwargs for label, kwargs in text_input_calls if label == "Attack name"
     ]
     assert len(attack_name_inputs) == 1
-    assert attack_name_inputs[0]["key"] == app.profile_widget_key(
-        app.attack_widget_prefix("first", "attack-a"), "name"
+    assert attack_name_inputs[0]["key"] == profile_widget_key(
+        attack_widget_prefix("first", "attack-a"), "name"
     )
+    assert "value" not in attack_name_inputs[0]
 
 
 def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
