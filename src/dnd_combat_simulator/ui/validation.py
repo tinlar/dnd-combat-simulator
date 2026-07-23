@@ -52,11 +52,7 @@ class ValidationIssue:
     @property
     def key(self) -> str:
         """Compatibility accessor for widget-focused legacy tests."""
-        if not self.widget_key:
-            return ""
-        if self.field == "trigger_chance_percent" and self.attack_id:
-            return f"{self.attack_id}-trigger-chance-percent"
-        return self.widget_key
+        return self.widget_key or ""
 
 
 def _friendly_validation_message(error: ValueError) -> str:
@@ -101,12 +97,33 @@ def _validate_profile_fields(
     profile: AttackProfile,
     *,
     prefix: str,
+    build_key: str | None = None,
     available_resource_ids: frozenset[str] | None = None,
 ) -> list[ValidationIssue]:
     from dnd_combat_simulator.dice import parse_damage_expression
     from dnd_combat_simulator.simulation import parse_active_rounds
 
     errors: list[ValidationIssue] = []
+
+    def add_profile_error(
+        key: str,
+        message: str,
+        field: str,
+        *,
+        scope: ValidationScope = ValidationScope.ATTACK,
+        resource_id: str | None = None,
+    ) -> None:
+        _add_error(
+            errors,
+            key,
+            message,
+            scope=scope,
+            field=field,
+            build_key=build_key,
+            attack_id=profile.attack_id,
+            resource_id=resource_id,
+        )
+
     if not profile.name.strip():
         _add_error(
             errors, profile_widget_key(prefix, "name"), "Attack name is required."
@@ -211,7 +228,14 @@ def validate_build_fields(
 ) -> list[ValidationIssue]:
     errors: list[ValidationIssue] = []
     if not build.name.strip():
-        _add_error(errors, f"{prefix}-build-name", "Build name is required.")
+        _add_error(
+            errors,
+            f"{prefix}-build-name",
+            "Build name is required.",
+            scope=ValidationScope.BUILD,
+            field="name",
+            build_key=prefix,
+        )
     profiles = build.resolved_attack_profiles()
     for index, profile in enumerate(profiles):
         widget_prefix = (
@@ -223,6 +247,7 @@ def validate_build_fields(
             _validate_profile_fields(
                 profile,
                 prefix=widget_prefix,
+                build_key=prefix,
                 available_resource_ids=available_resource_ids,
             )
         )
@@ -233,6 +258,9 @@ def validate_build_fields(
             errors,
             f"{prefix}-attack-ids",
             f"{build.name or 'Build'} contains an empty attack ID.",
+            scope=ValidationScope.BUILD,
+            field="attack_ids",
+            build_key=prefix,
         )
     duplicate_ids = {
         attack_id
@@ -245,6 +273,9 @@ def validate_build_fields(
             f"{prefix}-attack-ids",
             f"{build.name or 'Build'} contains duplicate attack IDs: "
             + ", ".join(sorted(duplicate_ids)),
+            scope=ValidationScope.BUILD,
+            field="attack_ids",
+            build_key=prefix,
         )
         return errors
     trigger_source_error_keys: set[str] = set()
@@ -423,6 +454,12 @@ def validate_configuration_for_ui(
     structured: dict[tuple[str, str | None, str], str] = {}
     for error in validate_scenario_fields(configuration.scenario.to_scenario_config()):
         structured[("scenario", None, error.key)] = error.message
+    scenario_config = configuration.scenario.to_scenario_config()
+    available_resource_ids = frozenset(
+        resource.resource_id
+        for resource in scenario_config.managed_resources
+        if resource.resource_id
+    )
     for build_key, prefix, build in (
         ("build_a", "first", configuration.build_a),
         ("build_b", "second", configuration.build_b),
@@ -434,7 +471,11 @@ def validate_configuration_for_ui(
         }
         for index, attack_id in enumerate(attack_ids):
             widget_to_attack[profile_prefix(prefix, index)] = attack_id
-        for error in validate_build_fields(build.to_build_config(), prefix=prefix):
+        for error in validate_build_fields(
+            build.to_build_config(),
+            prefix=prefix,
+            available_resource_ids=available_resource_ids,
+        ):
             profile_id: str | None = None
             field = error.key
             if error.key == f"{prefix}-build-name":
@@ -459,10 +500,22 @@ def validate_configuration_for_ui(
 def _validation_errors_for_configuration(
     configuration: SharedConfiguration,
 ) -> list[ValidationIssue]:
+    scenario_config = configuration.scenario.to_scenario_config()
+    available_resource_ids = frozenset(
+        resource.resource_id
+        for resource in scenario_config.managed_resources
+        if resource.resource_id
+    )
     return [
-        *validate_scenario_fields(configuration.scenario.to_scenario_config()),
-        *validate_build_fields(configuration.build_a.to_build_config(), prefix="first"),
+        *validate_scenario_fields(scenario_config),
         *validate_build_fields(
-            configuration.build_b.to_build_config(), prefix="second"
+            configuration.build_a.to_build_config(),
+            prefix="first",
+            available_resource_ids=available_resource_ids,
+        ),
+        *validate_build_fields(
+            configuration.build_b.to_build_config(),
+            prefix="second",
+            available_resource_ids=available_resource_ids,
         ),
     ]

@@ -32,14 +32,12 @@ from dnd_combat_simulator.simulation import (
     compare_builds,
     simulate_build,
 )
-from dnd_combat_simulator.ui.page import (
-    COMPARE_WIDGET_KEY,
-    LOADED_SHARED_CONFIG_TOKEN_KEY,
-    SCENARIO_WIDGET_KEYS,
-    feature_widget_key,
+from dnd_combat_simulator.ui.constants import COMPARE_WIDGET_KEY, SCENARIO_WIDGET_KEYS
+from dnd_combat_simulator.ui.sharing import LOADED_SHARED_CONFIG_TOKEN_KEY
+from dnd_combat_simulator.ui.state import (
     hydrate_session_state_from_shared_configuration,
-    profile_widget_key,
 )
+from dnd_combat_simulator.ui.widget_keys import feature_widget_key, profile_widget_key
 
 
 def profile(name="Attack", **kwargs):
