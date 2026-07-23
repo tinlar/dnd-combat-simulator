@@ -168,11 +168,9 @@ def test_page_has_no_compatibility_facade_or_runtime_module_mutation() -> None:
             and node.name == "__getattr__"
             and isinstance(getattr(node, "parent", None), ast.Module)
         )
+        assert not (isinstance(node, ast.ImportFrom) and node.module == "importlib")
         assert not (
-            isinstance(node, ast.ImportFrom) and node.module == "importlib"
-        )
-        assert not (
-            isinstance(node, ast.Import) 
+            isinstance(node, ast.Import)
             and any(alias.name == "importlib" for alias in node.names)
         )
         assert not (

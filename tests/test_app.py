@@ -482,7 +482,9 @@ def _mixed_profile_result():
         0,
         1,
         attack_profiles=(
-            AttackProfile("Zero opener", 0, "1d4", 1, active_rounds="1"),
+            AttackProfile(
+                "Zero opener", 0, "1d4", 1, active_rounds="1", attack_id="zero-opener"
+            ),
             AttackProfile(
                 "Save effect",
                 None,
@@ -490,6 +492,7 @@ def _mixed_profile_result():
                 1,
                 resolution_type=ResolutionType.SAVING_THROW,
                 save_dc=10,
+                attack_id="save-effect",
             ),
             AttackProfile(
                 "Aura",
@@ -497,6 +500,7 @@ def _mixed_profile_result():
                 "1d4",
                 1,
                 resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                attack_id="aura",
             ),
         ),
     )
@@ -731,12 +735,13 @@ def test_profile_breakdown_rows_include_formatted_features() -> None:
                 "1d4",
                 1,
                 attack_profiles=(
-                    AttackProfile("Plain", 20, "1d4", 1),
+                    AttackProfile("Plain", 20, "1d4", 1, attack_id="plain"),
                     AttackProfile(
                         "Featured",
                         20,
                         "1d4",
                         1,
+                        attack_id="featured",
                         features=frozenset(
                             {
                                 AttackFeature.TAVERN_BRAWLER,
@@ -924,7 +929,7 @@ def test_share_toolbar_passes_exact_first_party_url_to_v2_component(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     calls: list[tuple[str, object]] = []
 
@@ -1013,7 +1018,7 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     mounts: list[dict[str, object]] = []
     state = {
@@ -1050,7 +1055,8 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
 def test_validate_configuration_for_ui_scopes_damage_error_to_exact_build_profile() -> (
     None
 ):
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.sharing import shared_configuration_from_configs
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -1093,7 +1099,7 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     calls: list[tuple[str, dict[str, object]]] = []
     state = {
@@ -1175,7 +1181,7 @@ def test_run_single_build_with_feedback_sets_running_state_and_duration(
     from contextlib import contextmanager
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     state = {}
     events: list[str] = []
@@ -1209,7 +1215,7 @@ def test_mark_simulation_pending_ignores_active_run(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     state = {app.SIMULATION_RUNNING_KEY: True}
     monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
@@ -1220,7 +1226,7 @@ def test_mark_simulation_pending_ignores_active_run(monkeypatch) -> None:
 
 
 def test_share_component_copies_inside_button_click_with_fallback() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     js = app.SHARE_TOOLBAR_JS
     onclick_index = js.index("button.onclick = async () =>")
@@ -1249,7 +1255,7 @@ def test_share_component_copies_inside_button_click_with_fallback() -> None:
 
 
 def test_share_component_markup_and_css_are_accessible_and_theme_compatible() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     html = app.SHARE_TOOLBAR_HTML
     css = app.SHARE_TOOLBAR_CSS
@@ -1283,7 +1289,7 @@ def test_share_component_markup_and_css_are_accessible_and_theme_compatible() ->
 
 
 def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     toolbar_css = app.CONFIGURATION_TOOLBAR_CSS
     share_css = app.SHARE_TOOLBAR_CSS
@@ -1568,7 +1574,7 @@ def test_share_query_loads_and_hydrates_session_state(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     state = {}
     fake_streamlit = SimpleNamespace(
@@ -1595,7 +1601,8 @@ def test_legacy_config_query_still_loads(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.sharing import serialize_shared_configuration
 
     token = serialize_shared_configuration(_sample_shared_configuration())
@@ -1615,7 +1622,8 @@ def test_share_query_takes_precedence_over_config(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.sharing import serialize_shared_configuration
 
     legacy = _sample_shared_configuration()
@@ -1640,7 +1648,8 @@ def test_share_load_errors_are_safe(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.share_store import (
         InvalidShareIdError,
         ShareNotFoundError,
@@ -1679,7 +1688,7 @@ def test_share_load_errors_are_safe(monkeypatch):
 
 
 def test_missing_streamlit_secrets_returns_no_store():
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     assert app.get_supabase_share_store_from_secrets({}) is None
 
@@ -1688,7 +1697,8 @@ def test_short_share_save_success_and_failure(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.share_store import ShareStoreError
 
     state = {
@@ -1720,7 +1730,7 @@ def test_unified_share_trigger_saves_once_and_rerun_does_not_repeat(monkeypatch)
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     mounts = []
     state = {
@@ -1764,7 +1774,7 @@ def test_unified_share_existing_url_copy_causes_no_insert(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
@@ -1801,7 +1811,7 @@ def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypat
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     state = {
         app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
@@ -1847,7 +1857,8 @@ def test_unified_share_save_error_is_safe(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.share_store import ShareStoreError
 
     messages = []
@@ -1887,7 +1898,7 @@ def test_missing_secrets_disable_unified_component(monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     mounts = []
     fake_streamlit = SimpleNamespace(
@@ -1910,7 +1921,7 @@ def test_missing_secrets_disable_unified_component(monkeypatch):
 
 
 def test_fresh_session_receives_generated_seed_and_reruns_keep_it(monkeypatch) -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     generated = [8675309, 123]
     monkeypatch.setattr(app, "_generate_default_seed", lambda: generated.pop(0))
@@ -1923,7 +1934,8 @@ def test_fresh_session_receives_generated_seed_and_reruns_keep_it(monkeypatch) -
 
 
 def test_shared_configuration_overrides_generated_seed() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.sharing import (
         SharedAttackProfileConfiguration,
         SharedBuildConfiguration,
@@ -1992,7 +2004,7 @@ def test_simulation_settings_keep_existing_widget_keys(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     calls = []
     state = {
@@ -2292,7 +2304,8 @@ def test_trigger_source_options_exclude_current_later_and_show_no_eligible(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.ui.inputs import _attack_profile_inputs
 
     state = {"first-additional-attack-count": 2}
@@ -2480,7 +2493,7 @@ def test_sometimes_validation_rejects_invalid_percentage_values(percent):
     errors = validate_build_fields(build, prefix="first")
 
     assert any(
-        error.key == profile_widget_key("a", "trigger_chance_percent")
+        error.key == profile_widget_key("first-a", "trigger_chance_percent")
         for error in errors
     )
 
@@ -2489,7 +2502,7 @@ def test_trigger_settings_uses_stable_expander_key_without_button(monkeypatch) -
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     calls = []
 
@@ -2778,7 +2791,8 @@ def test_stable_id_build_from_state_reconstructs_widget_prefixed_values(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.combat import AttackFeature, ResolutionType
     from dnd_combat_simulator.simulation import TriggerFrequency, TriggerType
 
@@ -2838,7 +2852,7 @@ def test_delete_attack_state_is_build_scoped_for_matching_domain_ids(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     attack_id = "attack-same"
     first_prefix = app.attack_widget_prefix("first", attack_id)
@@ -2863,7 +2877,7 @@ def test_trigger_options_use_domain_ids_and_build_scoped_names(monkeypatch) -> N
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     source = "attack-shared"
     current = "attack-current"
@@ -2885,7 +2899,7 @@ def test_resource_helpers_use_widget_prefixes_for_each_build(monkeypatch) -> Non
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     attack_id = "attack-same"
     first_prefix = app.attack_widget_prefix("first", attack_id)
@@ -2924,7 +2938,7 @@ def test_attack_action_toolbar_uses_single_horizontal_tertiary_container(
     import sys
     from types import SimpleNamespace
 
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     calls = []
 
@@ -3197,7 +3211,8 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
 
 
 def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.combat import AttackFeature
 
     source = app.attack_widget_prefix("first", "attack-source")
@@ -3254,7 +3269,8 @@ def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
 
 
 def test_duplicate_state_resets_self_trigger_and_copies_advanced_fields() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
+
     from dnd_combat_simulator.combat import AttackFeature
 
     source_id = "attack-source"
@@ -3339,7 +3355,7 @@ def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
 
 
 def test_attack_toolbar_css_is_scoped_and_compact() -> None:
-    import dnd_combat_simulator.ui.page as app
+    import ui_test_api as app
 
     css = app.ATTACK_TOOLBAR_CSS
 
@@ -3368,9 +3384,8 @@ def test_attack_toolbar_css_is_scoped_and_compact() -> None:
 def test_streamlit_duplicate_button_copies_persistent_state_without_exceptions() -> (
     None
 ):
+    import ui_test_api as app
     from streamlit.testing.v1 import AppTest
-
-    import dnd_combat_simulator.ui.page as app
 
     at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10)
     at.run()
