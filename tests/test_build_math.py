@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import ast
-import importlib
+import subprocess
 import sys
+import textwrap
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
@@ -122,12 +123,51 @@ def test_build_math_module_does_not_import_streamlit() -> None:
     assert all(not module.startswith("streamlit.") for module in imported_modules)
 
 
+def run_build_math_import_probe() -> None:
+    script = textwrap.dedent(
+        """
+        import sys
+
+        assert "streamlit" not in sys.modules
+
+        from dnd_combat_simulator.build_math import BuildMathDefaults
+
+        defaults = BuildMathDefaults()
+
+        assert defaults.attack_bonus == 5
+        assert "streamlit" not in sys.modules
+
+        import dnd_combat_simulator.build_math as build_math
+
+        assert "session_state" not in vars(build_math)
+        """
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+
+
 def test_importing_build_math_does_not_touch_streamlit_or_session_state() -> None:
-    sys.modules.pop("dnd_combat_simulator.build_math", None)
-    sys.modules.pop("streamlit", None)
+    run_build_math_import_probe()
 
-    module = importlib.import_module("dnd_combat_simulator.build_math")
 
-    assert module.BuildMathDefaults().attack_bonus == 5
-    assert "streamlit" not in sys.modules
-    assert "session_state" not in vars(module)
+def test_build_math_import_probe_preserves_parent_modules() -> None:
+    __import__("streamlit")
+
+    streamlit_before = sys.modules["streamlit"]
+    simulation_before = sys.modules.get("dnd_combat_simulator.simulation")
+    run_control_before = sys.modules.get("dnd_combat_simulator.ui.run_control")
+
+    run_build_math_import_probe()
+
+    assert sys.modules["streamlit"] is streamlit_before
+    assert sys.modules.get("dnd_combat_simulator.simulation") is simulation_before
+    assert sys.modules.get("dnd_combat_simulator.ui.run_control") is run_control_before
