@@ -4012,12 +4012,14 @@ def test_clone_build_a_confirm_completely_replaces_build_b_and_deep_copies(monke
     clone_build_session_state(state, "first", "second")
     cloned_b = _build_from_state("second", "Build B")
 
-    assert cloned_b == build_a
-    assert [p.attack_id for p in cloned_b.attack_profiles] == ["opener", "burst"]
+    assert cloned_b.name == build_a.name
+    assert [p.attack_id for p in cloned_b.attack_profiles] != ["opener", "burst"]
+    assert len({p.attack_id for p in cloned_b.attack_profiles}) == 2
     assert (
         cloned_b.attack_profiles[1].trigger_source_attack_id
         == cloned_b.attack_profiles[0].attack_id
     )
+    assert build_a.attack_profiles[1].trigger_source_attack_id == "opener"
     assert cloned_b.managed_resources == build_a.managed_resources
     assert (
         cloned_b.attack_profiles[0].resource_costs
@@ -4025,14 +4027,160 @@ def test_clone_build_a_confirm_completely_replaces_build_b_and_deep_copies(monke
     )
     assert "obsolete" not in state[build_attack_ids_key("second")]
 
-    state[profile_widget_key(attack_widget_prefix("second", "opener"), "name")] = (
-        "Edited B"
-    )
+    state[
+        profile_widget_key(
+            attack_widget_prefix("second", cloned_b.attack_profiles[0].attack_id),
+            "name",
+        )
+    ] = "Edited B"
     assert (
         _build_from_state("first", "Build A").attack_profiles[0].name
         == "Opening Strike"
     )
     assert _build_from_state("second", "Build B").attack_profiles[0].name == "Edited B"
+
+
+def test_clone_build_a_remaps_card_triggers_without_mutating_source(monkeypatch):
+    import copy
+    import sys
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.simulation import TriggerType
+    from dnd_combat_simulator.ui.state import (
+        _build_from_state,
+        clone_build_session_state,
+    )
+    from dnd_combat_simulator.ui.widget_keys import (
+        attack_widget_prefix,
+        profile_widget_key,
+    )
+
+    for trigger_type in (
+        TriggerType.AFTER_SUCCESS,
+        TriggerType.AFTER_FAILURE,
+        TriggerType.AFTER_CRITICAL,
+    ):
+        build_a = _rich_clone_build("A")
+        profiles = (
+            build_a.attack_profiles[0],
+            build_a.attack_profiles[1].__class__(
+                **{
+                    **build_a.attack_profiles[1].__dict__,
+                    "name": build_a.attack_profiles[0].name,
+                    "trigger_type": trigger_type,
+                    "trigger_source_attack_id": "opener",
+                }
+            ),
+        )
+        build_a = build_a.__class__(
+            build_a.name,
+            build_a.attack_bonus,
+            build_a.damage_dice,
+            build_a.attacks_per_round,
+            build_a.attack_roll_mode,
+            attack_profiles=profiles,
+            math_defaults=build_a.math_defaults,
+            managed_resources=build_a.managed_resources,
+        )
+        state = {}
+        _hydrate_build(state, "first", build_a)
+        before_state = copy.deepcopy(state)
+        monkeypatch.setitem(
+            sys.modules, "streamlit", SimpleNamespace(session_state=state)
+        )
+
+        clone_build_session_state(state, "first", "second")
+
+        for key, value in before_state.items():
+            assert state[key] == value
+        cloned_b = _build_from_state("second", "Build B")
+        assert cloned_b.attack_profiles[0].name == cloned_b.attack_profiles[1].name
+        assert cloned_b.attack_profiles[0].attack_id != "opener"
+        assert (
+            cloned_b.attack_profiles[1].trigger_source_attack_id
+            == cloned_b.attack_profiles[0].attack_id
+        )
+        assert cloned_b.attack_profiles[1].trigger_type is trigger_type
+        assert (
+            cloned_b.attack_profiles[1].trigger_frequency
+            == build_a.attack_profiles[1].trigger_frequency
+        )
+        assert (
+            cloned_b.attack_profiles[1].resource_costs
+            == build_a.attack_profiles[1].resource_costs
+        )
+        assert (
+            cloned_b.attack_profiles[1].resource_costs
+            is not build_a.attack_profiles[1].resource_costs
+        )
+
+        # Editing either clone's nested state must not affect the other build.
+        state[
+            profile_widget_key(
+                attack_widget_prefix("second", cloned_b.attack_profiles[1].attack_id),
+                "damage_formula",
+            )
+        ] = "9d9"
+        assert (
+            _build_from_state("first", "Build A").attack_profiles[1].damage_dice
+            == "3d8"
+        )
+        state[
+            profile_widget_key(
+                attack_widget_prefix("first", "opener"), "damage_formula"
+            )
+        ] = "1d4"
+        assert (
+            _build_from_state("second", "Build B").attack_profiles[1].damage_dice
+            == "9d9"
+        )
+
+
+def test_correcting_invalid_trigger_revalidates_immediately():
+    from dnd_combat_simulator.ui.validation import (
+        validate_build_fields,
+        validation_errors_by_key,
+    )
+    from dnd_combat_simulator.ui.widget_keys import (
+        attack_widget_prefix,
+        profile_widget_key,
+    )
+
+    build = _rich_clone_build("A")
+    invalid = build.__class__(
+        build.name,
+        build.attack_bonus,
+        build.damage_dice,
+        build.attacks_per_round,
+        build.attack_roll_mode,
+        attack_profiles=(
+            build.attack_profiles[0],
+            build.attack_profiles[1].__class__(
+                **{
+                    **build.attack_profiles[1].__dict__,
+                    "trigger_source_attack_id": None,
+                }
+            ),
+        ),
+        math_defaults=build.math_defaults,
+        managed_resources=build.managed_resources,
+    )
+    invalid_errors = validation_errors_by_key(
+        validate_build_fields(
+            invalid, prefix="first", available_resource_ids=frozenset({"ki", "slot"})
+        )
+    )
+    key = profile_widget_key(
+        attack_widget_prefix("first", "burst"), "trigger_source_attack_id"
+    )
+    assert key in invalid_errors
+
+    valid_errors = validation_errors_by_key(
+        validate_build_fields(
+            build, prefix="first", available_resource_ids=frozenset({"ki", "slot"})
+        )
+    )
+    assert valid_errors == {}
 
 
 def test_clone_uses_central_shared_build_configuration_for_future_fields(monkeypatch):
