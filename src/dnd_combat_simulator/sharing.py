@@ -70,6 +70,8 @@ class SharedAttackProfileConfiguration:
     resource_costs: tuple[ResourceCost, ...] = ()
     use_build_attack_bonus: bool = False
     use_build_save_dc: bool = False
+    inherit_triggering_critical: bool = False
+    require_matching_damage_dice_to_continue: bool = False
 
     @classmethod
     def from_attack_profile(
@@ -95,6 +97,8 @@ class SharedAttackProfileConfiguration:
             resource_costs=profile.resource_costs,
             use_build_attack_bonus=profile.use_build_attack_bonus,
             use_build_save_dc=profile.use_build_save_dc,
+            inherit_triggering_critical=profile.inherit_triggering_critical,
+            require_matching_damage_dice_to_continue=profile.require_matching_damage_dice_to_continue,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -118,6 +122,8 @@ class SharedAttackProfileConfiguration:
             resource_costs=self.resource_costs,
             use_build_attack_bonus=self.use_build_attack_bonus,
             use_build_save_dc=self.use_build_save_dc,
+            inherit_triggering_critical=self.inherit_triggering_critical,
+            require_matching_damage_dice_to_continue=self.require_matching_damage_dice_to_continue,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -146,6 +152,10 @@ class SharedAttackProfileConfiguration:
             ],
             "use_build_attack_bonus": self.use_build_attack_bonus,
             "use_build_save_dc": self.use_build_save_dc,
+            "inherit_triggering_critical": self.inherit_triggering_critical,
+            "require_matching_damage_dice_to_continue": (
+                self.require_matching_damage_dice_to_continue
+            ),
         }
 
 
@@ -638,6 +648,8 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
         ),
         _optional_bool(obj, "use_build_attack_bonus", ctx),
         _optional_bool(obj, "use_build_save_dc", ctx),
+        _optional_bool(obj, "inherit_triggering_critical", ctx),
+        _optional_bool(obj, "require_matching_damage_dice_to_continue", ctx),
     )
 
 

@@ -529,6 +529,14 @@ def _hydrate_build_session_state(
             if profile.trigger_chance_percent is None
             else str(profile.trigger_chance_percent)
         )
+        session_state[
+            profile_widget_key(widget_prefix, "inherit_triggering_critical")
+        ] = profile.inherit_triggering_critical
+        session_state[
+            profile_widget_key(
+                widget_prefix, "require_matching_damage_dice_to_continue"
+            )
+        ] = profile.require_matching_damage_dice_to_continue
         session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = {
             TriggerFrequency.ONCE_PER_ROUND: "Once per round",
             TriggerFrequency.ONCE_PER_COMBAT: "Once per combat",
@@ -835,6 +843,45 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                 ),
                 use_build_save_dc=session_state.get(
                     profile_widget_key(widget_prefix, "use_build_save_dc"), False
+                ),
+                inherit_triggering_critical=bool(
+                    session_state.get(
+                        profile_widget_key(
+                            widget_prefix, "inherit_triggering_critical"
+                        ),
+                        False,
+                    )
+                    and session_state.get(
+                        profile_widget_key(widget_prefix, "trigger_source_attack_id")
+                    )
+                    is not None
+                    and {
+                        "Another attack succeeds": TriggerType.AFTER_SUCCESS,
+                        "After another attack succeeds": TriggerType.AFTER_SUCCESS,
+                        "Another attack fails": TriggerType.AFTER_FAILURE,
+                        "Another attack critically hits": TriggerType.AFTER_CRITICAL,
+                        "Sometimes": TriggerType.SOMETIMES,
+                    }.get(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "trigger_type"), "Always"
+                        ),
+                        TriggerType.ALWAYS,
+                    )
+                    not in (TriggerType.ALWAYS, TriggerType.SOMETIMES)
+                ),
+                require_matching_damage_dice_to_continue=bool(
+                    session_state.get(
+                        profile_widget_key(
+                            widget_prefix, "require_matching_damage_dice_to_continue"
+                        ),
+                        False,
+                    )
+                    and int(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "attacks_per_round"), 1
+                        )
+                    )
+                    > 1
                 ),
             )
         )

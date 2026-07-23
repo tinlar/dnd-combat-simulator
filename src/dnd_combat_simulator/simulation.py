@@ -14,13 +14,14 @@ from dnd_combat_simulator.combat import (
     ResolutionType,
     SuccessfulSaveDamage,
     resolve_compiled_saving_throw_damage,
-    resolve_compiled_weapon_attack,
+    roll_attack_d20,
     validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.dice import (
     DamageExpression,
     RandomNumberGenerator,
     parse_damage_expression,
+    roll_compiled_damage_breakdown,
     roll_compiled_damage_expression,
 )
 
@@ -88,11 +89,15 @@ class AttackProfile:
     resource_costs: tuple[ResourceCost, ...] = field(default_factory=tuple)
     use_build_attack_bonus: bool = False
     use_build_save_dc: bool = False
+    inherit_triggering_critical: bool = False
+    require_matching_damage_dice_to_continue: bool = False
 
     def __post_init__(self) -> None:
         for field_name in (
             "use_build_attack_bonus",
             "use_build_save_dc",
+            "inherit_triggering_critical",
+            "require_matching_damage_dice_to_continue",
         ):
             if type(getattr(self, field_name)) is not bool:
                 raise ValueError(f"{field_name} must be a boolean")
@@ -374,6 +379,8 @@ class ProfileExecutionPlan:
     stop_on_miss: bool
     effective_attack_bonus: int | None
     effective_save_dc: int | None
+    inherit_triggering_critical: bool
+    require_matching_damage_dice_to_continue: bool
 
 
 @dataclass
@@ -431,6 +438,7 @@ class CombatTriggerState:
     failed_resolutions_by_profile: list[int]
     critical_resolutions_by_profile: list[int]
     triggered_once_by_profile: list[bool]
+    critical_queue_by_profile: list[list[bool]]
 
 
 _ACTIVE_ROUNDS_GROUP_PATTERN = re.compile(r"\d+(?:\s*-\s*\d+)?")
@@ -628,6 +636,8 @@ def _build_execution_plan(
                 stop_on_miss=AttackFeature.STOP_ON_MISS in attack_features,
                 effective_attack_bonus=resolved.attack_bonus,
                 effective_save_dc=resolved.save_dc,
+                inherit_triggering_critical=profile.inherit_triggering_critical,
+                require_matching_damage_dice_to_continue=profile.require_matching_damage_dice_to_continue,
             )
         )
     return tuple(plans)
@@ -658,6 +668,21 @@ def _validate_attack_profile(
         msg = f"{label} attacks per round must be at least 1."
         if label == "Attack profile 1":
             msg = "Attacks per round must be at least 1."
+        raise ValueError(msg)
+    if (
+        profile.require_matching_damage_dice_to_continue
+        and profile.attacks_per_round <= 1
+    ):
+        msg = (
+            f"{label} Require Matching Damage Dice to Continue requires more "
+            "than 1 attack."
+        )
+        raise ValueError(msg)
+    if profile.inherit_triggering_critical and TriggerType(profile.trigger_type) in (
+        TriggerType.ALWAYS,
+        TriggerType.SOMETIMES,
+    ):
+        msg = f"{label} Inherit Triggering Critical requires a trigger source attack."
         raise ValueError(msg)
     if not isinstance(profile.affected_targets, int) or profile.affected_targets < 1:
         msg = f"{label} affected targets must be an integer of at least 1."
@@ -818,22 +843,70 @@ def _consume_resources(
         resource_consumed_totals[cost.resource_index] += cost.amount
 
 
+def _has_matching_pair(values: tuple[int, ...]) -> bool:
+    return len(values) != len(set(values))
+
+
+def _triggering_critical_for_execution(
+    *,
+    plan: ProfileExecutionPlan,
+    trigger_state: CombatTriggerState,
+    attack_index: int,
+) -> bool:
+    if not plan.inherit_triggering_critical or plan.trigger_source_index is None:
+        return False
+    queue = trigger_state.critical_queue_by_profile[plan.trigger_source_index]
+    if not queue:
+        return False
+    if plan.trigger_frequency is TriggerFrequency.PER_SUCCESS:
+        return queue[min(attack_index, len(queue) - 1)]
+    return any(queue)
+
+
 def _resolve_attack_roll_profile_execution(
     *,
     plan: ProfileExecutionPlan,
     target_armor_class: int,
     rng: RandomNumberGenerator,
-) -> tuple[int, bool, bool]:
-    attack = resolve_compiled_weapon_attack(
-        attack_bonus=plan.effective_attack_bonus or 0,
-        target_armor_class=target_armor_class,
-        damage_expression=plan.compiled_damage_expression,
-        attack_roll_mode=plan.attack_roll_mode,
-        rng=rng,
-        features=plan.attack_features,
-        damage_features=plan.damage_features,
+    force_critical_damage: bool = False,
+    capture_damage_dice: bool = False,
+) -> tuple[int, bool, bool, tuple[int, ...]]:
+    attack_roll = roll_attack_d20(
+        plan.attack_roll_mode, rng=rng, features=plan.attack_features
     )
-    return attack.damage_dealt, attack.hit, attack.critical_hit
+    natural_d20_roll = attack_roll.selected_d20_roll
+    critical_hit = natural_d20_roll == 20
+    hit = critical_hit or (
+        natural_d20_roll != 1
+        and natural_d20_roll + (plan.effective_attack_bonus or 0) >= target_armor_class
+    )
+    if hit:
+        critical_damage = critical_hit or force_critical_damage
+        if capture_damage_dice or critical_damage:
+            breakdown = roll_compiled_damage_breakdown(
+                plan.compiled_damage_expression,
+                critical=critical_damage,
+                rng=rng,
+                features=plan.damage_features,
+            )
+            return breakdown.total, hit, critical_hit, breakdown.included_die_faces
+        return (
+            roll_compiled_damage_expression(
+                plan.compiled_damage_expression, rng=rng, features=plan.damage_features
+            ),
+            hit,
+            critical_hit,
+            (),
+        )
+    if AttackFeature.POTENT_CANTRIP in plan.attack_features:
+        damage = (
+            roll_compiled_damage_expression(
+                plan.compiled_damage_expression, rng=rng, features=plan.damage_features
+            )
+            // 2
+        )
+        return damage, hit, critical_hit, ()
+    return 0, hit, critical_hit, ()
 
 
 def _resolve_saving_throw_profile_execution(
@@ -841,7 +914,9 @@ def _resolve_saving_throw_profile_execution(
     plan: ProfileExecutionPlan,
     enemy_save_bonus: int,
     rng: RandomNumberGenerator,
-) -> tuple[int, bool, bool]:
+    force_critical_damage: bool = False,
+    capture_damage_dice: bool = False,
+) -> tuple[int, bool, bool, tuple[int, ...]]:
     save = resolve_compiled_saving_throw_damage(
         save_dc=plan.effective_save_dc or 0,
         enemy_save_bonus=enemy_save_bonus,
@@ -851,15 +926,36 @@ def _resolve_saving_throw_profile_execution(
         features=plan.attack_features,
         damage_features=plan.damage_features,
     )
-    return save.damage_dealt, save.failed_save, save.successful_save
+    if (force_critical_damage or capture_damage_dice) and save.damage_dealt > 0:
+        breakdown = roll_compiled_damage_breakdown(
+            plan.compiled_damage_expression,
+            critical=force_critical_damage,
+            rng=rng,
+            features=plan.damage_features,
+        )
+        damage = breakdown.total if save.failed_save else breakdown.total // 2
+        return (
+            damage,
+            save.failed_save,
+            save.successful_save,
+            breakdown.included_die_faces,
+        )
+    return save.damage_dealt, save.failed_save, save.successful_save, ()
 
 
 def _resolve_automatic_damage_profile_execution(
-    *, plan: ProfileExecutionPlan, rng: RandomNumberGenerator
-) -> int:
-    return roll_compiled_damage_expression(
-        plan.compiled_damage_expression, rng=rng, features=plan.damage_features
+    *,
+    plan: ProfileExecutionPlan,
+    rng: RandomNumberGenerator,
+    force_critical_damage: bool = False,
+) -> tuple[int, tuple[int, ...]]:
+    breakdown = roll_compiled_damage_breakdown(
+        plan.compiled_damage_expression,
+        critical=force_critical_damage,
+        rng=rng,
+        features=plan.damage_features,
     )
+    return breakdown.total, breakdown.included_die_faces
 
 
 def _finalize_profile_results(
@@ -1072,6 +1168,7 @@ def run_damage_simulations(
             failed_resolutions_by_profile=[0 for _ in profiles],
             critical_resolutions_by_profile=[0 for _ in profiles],
             triggered_once_by_profile=[False for _ in profiles],
+            critical_queue_by_profile=[[] for _ in profiles],
         )
         for round_number in range(1, rounds + 1):
             for profile_index in range(len(profiles)):
@@ -1080,6 +1177,7 @@ def run_damage_simulations(
                 ] = 0
                 combat_trigger_state.failed_resolutions_by_profile[profile_index] = 0
                 combat_trigger_state.critical_resolutions_by_profile[profile_index] = 0
+                combat_trigger_state.critical_queue_by_profile[profile_index] = []
             for plan in execution_plan:
                 profile_index = plan.profile_index
                 profile = plan.profile
@@ -1099,8 +1197,9 @@ def run_damage_simulations(
                 if trigger_type is not TriggerType.ALWAYS:
                     profile_stats[profile_index].triggered_uses += execution_count
                 stop_profile_after_miss = False
+                stop_profile_after_no_match = False
                 for attack_index in range(execution_count):
-                    if stop_profile_after_miss:
+                    if stop_profile_after_miss or stop_profile_after_no_match:
                         skipped = execution_count - attack_index
                         overall.skipped_attacks += skipped
                         profile_stats[profile_index].skipped_attacks += skipped
@@ -1127,15 +1226,25 @@ def run_damage_simulations(
                     overall.attacks += 1
                     round_stats[round_number - 1].attacks += 1
                     profile_stats[profile_index].attacks += 1
+                    force_critical_damage = _triggering_critical_for_execution(
+                        plan=plan,
+                        trigger_state=combat_trigger_state,
+                        attack_index=attack_index,
+                    )
+                    chain_die_faces: tuple[int, ...] = ()
                     if plan.resolution_type is ResolutionType.ATTACK_ROLL:
                         for _target_index in range(profile.affected_targets):
-                            damage, hit, critical_hit = (
+                            damage, hit, critical_hit, included_die_faces = (
                                 _resolve_attack_roll_profile_execution(
                                     plan=plan,
                                     target_armor_class=target_armor_class,
                                     rng=random_number_generator,
+                                    force_critical_damage=force_critical_damage,
+                                    capture_damage_dice=plan.require_matching_damage_dice_to_continue,
                                 )
                             )
+                            if not chain_die_faces:
+                                chain_die_faces = included_die_faces
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
@@ -1160,6 +1269,10 @@ def run_damage_simulations(
                             combat_trigger_state.critical_resolutions_by_profile[
                                 profile_index
                             ] += int(critical_hit)
+                            if hit:
+                                combat_trigger_state.critical_queue_by_profile[
+                                    profile_index
+                                ].append(critical_hit)
                             overall.critical_hits += int(critical_hit)
                             round_stats[round_number - 1].critical_hits += int(
                                 critical_hit
@@ -1171,13 +1284,16 @@ def run_damage_simulations(
                                 stop_profile_after_miss = True
                     elif plan.resolution_type is ResolutionType.SAVING_THROW:
                         if profile.affected_targets == 1:
-                            damage, failed_save, successful_save = (
+                            damage, failed_save, successful_save, included_die_faces = (
                                 _resolve_saving_throw_profile_execution(
                                     plan=plan,
                                     enemy_save_bonus=enemy_save_bonus,
                                     rng=random_number_generator,
+                                    force_critical_damage=force_critical_damage,
+                                    capture_damage_dice=plan.require_matching_damage_dice_to_continue,
                                 )
                             )
+                            chain_die_faces = included_die_faces
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
@@ -1267,9 +1383,15 @@ def run_damage_simulations(
 
                     else:
                         for _target_index in range(profile.affected_targets):
-                            damage = _resolve_automatic_damage_profile_execution(
-                                plan=plan, rng=random_number_generator
+                            damage, included_die_faces = (
+                                _resolve_automatic_damage_profile_execution(
+                                    plan=plan,
+                                    rng=random_number_generator,
+                                    force_critical_damage=force_critical_damage,
+                                )
                             )
+                            if not chain_die_faces:
+                                chain_die_faces = included_die_faces
                             simulation_damage += damage
                             round_stats[round_number - 1].damage_total += damage
                             profile_stats[profile_index].damage_total += damage
@@ -1290,6 +1412,15 @@ def run_damage_simulations(
                             combat_trigger_state.successful_resolutions_by_profile[
                                 profile_index
                             ] += 1
+                            combat_trigger_state.critical_queue_by_profile[
+                                profile_index
+                            ].append(False)
+                    if (
+                        plan.require_matching_damage_dice_to_continue
+                        and attack_index < execution_count - 1
+                        and not _has_matching_pair(chain_die_faces)
+                    ):
+                        stop_profile_after_no_match = True
 
         if combat_had_resource_block:
             resource_limited_combats += 1

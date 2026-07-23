@@ -60,6 +60,10 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "resource_amount": "resource-amount",
         "use_build_attack_bonus": "use-build-attack-bonus",
         "use_build_save_dc": "use-build-save-dc",
+        "inherit_triggering_critical": "inherit-triggering-critical",
+        "require_matching_damage_dice_to_continue": (
+            "require-matching-damage-dice-to-continue"
+        ),
     }
     return f"{prefix}-{suffixes[field]}"
 
