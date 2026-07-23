@@ -184,53 +184,51 @@ def _new_attack_id(build_prefix: str, position: int = 0) -> str:
     return f"attack-{uuid4().hex}"
 
 
-def _legacy_profile_prefixes(build_prefix: str) -> list[str]:
-    count = (
-        int(
-            getattr(__import__("streamlit"), "session_state", {}).get(
-                f"{build_prefix}-additional-attack-count", 0
-            )
-        )
-        if False
-        else 0
-    )
-    return [profile_prefix(build_prefix, index) for index in range(count + 1)]
+ATTACK_WIDGET_STATE_FIELDS = (
+    "name",
+    "resolution_type",
+    "attack_bonus",
+    "save_dc",
+    "successful_save_damage",
+    "attack_roll_mode",
+    "damage_formula",
+    "attacks_per_round",
+    "affected_targets",
+    "active_rounds",
+    "trigger_type",
+    "trigger_source_attack_id",
+    "trigger_frequency",
+    "trigger_chance_percent",
+    "resource_enabled",
+    "resource_id",
+    "resource_amount",
+)
 
 
-def _copy_attack_widget_state(state, source_prefix: str, dest_prefix: str) -> None:
-    for field in (
-        "name",
-        "resolution_type",
-        "attack_bonus",
-        "save_dc",
-        "successful_save_damage",
-        "attack_roll_mode",
-        "damage_formula",
-        "attacks_per_round",
-        "affected_targets",
-        "active_rounds",
-        "trigger_type",
-        "trigger_source_attack_id",
-        "trigger_frequency",
-        "trigger_chance_percent",
-        "resource_enabled",
-        "resource_id",
-        "resource_amount",
-    ):
+def _copied_attack_widget_state(
+    state, source_prefix: str, dest_prefix: str
+) -> dict[str, object]:
+    copied: dict[str, object] = {}
+    for field in ATTACK_WIDGET_STATE_FIELDS:
         source_key = profile_widget_key(source_prefix, field)
         if source_key in state:
-            state[profile_widget_key(dest_prefix, field)] = state[source_key]
+            copied[profile_widget_key(dest_prefix, field)] = state[source_key]
     for feature in FEATURE_ORDER:
         source_key = feature_widget_key(source_prefix, feature)
         if source_key in state:
-            state[feature_widget_key(dest_prefix, feature)] = state[source_key]
+            copied[feature_widget_key(dest_prefix, feature)] = state[source_key]
     expander_key = trigger_expanded_state_key(source_prefix)
     if expander_key in state:
-        state[trigger_expanded_state_key(dest_prefix)] = state[expander_key]
+        copied[trigger_expanded_state_key(dest_prefix)] = state[expander_key]
     for suffix in ("features-expanded", "resource-expanded"):
         source_key = f"{source_prefix}-{suffix}"
         if source_key in state:
-            state[f"{dest_prefix}-{suffix}"] = state[source_key]
+            copied[f"{dest_prefix}-{suffix}"] = state[source_key]
+    return copied
+
+
+def _copy_attack_widget_state(state, source_prefix: str, dest_prefix: str) -> None:
+    state.update(_copied_attack_widget_state(state, source_prefix, dest_prefix))
 
 
 def _looks_like_widget_prefix(build_prefix: str, attack_id: str) -> bool:
@@ -314,19 +312,33 @@ def _attack_confirmation_id(build_prefix: str, attack_id: str) -> str:
     return f"{build_prefix}:{attack_id}"
 
 
-def _duplicate_attack_state(state, source_id: str, new_id: str) -> None:
-    source_prefix = f"{source_id}-"
-    for key, value in list(state.items()):
-        key_text = str(key)
-        if key_text.startswith(source_prefix):
-            state[f"{new_id}-" + key_text[len(source_prefix) :]] = value
-    state[profile_widget_key(new_id, "name")] = (
-        str(state.get(profile_widget_key(source_id, "name"), "Attack")).strip()
+def _duplicate_attack_state(
+    state,
+    source_widget_prefix: str,
+    dest_widget_prefix: str,
+    *,
+    source_attack_id: str,
+    dest_attack_id: str,
+) -> dict[str, object]:
+    copied = _copied_attack_widget_state(
+        state, source_widget_prefix, dest_widget_prefix
+    )
+    copied[profile_widget_key(dest_widget_prefix, "name")] = (
+        str(
+            state.get(profile_widget_key(source_widget_prefix, "name"), "Attack")
+        ).strip()
         + " copy"
     )
-    if state.get(profile_widget_key(new_id, "trigger_source_attack_id")) == source_id:
-        state[profile_widget_key(new_id, "trigger_type")] = "Always"
-        state[profile_widget_key(new_id, "trigger_source_attack_id")] = None
+    trigger_source_key = profile_widget_key(
+        dest_widget_prefix, "trigger_source_attack_id"
+    )
+    if copied.get(trigger_source_key) in {source_attack_id, dest_attack_id}:
+        copied[profile_widget_key(dest_widget_prefix, "trigger_type")] = "Always"
+        copied[trigger_source_key] = None
+        copied[profile_widget_key(dest_widget_prefix, "trigger_frequency")] = (
+            "Every successful resolution"
+        )
+    return copied
 
 
 def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
@@ -566,7 +578,7 @@ def validate_build_fields(
         )
         errors.extend(_validate_profile_fields(profile, prefix=widget_prefix))
     profile_ids = [profile.attack_id for profile in profiles]
-    if False and any(not attack_id.strip() for attack_id in profile_ids):
+    if any(not attack_id.strip() for attack_id in profile_ids):
         _add_error(
             errors,
             f"{prefix}-attack-ids",
@@ -1072,6 +1084,34 @@ export default function(component) {
 }
 """
 
+ATTACK_TOOLBAR_CSS = """
+<style>
+[class*="st-key-first-attack-"][class$="-toolbar"] [data-testid="stHorizontalBlock"],
+[class*="st-key-second-attack-"][class$="-toolbar"] [data-testid="stHorizontalBlock"] {
+    min-height: 38px;
+    align-items: center;
+    gap: 0.125rem;
+}
+
+[class*="st-key-first-attack-"][class$="-toolbar"] [data-testid="stElementContainer"],
+[class*="st-key-second-attack-"][class$="-toolbar"] [data-testid="stElementContainer"] {
+    width: max-content;
+}
+
+[class*="st-key-first-attack-"][class$="-toolbar"] button[kind="tertiary"],
+[class*="st-key-second-attack-"][class$="-toolbar"] button[kind="tertiary"] {
+    min-height: 36px;
+    min-width: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+/* Keep native Streamlit focus-visible outlines intact. */
+</style>
+"""
+
 CONFIGURATION_TOOLBAR_CSS = """
 <style>
 .st-key-configuration-toolbar {
@@ -1243,6 +1283,7 @@ def configure_page() -> None:
 
     st.set_page_config(page_title=APP_TITLE, page_icon="🎲", layout="wide")
     st.markdown(PAGE_WIDTH_CSS, unsafe_allow_html=True)
+    st.markdown(ATTACK_TOOLBAR_CSS, unsafe_allow_html=True)
 
 
 @dataclass(frozen=True)
@@ -3156,34 +3197,34 @@ def _build_inputs(
                         else f"Duplicate {current_name}."
                     ),
                 ):
-                    new_id = _new_attack_id(prefix, profile_index)
                     state = getattr(st, "session_state", {})
+                    new_id = _new_attack_id(prefix, profile_index)
                     new_widget_prefix = attack_widget_prefix(prefix, new_id)
-                    _duplicate_attack_state(
-                        state,
-                        _state_widget_prefix(prefix, attack_id),
-                        new_widget_prefix,
-                    )
-                    if (
-                        state.get(
-                            profile_widget_key(
-                                new_widget_prefix, "trigger_source_attack_id"
-                            )
+                    written_keys: list[str] = []
+                    try:
+                        copied_state = _duplicate_attack_state(
+                            state,
+                            _state_widget_prefix(prefix, attack_id),
+                            new_widget_prefix,
+                            source_attack_id=attack_id,
+                            dest_attack_id=new_id,
                         )
-                        == attack_id
-                    ):
-                        state[profile_widget_key(new_widget_prefix, "trigger_type")] = (
-                            "Always"
+                        for key, value in copied_state.items():
+                            state[key] = value
+                            written_keys.append(key)
+                        state[build_attack_ids_key(prefix)] = (
+                            ids[: profile_index + 1]
+                            + [new_id]
+                            + ids[profile_index + 1 :]
                         )
-                        state[
-                            profile_widget_key(
-                                new_widget_prefix, "trigger_source_attack_id"
-                            )
-                        ] = None
-                    getattr(st, "session_state", {})[build_attack_ids_key(prefix)] = (
-                        ids[: profile_index + 1] + [new_id] + ids[profile_index + 1 :]
-                    )
-                    getattr(st, "rerun", lambda: None)()
+                    except Exception as error:  # pragma: no cover - defensive UI guard
+                        for key in written_keys:
+                            state.pop(key, None)
+                        getattr(st, "error", lambda *args, **kwargs: None)(
+                            f"Could not duplicate {current_name}: {error}"
+                        )
+                    else:
+                        getattr(st, "rerun", lambda: None)()
                 if toolbar_button(
                     ":material/arrow_upward:",
                     key=f"{prefix}-{attack_id}-up",

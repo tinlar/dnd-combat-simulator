@@ -257,7 +257,11 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
     import sys
     from types import SimpleNamespace
 
-    from dnd_combat_simulator.app import PAGE_WIDTH_CSS, configure_page
+    from dnd_combat_simulator.app import (
+        ATTACK_TOOLBAR_CSS,
+        PAGE_WIDTH_CSS,
+        configure_page,
+    )
 
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -283,6 +287,10 @@ def test_configure_page_uses_wide_layout_and_injects_width_css(monkeypatch) -> N
         (
             "markdown",
             {"body": PAGE_WIDTH_CSS, "unsafe_allow_html": True},
+        ),
+        (
+            "markdown",
+            {"body": ATTACK_TOOLBAR_CSS, "unsafe_allow_html": True},
         ),
     ]
 
@@ -1020,7 +1028,8 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
     state = {
         "first-build-name": "Build A",
         "first-additional-attack-count": 0,
-        app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
+        app.build_attack_ids_key("first"): ["attack-primary"],
+        app.profile_widget_key("first-attack-primary", "damage_formula"): "1d6+",
     }
 
     def component(**kwargs):
@@ -1099,7 +1108,8 @@ def test_run_button_not_execute_simulation_while_invalid(monkeypatch) -> None:
     state = {
         "first-build-name": "Build A",
         "first-additional-attack-count": 0,
-        app.profile_widget_key("first-primary", "damage_formula"): "1d6+",
+        app.build_attack_ids_key("first"): ["attack-primary"],
+        app.profile_widget_key("first-attack-primary", "damage_formula"): "1d6+",
     }
 
     def component(**kwargs):
@@ -1477,13 +1487,15 @@ def test_validate_build_fields_marks_invalid_damage_field_and_message() -> None:
         5,
         "1d6+",
         1,
-        attack_profiles=(AttackProfile("Primary", 5, "1d6+", 1),),
+        attack_profiles=(
+            AttackProfile("Primary", 5, "1d6+", 1, attack_id="attack-primary"),
+        ),
     )
 
     errors = validate_build_fields(build, prefix="first")
 
     assert errors == [errors[0]]
-    assert errors[0].key == profile_widget_key("first-primary", "damage_formula")
+    assert errors[0].key == profile_widget_key("first-attack-primary", "damage_formula")
     assert errors[0].message == "Damage expression cannot end with an operator."
 
 
@@ -1505,18 +1517,22 @@ def test_correcting_invalid_damage_clears_field_error_and_valid_build_runs() -> 
         5,
         "1d6+",
         1,
-        attack_profiles=(AttackProfile("Primary", 5, "1d6+", 1),),
+        attack_profiles=(
+            AttackProfile("Primary", 5, "1d6+", 1, attack_id="attack-primary"),
+        ),
     )
     valid = BuildConfig(
         "Build A",
         5,
         "1d6+1",
         1,
-        attack_profiles=(AttackProfile("Primary", 5, "1d6+1", 1),),
+        attack_profiles=(
+            AttackProfile("Primary", 5, "1d6+1", 1, attack_id="attack-primary"),
+        ),
     )
 
     assert any(
-        error.key == profile_widget_key("first-primary", "damage_formula")
+        error.key == profile_widget_key("first-attack-primary", "damage_formula")
         for error in validate_build_fields(invalid, prefix="first")
     )
     assert validate_build_fields(valid, prefix="first") == []
@@ -3106,3 +3122,202 @@ def test_attack_toolbar_delete_opens_existing_confirmation(monkeypatch) -> None:
 
     assert state[app.ATTACK_DELETE_CONFIRMATION_KEY] == "first:attack-a"
     assert state[app.build_attack_ids_key("first")] == ["attack-a", "attack-b"]
+
+
+def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.combat import AttackFeature
+
+    source = app.attack_widget_prefix("first", "attack-source")
+    dest = app.attack_widget_prefix("first", "attack-dest")
+    state = {}
+    expected_dest_keys = set()
+    for field in app.ATTACK_WIDGET_STATE_FIELDS:
+        source_key = app.profile_widget_key(source, field)
+        state[source_key] = f"value-{field}"
+        expected_dest_keys.add(app.profile_widget_key(dest, field))
+    for feature in AttackFeature:
+        source_key = app.feature_widget_key(source, feature)
+        state[source_key] = True
+        expected_dest_keys.add(app.feature_widget_key(dest, feature))
+    for suffix in (
+        "duplicate",
+        "up",
+        "down",
+        "delete",
+        "toolbar",
+        "confirm-delete",
+        "cancel-delete",
+    ):
+        state[f"{source}-{suffix}"] = True
+    state[app.ATTACK_DELETE_CONFIRMATION_KEY] = "first:attack-source"
+    state[app.SIMULATION_RUNNING_KEY] = True
+    state[app.GENERATED_SHARE_URL_KEY] = "https://example.invalid/share"
+    state[app.trigger_expanded_state_key(source)] = True
+    state[f"{source}-features-expanded"] = True
+    state[f"{source}-resource-expanded"] = True
+    expected_dest_keys.update(
+        {
+            app.trigger_expanded_state_key(dest),
+            f"{dest}-features-expanded",
+            f"{dest}-resource-expanded",
+        }
+    )
+
+    app._copy_attack_widget_state(state, source, dest)
+
+    assert expected_dest_keys <= set(state)
+    assert not any(
+        transient in state
+        for transient in (
+            f"{dest}-duplicate",
+            f"{dest}-up",
+            f"{dest}-down",
+            f"{dest}-delete",
+            f"{dest}-toolbar",
+            f"{dest}-confirm-delete",
+            f"{dest}-cancel-delete",
+        )
+    )
+
+
+def test_duplicate_state_resets_self_trigger_and_copies_advanced_fields() -> None:
+    from dnd_combat_simulator import app
+    from dnd_combat_simulator.combat import AttackFeature
+
+    source_id = "attack-source"
+    dest_id = "attack-dest"
+    source = app.attack_widget_prefix("first", source_id)
+    dest = app.attack_widget_prefix("first", dest_id)
+    state = {
+        app.profile_widget_key(source, "name"): "Smite",
+        app.profile_widget_key(source, "resolution_type"): "Saving Throw",
+        app.profile_widget_key(source, "save_dc"): 17,
+        app.profile_widget_key(source, "successful_save_damage"): "Half damage",
+        app.profile_widget_key(source, "damage_formula"): "4d8+3",
+        app.profile_widget_key(source, "attacks_per_round"): 2,
+        app.profile_widget_key(source, "active_rounds"): "1, 3-4",
+        app.profile_widget_key(source, "trigger_type"): "Another attack succeeds",
+        app.profile_widget_key(source, "trigger_source_attack_id"): source_id,
+        app.profile_widget_key(source, "trigger_frequency"): "Once per combat",
+        app.profile_widget_key(source, "trigger_chance_percent"): "75",
+        app.profile_widget_key(source, "resource_enabled"): True,
+        app.profile_widget_key(source, "resource_id"): "resource-1",
+        app.profile_widget_key(source, "resource_amount"): 2,
+        app.feature_widget_key(source, AttackFeature.GREAT_WEAPON_FIGHTING): True,
+        app.feature_widget_key(source, AttackFeature.TAVERN_BRAWLER): True,
+        app.trigger_expanded_state_key(source): True,
+        f"{source}-resource-expanded": True,
+        f"{source}-duplicate": True,
+    }
+
+    copied = app._duplicate_attack_state(
+        state,
+        source,
+        dest,
+        source_attack_id=source_id,
+        dest_attack_id=dest_id,
+    )
+
+    assert copied[app.profile_widget_key(dest, "name")] == "Smite copy"
+    assert copied[app.profile_widget_key(dest, "resolution_type")] == "Saving Throw"
+    assert copied[app.profile_widget_key(dest, "resource_id")] == "resource-1"
+    assert (
+        copied[app.feature_widget_key(dest, AttackFeature.GREAT_WEAPON_FIGHTING)]
+        is True
+    )
+    assert copied[app.feature_widget_key(dest, AttackFeature.TAVERN_BRAWLER)] is True
+    assert copied[app.trigger_expanded_state_key(dest)] is True
+    assert copied[f"{dest}-resource-expanded"] is True
+    assert copied[app.profile_widget_key(dest, "trigger_type")] == "Always"
+    assert copied[app.profile_widget_key(dest, "trigger_source_attack_id")] is None
+    assert (
+        copied[app.profile_widget_key(dest, "trigger_frequency")]
+        == "Every successful resolution"
+    )
+    assert f"{dest}-duplicate" not in copied
+
+
+def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
+    from dnd_combat_simulator.app import validate_build_fields
+    from dnd_combat_simulator.simulation import AttackProfile, BuildConfig
+
+    build = BuildConfig(
+        name="Build B",
+        attack_bonus=5,
+        damage_dice="1d8",
+        attacks_per_round=1,
+        attack_profiles=(
+            AttackProfile(
+                name="Broken",
+                attack_bonus=5,
+                damage_dice="1d8",
+                attacks_per_round=1,
+                attack_id="",
+            ),
+        ),
+    )
+
+    errors = validate_build_fields(build, prefix="second")
+
+    assert any(error.key == "second-attack-ids" for error in errors)
+    assert any(
+        "Build B contains an empty attack ID" in error.message for error in errors
+    )
+
+
+def test_attack_toolbar_css_is_scoped_and_compact() -> None:
+    from dnd_combat_simulator import app
+
+    css = app.ATTACK_TOOLBAR_CSS
+
+    assert '[class*="st-key-first-attack-"][class$="-toolbar"]' in css
+    assert 'button[kind="tertiary"]' in css
+    assert "min-height: 36px" in css
+    assert "padding-top: 0" in css
+    assert "padding-bottom: 0" in css
+    assert "focus-visible" in css
+    assert "Confirm Delete" not in css
+    assert '\nbutton[kind="tertiary"]' not in css
+    assert "configuration-toolbar" not in css
+
+
+def test_streamlit_duplicate_button_copies_persistent_state_without_exceptions() -> (
+    None
+):
+    from streamlit.testing.v1 import AppTest
+
+    from dnd_combat_simulator import app
+
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10)
+    at.run()
+    assert not at.exception
+    source_id = at.session_state[app.build_attack_ids_key("first")][0]
+    source_prefix = app.attack_widget_prefix("first", source_id)
+    at.session_state[app.profile_widget_key(source_prefix, "name")] = "Blade"
+    at.session_state[app.profile_widget_key(source_prefix, "damage_formula")] = "2d6+4"
+    at.session_state[app.profile_widget_key(source_prefix, "attacks_per_round")] = 3
+    at.run()
+    duplicate_button = next(
+        button for button in at.button if button.key == f"{source_prefix}-duplicate"
+    )
+    duplicate_button.click()
+    at.run()
+
+    assert not at.exception
+    ids = at.session_state[app.build_attack_ids_key("first")]
+    assert len(ids) == 2
+    assert ids[0] == source_id
+    assert ids[1] != source_id
+    dest_prefix = app.attack_widget_prefix("first", ids[1])
+    assert at.session_state[app.profile_widget_key(dest_prefix, "name")] == "Blade copy"
+    assert (
+        at.session_state[app.profile_widget_key(dest_prefix, "damage_formula")]
+        == "2d6+4"
+    )
+    assert (
+        at.session_state[app.profile_widget_key(dest_prefix, "attacks_per_round")] == 3
+    )
+    new_session_state = at.session_state._state._new_session_state
+    assert f"{dest_prefix}-duplicate" not in new_session_state
+    assert f"{dest_prefix}-toolbar" not in new_session_state
