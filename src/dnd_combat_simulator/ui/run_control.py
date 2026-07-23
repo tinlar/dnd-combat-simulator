@@ -178,10 +178,17 @@ def validate_canonical_request(
     """Validate the complete immutable request before it reaches the cache."""
     issues: list[ValidationIssue] = []
     issues.extend(validate_scenario_fields(request.scenario))
+    available_resource_ids = frozenset(
+        resource.resource_id
+        for resource in request.scenario.managed_resources
+        if resource.resource_id
+    )
     issues.extend(
-        issue
-        for issue in validate_build_fields(request.first_build, prefix="first")
-        if "empty attack ID" not in issue.message
+        validate_build_fields(
+            request.first_build,
+            prefix="first",
+            available_resource_ids=available_resource_ids,
+        )
     )
     if request.comparison_enabled:
         if request.second_build is None:
@@ -195,11 +202,11 @@ def validate_canonical_request(
             )
         else:
             issues.extend(
-                issue
-                for issue in validate_build_fields(
-                    request.second_build, prefix="second"
+                validate_build_fields(
+                    request.second_build,
+                    prefix="second",
+                    available_resource_ids=available_resource_ids,
                 )
-                if "empty attack ID" not in issue.message
             )
     elif request.second_build is not None:
         issues.append(
@@ -264,16 +271,21 @@ def _mark_simulation_pending() -> None:
     state[SIMULATION_PENDING_KEY] = True
 
 
-def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResult:
+def _run_single_build_with_feedback(
+    inputs: SingleBuildInputs,
+    *,
+    execute=run_single_build_from_inputs,
+    clock=time.perf_counter,
+) -> SimulationResult:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     state[SIMULATION_RUNNING_KEY] = True
-    start = time.perf_counter()
+    start = clock()
     logger.info("Starting single-build simulation")
     try:
         with st.spinner("Calculating..."):
-            result = run_single_build_from_inputs(inputs)
+            result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
@@ -282,7 +294,7 @@ def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResu
         logger.exception("Unexpected single-build simulation failure")
         raise
     else:
-        elapsed = time.perf_counter() - start
+        elapsed = clock() - start
         logger.info("Completed single-build simulation in %.3f seconds", elapsed)
         state[SIMULATION_DURATION_MESSAGE_KEY] = (
             f"Simulation complete in {elapsed:.1f} seconds."
@@ -293,16 +305,21 @@ def _run_single_build_with_feedback(inputs: SingleBuildInputs) -> SimulationResu
         state[SIMULATION_PENDING_KEY] = False
 
 
-def _run_comparison_with_feedback(inputs: ComparisonInputs) -> BuildComparisonResult:
+def _run_comparison_with_feedback(
+    inputs: ComparisonInputs,
+    *,
+    execute=run_comparison_from_inputs,
+    clock=time.perf_counter,
+) -> BuildComparisonResult:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     state[SIMULATION_RUNNING_KEY] = True
-    start = time.perf_counter()
+    start = clock()
     logger.info("Starting comparison simulation")
     try:
         with st.spinner("Calculating..."):
-            result = run_comparison_from_inputs(inputs)
+            result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
@@ -311,7 +328,7 @@ def _run_comparison_with_feedback(inputs: ComparisonInputs) -> BuildComparisonRe
         logger.exception("Unexpected comparison simulation failure")
         raise
     else:
-        elapsed = time.perf_counter() - start
+        elapsed = clock() - start
         logger.info("Completed comparison simulation in %.3f seconds", elapsed)
         state[SIMULATION_DURATION_MESSAGE_KEY] = (
             f"Simulation complete in {elapsed:.1f} seconds."

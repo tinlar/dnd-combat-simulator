@@ -318,11 +318,15 @@ def _generate_default_seed() -> int:
     return randbelow(2**31 - 1) + 1
 
 
-def ensure_session_random_seed(session_state) -> int:
+def ensure_session_random_seed(
+    session_state,
+    *,
+    seed_factory=_generate_default_seed,
+) -> int:
     """Generate the scenario seed once and preserve it for normal reruns."""
     seed_key = SCENARIO_WIDGET_KEYS["seed"]
     if seed_key not in session_state:
-        session_state[seed_key] = _generate_default_seed()
+        session_state[seed_key] = seed_factory()
     return int(session_state[seed_key])
 
 

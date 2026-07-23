@@ -147,7 +147,10 @@ def load_configuration_from_share_store(
     return share_store.load(share_id)
 
 
-def load_shared_configuration_from_query() -> None:
+def load_shared_configuration_from_query(
+    *,
+    store_factory=get_streamlit_share_store,
+) -> None:
     """Apply a shared configuration query token once before widgets are created."""
     import streamlit as st
 
@@ -161,7 +164,7 @@ def load_shared_configuration_from_query() -> None:
     if kind == "share":
         if getattr(st, "session_state", {}).get(LOADED_SHARE_ID_KEY) == value:
             return
-        share_store = get_streamlit_share_store()
+        share_store = store_factory()
         if share_store is None:
             st.error(
                 "Shared configurations are temporarily unavailable. Try again later."

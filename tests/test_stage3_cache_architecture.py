@@ -138,3 +138,44 @@ def test_stage3_architecture_source_rules() -> None:
     assert "globals()" not in app_source
     assert "_sync_ui_module_globals" not in app_source
     assert '__all__ = ("configure_page", "main")' in app_source
+
+
+def test_page_has_no_compatibility_facade_or_runtime_module_mutation() -> None:
+    import dnd_combat_simulator.app as app
+    import dnd_combat_simulator.ui.page as page
+
+    path = Path("src/dnd_combat_simulator/ui/page.py")
+    source = path.read_text()
+    tree = ast.parse(source)
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            child.parent = parent
+
+    assert app.__all__ == ("configure_page", "main")
+    assert page.__all__ == ("main",)
+    forbidden_text = (
+        "_COMPAT_EXPORTS",
+        "importlib.import_module",
+        "Legacy test compatibility",
+        "_page_mount_unified_share_component",
+    )
+    for text in forbidden_text:
+        assert text not in source
+
+    for node in ast.walk(tree):
+        assert not (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "__getattr__"
+            and isinstance(getattr(node, "parent", None), ast.Module)
+        )
+        assert not (
+            isinstance(node, ast.ImportFrom) and node.module == "importlib"
+        )
+        assert not (
+            isinstance(node, ast.Import) 
+            and any(alias.name == "importlib" for alias in node.names)
+        )
+        assert not (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Attribute) for target in node.targets)
+        )
