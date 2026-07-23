@@ -198,3 +198,140 @@ def test_build_config_carries_math_defaults_without_changing_legacy_profiles() -
     assert custom != positional
     assert hash(custom) != hash(positional)
     assert custom.resolved_attack_profiles()[0].attack_bonus == 5
+
+
+class _FakeColumn:
+    def __init__(self, surface: _FakeStreamlit) -> None:
+        self.surface = surface
+
+    def number_input(self, **kwargs: Any) -> int:
+        self.surface.number_inputs.append(kwargs)
+        key = kwargs["key"]
+        return self.surface.session_state.get(key, kwargs.get("value"))
+
+    def metric(self, label: str, value: str) -> None:
+        self.surface.metrics.append((label, value))
+
+
+class _FakeContainer:
+    def __enter__(self) -> _FakeContainer:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+class _FakeStreamlit:
+    def __init__(self, session_state: dict[str, Any] | None = None) -> None:
+        self.session_state = {} if session_state is None else session_state
+        self.number_inputs: list[dict[str, Any]] = []
+        self.metrics: list[tuple[str, str]] = []
+        self.markdowns: list[str] = []
+        self.captions: list[str] = []
+
+    def columns(self, count: int) -> list[_FakeColumn]:
+        return [_FakeColumn(self) for _ in range(count)]
+
+    def container(self, **_kwargs: Any) -> _FakeContainer:
+        return _FakeContainer()
+
+    def markdown(self, body: str) -> None:
+        self.markdowns.append(body)
+
+    def caption(self, body: str) -> None:
+        self.captions.append(body)
+
+
+def _render_build_math_with_fake(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict[str, Any] | None = None,
+    *,
+    prefix: str = "first",
+) -> tuple[BuildMathDefaults, _FakeStreamlit]:
+    import dnd_combat_simulator.ui.inputs as inputs
+
+    fake = _FakeStreamlit(state)
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+
+    return inputs._build_math_inputs(prefix), fake
+
+
+def test_build_math_inputs_render_default_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults, fake = _render_build_math_with_fake(monkeypatch)
+
+    assert defaults == BuildMathDefaults()
+    assert fake.markdowns == ["##### Build Setup"]
+    assert [(entry["label"], entry["value"]) for entry in fake.number_inputs] == [
+        ("Ability modifier", 3),
+        ("Proficiency bonus", 2),
+        ("Other attack bonus", 0),
+        ("Other damage bonus", 0),
+        ("Other Save DC bonus", 0),
+    ]
+    assert fake.metrics == [
+        ("Attack bonus", "+5"),
+        ("Damage modifier", "+3"),
+        ("Save DC", "13"),
+    ]
+    assert all(entry["step"] == 1 for entry in fake.number_inputs)
+    assert all(entry["format"] == "%d" for entry in fake.number_inputs)
+
+
+def test_build_math_inputs_use_existing_session_values_without_competing_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dnd_combat_simulator.ui.widget_keys import build_math_state_key
+
+    state = {
+        build_math_state_key("first", "ability_modifier"): -1,
+        build_math_state_key("first", "proficiency_bonus"): 0,
+        build_math_state_key("first", "attack_bonus_adjustment"): 999,
+        build_math_state_key("first", "damage_bonus_adjustment"): -5,
+        build_math_state_key("first", "save_dc_adjustment"): 10,
+    }
+
+    defaults, fake = _render_build_math_with_fake(monkeypatch, state)
+
+    assert defaults == BuildMathDefaults(
+        ability_modifier=-1,
+        proficiency_bonus=0,
+        attack_bonus_adjustment=999,
+        damage_bonus_adjustment=-5,
+        save_dc_adjustment=10,
+    )
+    assert all("value" not in entry for entry in fake.number_inputs)
+    assert fake.metrics == [
+        ("Attack bonus", "+998"),
+        ("Damage modifier", "-6"),
+        ("Save DC", "17"),
+    ]
+
+
+def test_build_math_inputs_use_stable_keys_and_isolate_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dnd_combat_simulator.ui.widget_keys import build_math_state_key
+
+    state = {
+        build_math_state_key("first", "ability_modifier"): 5,
+        build_math_state_key("second", "ability_modifier"): -4,
+    }
+
+    first, first_fake = _render_build_math_with_fake(monkeypatch, state, prefix="first")
+    second, second_fake = _render_build_math_with_fake(
+        monkeypatch, state, prefix="second"
+    )
+
+    first_keys = {entry["key"] for entry in first_fake.number_inputs}
+    second_keys = {entry["key"] for entry in second_fake.number_inputs}
+    assert first.ability_modifier == 5
+    assert second.ability_modifier == -4
+    assert first_keys.isdisjoint(second_keys)
+    assert first_keys == {
+        build_math_state_key("first", field) for field in _FIELD_NAMES
+    }
+    assert second_keys == {
+        build_math_state_key("second", field) for field in _FIELD_NAMES
+    }

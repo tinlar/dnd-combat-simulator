@@ -2,6 +2,7 @@ from random import Random
 
 import pytest
 
+from dnd_combat_simulator.build_math import BuildMathDefaults
 from dnd_combat_simulator.combat import (
     AttackFeature,
     AttackRollMode,
@@ -2654,3 +2655,72 @@ def test_build_math_defaults_do_not_affect_simulation_results_or_comparison() ->
     )
     assert comparison.first_build.math_defaults == custom_defaults
     assert comparison.second_build.math_defaults != comparison.first_build.math_defaults
+
+
+def test_build_math_defaults_do_not_change_simulation_behavior_or_rng() -> None:
+    profile = AttackProfile(
+        name="Resource trigger",
+        attack_bonus=7,
+        damage_dice="1d6+2",
+        attacks_per_round=1,
+        attack_id="resource-trigger",
+        trigger_type=TriggerType.SOMETIMES,
+        trigger_frequency=TriggerFrequency.ONCE_PER_ROUND,
+        trigger_chance_percent=50,
+        resource_costs=(ResourceCost("focus", 1),),
+    )
+    resources = (ManagedResource("focus", "Focus", 2),)
+    scenario = ScenarioConfig(
+        target_armor_class=15,
+        enemy_save_bonus=2,
+        rounds=3,
+        simulations=25,
+        managed_resources=resources,
+    )
+    base = BuildConfig("Manual", 7, "1d6+2", 1, attack_profiles=(profile,))
+    edited = BuildConfig(
+        "Manual",
+        7,
+        "1d6+2",
+        1,
+        attack_profiles=(profile,),
+        math_defaults=BuildMathDefaults(5, 4, 1, 2, 1),
+    )
+
+    assert base.math_defaults != edited.math_defaults
+    assert base.resolved_attack_profiles() == edited.resolved_attack_profiles()
+    assert base.resolved_attack_profiles()[0].attack_bonus == 7
+
+    assert simulate_build(base, scenario, seed=1234) == simulate_build(
+        edited, scenario, seed=1234
+    )
+
+    rng_a = Random(1234)
+    rng_b = Random(1234)
+    result_a = run_damage_simulations(
+        attack_bonus=base.attack_bonus,
+        target_armor_class=scenario.target_armor_class,
+        enemy_save_bonus=scenario.enemy_save_bonus,
+        damage_dice=base.damage_dice,
+        rounds=scenario.rounds,
+        simulations=scenario.simulations,
+        attacks_per_round=base.attacks_per_round,
+        attack_profiles=base.resolved_attack_profiles(),
+        rng=rng_a,
+        managed_resources=scenario.managed_resources,
+    )
+    result_b = run_damage_simulations(
+        attack_bonus=edited.attack_bonus,
+        target_armor_class=scenario.target_armor_class,
+        enemy_save_bonus=scenario.enemy_save_bonus,
+        damage_dice=edited.damage_dice,
+        rounds=scenario.rounds,
+        simulations=scenario.simulations,
+        attacks_per_round=edited.attacks_per_round,
+        attack_profiles=edited.resolved_attack_profiles(),
+        rng=rng_b,
+        managed_resources=scenario.managed_resources,
+    )
+    assert result_a == result_b
+    assert rng_a.getstate() == rng_b.getstate()
+    assert result_a.resource_usage_results == result_b.resource_usage_results
