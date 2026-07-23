@@ -33,9 +33,6 @@ from dnd_combat_simulator.ui.constants import (
     FEATURE_HELP,
     FEATURE_LABELS,
     FEATURE_ORDER,
-    MANAGED_RESOURCE_COUNT_KEY,
-    MANAGED_RESOURCE_EXPANDED_KEY,
-    MANAGED_RESOURCE_IDS_KEY,
     MAX_ATTACKS_PER_BUILD,
     NO_ELIGIBLE_TRIGGER_SOURCE_MESSAGE,
     RESOURCE_DELETE_CONFIRMATION_KEY,
@@ -70,6 +67,9 @@ from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
     attack_widget_prefix,
     build_attack_ids_key,
+    build_managed_resource_count_key,
+    build_managed_resource_expanded_key,
+    build_managed_resource_ids_key,
     build_math_state_key,
     feature_widget_key,
     managed_resource_widget_key,
@@ -114,7 +114,7 @@ def _trigger_summary_from_state(build_prefix: str, attack_id: str) -> str:
 def _resource_summary_from_state(build_prefix: str, attack_id: str) -> str:
     return resource_summary(
         _profile_from_state_for_summary(build_prefix, attack_id),
-        _managed_resources_from_state(),
+        _managed_resources_from_state(build_prefix),
     )
 
 
@@ -351,19 +351,20 @@ def _trigger_settings_expander(
 
 def _render_managed_resources(
     errors_by_key: dict[str, str] | None = None,
+    build_prefix: str = "scenario",
 ) -> tuple[ManagedResource, ...]:
     import streamlit as st
 
     errors_by_key = errors_by_key or {}
     state = getattr(st, "session_state", {})
-    resource_ids = _managed_resource_ids_from_state(state)
+    resource_ids = _managed_resource_ids_from_state(state, build_prefix)
     count = len(resource_ids)
     expander = getattr(st, "expander", None)
     with (
         expander(
             "Managed Resources",
             expanded=False,
-            key=MANAGED_RESOURCE_EXPANDED_KEY,
+            key=build_managed_resource_expanded_key(build_prefix),
         )
         if expander is not None
         else nullcontext()
@@ -376,33 +377,38 @@ def _render_managed_resources(
             )
         resources: list[ManagedResource] = []
         for index, resource_id in enumerate(resource_ids):
-            id_key = managed_resource_widget_key(resource_id, "id")
+            id_key = managed_resource_widget_key(resource_id, "id", build_prefix)
             state[id_key] = resource_id
             cols = st.columns([3, 2, 1])
             name = cols[0].text_input(
                 "Resource name",
-                key=managed_resource_widget_key(resource_id, "name"),
+                key=managed_resource_widget_key(resource_id, "name", build_prefix),
                 value=f"Resource {index + 1}",
             )
             _field_error(
-                errors_by_key, managed_resource_widget_key(resource_id, "name")
+                errors_by_key,
+                managed_resource_widget_key(resource_id, "name", build_prefix),
             )
             starting = cols[1].number_input(
                 "Starting value",
                 min_value=0,
                 step=1,
-                key=managed_resource_widget_key(resource_id, "starting-value"),
+                key=managed_resource_widget_key(
+                    resource_id, "starting-value", build_prefix
+                ),
                 value=0,
             )
             _field_error(
                 errors_by_key,
-                managed_resource_widget_key(resource_id, "starting-value"),
+                managed_resource_widget_key(
+                    resource_id, "starting-value", build_prefix
+                ),
             )
             resource_id = str(state[id_key])
-            used_by = _resource_usage_profile_keys(resource_id)
+            used_by = _resource_usage_profile_keys(resource_id, build_prefix)
             if cols[2].button(
                 ":material/delete:",
-                key=managed_resource_widget_key(resource_id, "delete"),
+                key=managed_resource_widget_key(resource_id, "delete", build_prefix),
                 help=f"Delete {name}. Requires confirmation.",
                 type="secondary",
             ):
@@ -417,18 +423,22 @@ def _render_managed_resources(
                 confirm_cols = st.columns([1, 1, 4])
                 if confirm_cols[0].button(
                     "Confirm Delete",
-                    key=managed_resource_widget_key(resource_id, "confirm-delete"),
+                    key=managed_resource_widget_key(
+                        resource_id, "confirm-delete", build_prefix
+                    ),
                     type="tertiary",
                 ):
-                    _clear_resource_from_profiles(resource_id)
-                    _delete_managed_resource_state(resource_id)
+                    _clear_resource_from_profiles(resource_id, build_prefix)
+                    _delete_managed_resource_state(resource_id, build_prefix)
                     state.pop(RESOURCE_DELETE_CONFIRMATION_KEY, None)
                     rerun = getattr(st, "rerun", None)
                     if rerun is not None:
                         rerun()
                 if confirm_cols[1].button(
                     "Cancel",
-                    key=managed_resource_widget_key(resource_id, "cancel-delete"),
+                    key=managed_resource_widget_key(
+                        resource_id, "cancel-delete", build_prefix
+                    ),
                 ):
                     state.pop(RESOURCE_DELETE_CONFIRMATION_KEY, None)
                     rerun = getattr(st, "rerun", None)
@@ -436,13 +446,20 @@ def _render_managed_resources(
                         rerun()
             resources.append(ManagedResource(resource_id, str(name), int(starting)))
         if getattr(st, "button", lambda *args, **kwargs: False)(
-            "Add Resource", key="scenario-add-managed-resource"
+            "Add Resource", key=f"{build_prefix}-add-managed-resource"
         ):
             new_id = _new_resource_id(count)
-            state[MANAGED_RESOURCE_IDS_KEY] = [*resource_ids, new_id]
-            state[MANAGED_RESOURCE_COUNT_KEY] = count + 1
-            state[managed_resource_widget_key(new_id, "name")] = f"Resource {count + 1}"
-            state[managed_resource_widget_key(new_id, "starting-value")] = 0
+            state[build_managed_resource_ids_key(build_prefix)] = [
+                *resource_ids,
+                new_id,
+            ]
+            state[build_managed_resource_count_key(build_prefix)] = count + 1
+            state[managed_resource_widget_key(new_id, "name", build_prefix)] = (
+                f"Resource {count + 1}"
+            )
+            state[
+                managed_resource_widget_key(new_id, "starting-value", build_prefix)
+            ] = 0
             rerun = getattr(st, "rerun", None)
             if rerun is not None:
                 rerun()
@@ -971,7 +988,7 @@ def _attack_profile_inputs(
                     frequency_labels[1]: TriggerFrequency.ONCE_PER_ROUND,
                     frequency_labels[2]: TriggerFrequency.ONCE_PER_COMBAT,
                 }.get(frequency_label, TriggerFrequency.PER_SUCCESS)
-    resources = _managed_resources_from_state()
+    resources = _managed_resources_from_state(build_prefix)
     resource_costs: tuple[ResourceCost, ...] = ()
     if resources:
         resource_expander = getattr(st, "expander", None)
@@ -1204,6 +1221,7 @@ def _build_config_from_profiles(
     name: str,
     profiles: tuple[AttackProfile, ...],
     math_defaults: BuildMathDefaults | None = None,
+    managed_resources: tuple[ManagedResource, ...] = (),
 ) -> BuildConfig:
     """Create a build config with every displayed profile attached."""
     primary = profiles[0]
@@ -1216,6 +1234,7 @@ def _build_config_from_profiles(
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
         math_defaults=resolved_defaults,
+        managed_resources=managed_resources,
     )
 
 
@@ -1233,6 +1252,7 @@ def _build_inputs(
         )
         _field_error(errors_by_key, f"{prefix}-build-name")
         math_defaults = _build_math_inputs(prefix)
+        managed_resources = _render_managed_resources(errors_by_key, prefix)
         attack_ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
         if st.button(
             "Add Attack",
@@ -1437,6 +1457,7 @@ def _build_inputs(
         name=name,
         profiles=tuple(profiles),
         math_defaults=math_defaults,
+        managed_resources=managed_resources,
     )
 
 

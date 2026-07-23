@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from random import Random
 
@@ -303,6 +303,7 @@ class BuildConfig:
     attack_roll_mode: AttackRollMode = AttackRollMode.NORMAL
     attack_profiles: tuple[AttackProfile, ...] = field(default_factory=tuple)
     math_defaults: BuildMathDefaults = field(default_factory=BuildMathDefaults)
+    managed_resources: tuple[ManagedResource, ...] = field(default_factory=tuple)
 
     def resolved_attack_profiles(self) -> tuple[AttackProfile, ...]:
         """Return explicit profiles or a compatibility profile from legacy fields."""
@@ -327,7 +328,9 @@ class ScenarioConfig:
     rounds: int
     simulations: int
     enemy_save_bonus: int = 3
-    managed_resources: tuple[ManagedResource, ...] = field(default_factory=tuple)
+    managed_resources: tuple[ManagedResource, ...] = field(
+        default_factory=tuple, compare=False
+    )
 
 
 @dataclass(frozen=True)
@@ -552,8 +555,7 @@ def _validate_managed_resources(resources: tuple[ManagedResource, ...]) -> None:
         names.append(resource.name.strip().casefold())
     if len(set(ids)) != len(ids):
         raise ValueError("Managed resource IDs must be unique.")
-    if len(set(names)) != len(names):
-        raise ValueError("Managed resource names must be unique.")
+    # Display names are intentionally allowed to duplicate; profile references use IDs.
 
 
 def _validate_resource_costs(
@@ -744,7 +746,8 @@ def _validate_build(
             profile, label=f"{label} profile {index}", math_defaults=build.math_defaults
         )
     validate_trigger_dependencies(profiles, label=label)
-    _validate_resource_costs(profiles, resources, label=label)
+    _validate_managed_resources(build.managed_resources)
+    _validate_resource_costs(profiles, build.managed_resources, label=label)
 
 
 def _validate_scenario(scenario: ScenarioConfig) -> None:
@@ -757,7 +760,6 @@ def _validate_scenario(scenario: ScenarioConfig) -> None:
     if scenario.simulations < 1:
         msg = "Number of simulations must be at least 1."
         raise ValueError(msg)
-    _validate_managed_resources(scenario.managed_resources)
 
 
 def _determine_profile_execution_count(
@@ -1548,9 +1550,11 @@ def simulate_build(
 ) -> SimulationResult:
     """Validate and simulate one build in one scenario with a deterministic seed."""
     _validate_scenario(scenario)
-    _validate_build(
-        build, label=build.name.strip() or "Build", resources=scenario.managed_resources
-    )
+    resources = build.managed_resources or scenario.managed_resources
+    if scenario.managed_resources:
+        _validate_managed_resources(scenario.managed_resources)
+    build = replace(build, managed_resources=resources)
+    _validate_build(build, label=build.name.strip() or "Build")
     return run_damage_simulations(
         attack_bonus=build.attack_bonus,
         target_armor_class=scenario.target_armor_class,
@@ -1562,7 +1566,7 @@ def simulate_build(
         attack_roll_mode=build.attack_roll_mode,
         attack_profiles=build.resolved_attack_profiles(),
         rng=Random(seed),
-        managed_resources=scenario.managed_resources,
+        managed_resources=build.managed_resources,
         math_defaults=build.math_defaults,
     )
 

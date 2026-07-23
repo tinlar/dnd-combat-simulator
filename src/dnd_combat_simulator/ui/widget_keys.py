@@ -77,8 +77,22 @@ def trigger_expanded_state_key(profile_id: str) -> str:
     return f"{profile_id}-{TRIGGER_EXPANDED_KEY_SUFFIX}"
 
 
-def managed_resource_widget_key(resource_id: int | str, field: str) -> str:
-    return f"scenario-managed-resource-{resource_id}-{field}"
+def managed_resource_widget_key(
+    resource_id: int | str, field: str, build_prefix: str = "scenario"
+) -> str:
+    return f"{build_prefix}-managed-resource-{resource_id}-{field}"
+
+
+def build_managed_resource_ids_key(build_prefix: str) -> str:
+    return f"{build_prefix}-managed-resource-ids"
+
+
+def build_managed_resource_count_key(build_prefix: str) -> str:
+    return f"{build_prefix}-managed-resource-count"
+
+
+def build_managed_resource_expanded_key(build_prefix: str) -> str:
+    return f"{build_prefix}-managed-resources-expanded"
 
 
 def build_math_state_key(build_prefix: str, field: str) -> str:

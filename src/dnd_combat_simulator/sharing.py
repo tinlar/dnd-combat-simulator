@@ -164,6 +164,7 @@ class SharedBuildConfiguration:
     name: str
     attack_profiles: tuple[SharedAttackProfileConfiguration, ...]
     math_defaults: BuildMathDefaults = field(default_factory=BuildMathDefaults)
+    managed_resources: tuple[SharedManagedResourceConfiguration, ...] = ()
 
     @classmethod
     def from_build_config(cls, build: BuildConfig) -> SharedBuildConfiguration:
@@ -177,6 +178,12 @@ class SharedBuildConfiguration:
                 for index, p in enumerate(build.resolved_attack_profiles())
             ),
             math_defaults=build.math_defaults,
+            managed_resources=tuple(
+                SharedManagedResourceConfiguration(
+                    r.resource_id, r.name, r.starting_value
+                )
+                for r in build.managed_resources
+            ),
         )
 
     def to_build_config(self) -> BuildConfig:
@@ -192,6 +199,9 @@ class SharedBuildConfiguration:
             attack_roll_mode=primary.attack_roll_mode,
             attack_profiles=profiles,
             math_defaults=self.math_defaults,
+            managed_resources=tuple(
+                resource.to_managed_resource() for resource in self.managed_resources
+            ),
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -199,6 +209,9 @@ class SharedBuildConfiguration:
             "name": self.name,
             "attack_profiles": [p.to_json_dict() for p in self.attack_profiles],
             "math_defaults": _build_math_defaults_to_json_dict(self.math_defaults),
+            "managed_resources": [
+                resource.to_json_dict() for resource in self.managed_resources
+            ],
         }
 
 
@@ -226,7 +239,6 @@ class SharedScenarioConfiguration:
     rounds: int
     simulations: int
     seed: int
-    managed_resources: tuple[SharedManagedResourceConfiguration, ...] = ()
 
     def to_scenario_config(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -234,9 +246,6 @@ class SharedScenarioConfiguration:
             self.rounds,
             self.simulations,
             self.enemy_save_bonus,
-            tuple(
-                resource.to_managed_resource() for resource in self.managed_resources
-            ),
         )
 
     def to_json_dict(self) -> dict[str, int]:
@@ -246,9 +255,6 @@ class SharedScenarioConfiguration:
             "rounds": self.rounds,
             "simulations": self.simulations,
             "seed": self.seed,
-            "managed_resources": [
-                resource.to_json_dict() for resource in self.managed_resources
-            ],
         }
 
 
@@ -287,15 +293,17 @@ def shared_configuration_from_configs(
             scenario.rounds,
             scenario.simulations,
             seed,
-            tuple(
-                SharedManagedResourceConfiguration(
-                    resource.resource_id, resource.name, resource.starting_value
-                )
-                for resource in scenario.managed_resources
-            ),
         ),
-        SharedBuildConfiguration.from_build_config(build_a),
-        SharedBuildConfiguration.from_build_config(build_b),
+        SharedBuildConfiguration.from_build_config(
+            build_a
+            if build_a.managed_resources
+            else replace(build_a, managed_resources=scenario.managed_resources)
+        ),
+        SharedBuildConfiguration.from_build_config(
+            build_b
+            if build_b.managed_resources
+            else replace(build_b, managed_resources=scenario.managed_resources)
+        ),
     )
 
 
@@ -514,17 +522,24 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
         _expect(scenario_raw, "rounds", int, "scenario"),
         _expect(scenario_raw, "simulations", int, "scenario"),
         _expect(scenario_raw, "seed", int, "scenario"),
-        tuple(
-            _resource_from_json(resource, f"scenario managed resource {i}")
-            for i, resource in enumerate(scenario_raw.get("managed_resources", []), 1)
-        ),
     )
+    build_a = _build_from_json(obj.get("build_a"), "build_a")
+    build_b = _build_from_json(obj.get("build_b"), "build_b")
+    legacy_resources = tuple(
+        _resource_from_json(resource, f"scenario managed resource {i}")
+        for i, resource in enumerate(scenario_raw.get("managed_resources", []), 1)
+    )
+    if legacy_resources:
+        if not build_a.managed_resources:
+            build_a = replace(build_a, managed_resources=legacy_resources)
+        if not build_b.managed_resources:
+            build_b = replace(build_b, managed_resources=legacy_resources)
     return SharedConfiguration(
         version,
         _expect(obj, "compare_enabled", bool, "Shared configuration"),
         scenario,
-        _build_from_json(obj.get("build_a"), "build_a"),
-        _build_from_json(obj.get("build_b"), "build_b"),
+        build_a,
+        build_b,
     )
 
 
@@ -591,6 +606,10 @@ def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
             name=_expect(obj, "name", str, name),
             attack_profiles=tuple(migrated),
             math_defaults=math_defaults,
+            managed_resources=tuple(
+                _resource_from_json(resource, f"{name} managed resource {i}")
+                for i, resource in enumerate(obj.get("managed_resources", []), 1)
+            ),
         ),
     )
 
@@ -682,26 +701,21 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
         or scenario.simulations < 1
     ):
         raise SharedConfigurationError("Shared scenario contains invalid values.")
-    resource_ids = {resource.resource_id for resource in scenario.managed_resources}
-    resource_names = [
-        resource.name.strip().casefold() for resource in scenario.managed_resources
-    ]
-    if any(
-        not resource.resource_id.strip()
-        or not resource.name.strip()
-        or resource.starting_value < 0
-        for resource in scenario.managed_resources
-    ):
-        raise SharedConfigurationError(
-            "Shared scenario contains invalid managed resources."
-        )
-    if len(resource_ids) != len(scenario.managed_resources) or len(
-        set(resource_names)
-    ) != len(resource_names):
-        raise SharedConfigurationError(
-            "Shared scenario managed resources must be unique."
-        )
     for label, build in (("Build A", config.build_a), ("Build B", config.build_b)):
+        resource_ids = {resource.resource_id for resource in build.managed_resources}
+        if any(
+            not resource.resource_id.strip()
+            or not resource.name.strip()
+            or resource.starting_value < 0
+            for resource in build.managed_resources
+        ):
+            raise SharedConfigurationError(
+                f"{label} contains invalid managed resources."
+            )
+        if len(resource_ids) != len(build.managed_resources):
+            raise SharedConfigurationError(
+                f"{label} managed resource IDs must be unique."
+            )
         if not build.name.strip() or not build.attack_profiles:
             raise SharedConfigurationError(
                 f"{label} must include a name and at least one profile."
