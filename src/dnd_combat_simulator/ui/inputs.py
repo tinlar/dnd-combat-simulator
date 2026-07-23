@@ -501,14 +501,51 @@ def _attack_profile_inputs(
                     width: fit-content;
                 }}
                 .st-key-{key} > div {{
+                    align-items: center;
+                    display: flex;
                     flex: 0 0 auto;
+                    justify-content: flex-start;
+                    margin-bottom: 0;
+                    margin-top: 0;
+                    padding-bottom: 0;
+                    padding-top: 0;
                     width: fit-content;
                 }}
                 .st-key-{key} p {{
                     margin-bottom: 0;
+                    margin-top: 0;
                     white-space: nowrap;
                 }}
+                .st-key-{key} [data-testid="stMarkdownContainer"] {{
+                    margin-bottom: 0;
+                    margin-top: 0;
+                }}
+                .st-key-{key} [data-testid="stWidgetLabel"],
+                .st-key-{key} [data-testid="stTextInputRootElement"],
+                .st-key-{key} [data-testid="stNumberInputContainer"],
+                .st-key-{key} [data-testid="stCheckbox"] label {{
+                    align-items: center;
+                    display: flex;
+                    justify-content: flex-start;
+                    margin-bottom: 0;
+                    margin-top: 0;
+                    padding-bottom: 0;
+                    padding-top: 0;
+                }}
+                .st-key-{key} [data-testid="stTextInput"],
+                .st-key-{key} [data-testid="stNumberInput"],
+                .st-key-{key} [data-testid="stCheckbox"] {{
+                    align-items: center;
+                    display: flex;
+                    justify-content: flex-start;
+                    margin-bottom: 0;
+                    margin-top: 0;
+                }}
+                .st-key-{key} [data-testid="stTextInput"] {{
+                    gap: 6px;
+                }}
                 .st-key-{key} [data-testid="stWidgetLabel"] {{
+                    flex: 0 0 auto;
                     min-height: 0;
                 }}
                 .st-key-{key} input:disabled {{
@@ -688,7 +725,7 @@ def _attack_profile_inputs(
 
     damage_key = profile_widget_key(prefix, "damage_formula")
     damage_row = _compact_inline_row(f"{prefix}-damage-row", 5)
-    _row_text(damage_row[0], "**Damage**", width="content")
+    _row_text(damage_row[0], "**Damage**", width=120)
     if damage_key in session_state:
         damage_dice = damage_row[1].text_input(
             "Formula",
