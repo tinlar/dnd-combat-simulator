@@ -1083,6 +1083,12 @@ def _attack_profile_inputs(
     )
 
 
+def _attack_card_key(prefix: str, attack_id: str, profile_index: int) -> str:
+    """Return the keyed attack card container with position-based visual tone."""
+    tone = "a" if profile_index % 2 == 0 else "b"
+    return f"{prefix}-{attack_id}-card-tone-{tone}"
+
+
 def _profile_definitions(
     build_prefix: str, additional_attack_count: int
 ) -> tuple[tuple[str, str, str], ...]:
@@ -1300,7 +1306,9 @@ def _build_inputs(
             _heading,
             default_attack_name,
         ) in enumerate(_profile_definitions(prefix, 0)):
-            with _render_section_container(key=f"{prefix}-{attack_id}-card"):
+            with _render_section_container(
+                key=_attack_card_key(prefix, attack_id, profile_index)
+            ):
                 current_name = (
                     str(
                         getattr(st, "session_state", {}).get(

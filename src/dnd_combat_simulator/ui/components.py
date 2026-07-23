@@ -265,26 +265,50 @@ export default function(component) {
 
 ATTACK_CARD_CSS = """
 <style>
-:is(
-    [class*="st-key-first-attack-"],
-    [class*="st-key-second-attack-"]
-)[class*="-card"] {
-    background-color:
-        color-mix(in srgb, currentColor 7%, transparent) !important;
-    border-color:
-        color-mix(in srgb, currentColor 22%, transparent) !important;
-    border-radius: 14px !important;
-    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.14);
+[class*="-card-tone-a"] {
+    --attack-card-tint: #7388A6;
+}
+
+[class*="-card-tone-b"] {
+    --attack-card-tint: #718F87;
 }
 
 :is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
-)[class*="-card"] [data-testid="stExpander"] details {
+)[class*="-card-tone-"] {
     background-color:
-        color-mix(in srgb, currentColor 4%, transparent) !important;
+        color-mix(in srgb, var(--attack-card-tint) 11%, transparent) !important;
     border-color:
-        color-mix(in srgb, currentColor 18%, transparent) !important;
+        color-mix(in srgb, var(--attack-card-tint) 34%, transparent) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 0.2rem 0.65rem rgba(0, 0, 0, 0.10);
+}
+
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card-tone-"] label,
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card-tone-"] [data-testid="stExpander"] summary {
+    color:
+        color-mix(
+            in srgb,
+            currentColor 88%,
+            var(--attack-card-tint) 12%
+        );
+}
+
+:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card-tone-"] [data-testid="stExpander"] details {
+    background-color:
+        color-mix(in srgb, var(--attack-card-tint) 6%, transparent) !important;
+    border-color:
+        color-mix(in srgb, var(--attack-card-tint) 24%, transparent) !important;
 }
 </style>
 """

@@ -3385,6 +3385,55 @@ def test_empty_attack_ids_are_build_scoped_validation_errors() -> None:
     )
 
 
+def test_attack_card_keys_include_position_tone_and_stable_attack_id() -> None:
+    from dnd_combat_simulator.ui.inputs import _attack_card_key
+
+    assert _attack_card_key("first", "attack-a", 0) == (
+        "first-attack-a-card-tone-a"
+    )
+    assert _attack_card_key("first", "attack-b", 1) == (
+        "first-attack-b-card-tone-b"
+    )
+    assert _attack_card_key("first", "attack-c", 2) == (
+        "first-attack-c-card-tone-a"
+    )
+    assert _attack_card_key("second", "attack-z", 0) == (
+        "second-attack-z-card-tone-a"
+    )
+
+
+def test_attack_card_tone_assignment_follows_displayed_order_not_state() -> None:
+    from dnd_combat_simulator.ui.inputs import _attack_card_key
+
+    attack_state = {
+        "attack-a": {"name": "Slash", "damage_dice": "1d8"},
+        "attack-b": {"name": "Stab", "damage_dice": "1d6"},
+    }
+
+    before_move = [
+        _attack_card_key("first", attack_id, index)
+        for index, attack_id in enumerate(attack_state)
+    ]
+    after_move_order = ["attack-b", "attack-a"]
+    after_move = [
+        _attack_card_key("first", attack_id, index)
+        for index, attack_id in enumerate(after_move_order)
+    ]
+
+    assert before_move == [
+        "first-attack-a-card-tone-a",
+        "first-attack-b-card-tone-b",
+    ]
+    assert after_move == [
+        "first-attack-b-card-tone-a",
+        "first-attack-a-card-tone-b",
+    ]
+    assert attack_state == {
+        "attack-a": {"name": "Slash", "damage_dice": "1d8"},
+        "attack-b": {"name": "Stab", "damage_dice": "1d6"},
+    }
+
+
 def test_attack_card_css_targets_keyed_card_directly() -> None:
     from dnd_combat_simulator.ui.components import ATTACK_CARD_CSS
 
@@ -3392,28 +3441,52 @@ def test_attack_card_css_targets_keyed_card_directly() -> None:
     direct_card_selector = """:is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
-)[class*="-card"] {"""
+)[class*="-card-tone-"] {"""
+    label_selector = """:is(
+    [class*="st-key-first-attack-"],
+    [class*="st-key-second-attack-"]
+)[class*="-card-tone-"] label,"""
     nested_expander_selector = """:is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
-)[class*="-card"] [data-testid="stExpander"] details {"""
+)[class*="-card-tone-"] [data-testid="stExpander"] details {"""
 
+    assert '[class*="-card-tone-a"]' in css
+    assert "--attack-card-tint: #7388A6;" in css
+    assert '[class*="-card-tone-b"]' in css
+    assert "--attack-card-tint: #718F87;" in css
+    assert direct_card_selector in css
+    assert label_selector in css
+    assert nested_expander_selector in css
     assert "stVerticalBlockBorderWrapper" not in css
     assert "attack-card-marker" not in css
-    assert direct_card_selector in css
-    assert nested_expander_selector in css
-    assert "--st-background-color" not in css
-    assert "--st-secondary-background-color" not in css
-    assert "--st-primary-color" not in css
     assert "prefers-color-scheme" not in css
-    assert "currentColor" in css
-    assert "background-color:" in css
-    assert "color-mix(in srgb, currentColor 7%, transparent) !important;" in css
-    assert "border-color:" in css
-    assert "color-mix(in srgb, currentColor 22%, transparent) !important;" in css
-    assert "color-mix(in srgb, currentColor 4%, transparent) !important;" in css
-    assert "color-mix(in srgb, currentColor 18%, transparent) !important;" in css
+    assert "--st-" not in css
+    assert ".css-" not in css
+    assert ".st-emotion" not in css
+    assert (
+        "color-mix(in srgb, var(--attack-card-tint) 11%, transparent) !important;"
+        in css
+    )
+    assert (
+        "color-mix(in srgb, var(--attack-card-tint) 34%, transparent) !important;"
+        in css
+    )
+    assert "currentColor 88%," in css
+    assert "var(--attack-card-tint) 12%" in css
+    assert (
+        "color-mix(in srgb, var(--attack-card-tint) 6%, transparent) !important;"
+        in css
+    )
+    assert (
+        "color-mix(in srgb, var(--attack-card-tint) 24%, transparent) !important;"
+        in css
+    )
+    assert "input" not in css.lower()
+    assert "button" not in css.lower()
+    assert "selectbox" not in css.lower()
     assert "padding: clamp" not in css
+
 
 def test_attack_toolbar_css_is_scoped_and_compact() -> None:
     import ui_test_api as app
