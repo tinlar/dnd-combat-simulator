@@ -31,14 +31,14 @@ from dnd_combat_simulator.ui.constants import (
     ATTACK_DELETE_CONFIRMATION_KEY,
     COMPARE_WIDGET_KEY,
     FEATURE_ORDER,
-    MANAGED_RESOURCE_COUNT_KEY,
-    MANAGED_RESOURCE_IDS_KEY,
     SCENARIO_WIDGET_KEYS,
 )
 from dnd_combat_simulator.ui.widget_keys import (
     _state_widget_prefix,
     attack_widget_prefix,
     build_attack_ids_key,
+    build_managed_resource_count_key,
+    build_managed_resource_ids_key,
     build_math_state_key,
     feature_widget_key,
     managed_resource_widget_key,
@@ -245,7 +245,9 @@ def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
 
 def _dependent_attack_names(state, build_prefix: str, attack_id: str) -> list[str]:
     names = []
-    for index, current_id in enumerate(_attack_ids_from_state(state, build_prefix)):
+    for index, current_id in enumerate(
+        _attack_ids_from_state(state, build_prefix)
+    ):
         if current_id == attack_id:
             continue
         widget_prefix = attack_widget_prefix(build_prefix, current_id)
@@ -346,15 +348,17 @@ def _new_resource_id(position: int = 0) -> str:
     return f"resource-{uuid4().hex}"
 
 
-def _managed_resource_ids_from_state(state) -> list[str]:
-    if MANAGED_RESOURCE_IDS_KEY in state:
-        return [
-            str(resource_id) for resource_id in state.get(MANAGED_RESOURCE_IDS_KEY, [])
-        ]
-    count = int(state.get(MANAGED_RESOURCE_COUNT_KEY, 0))
+def _managed_resource_ids_from_state(
+    state, build_prefix: str = "scenario"
+) -> list[str]:
+    ids_key = build_managed_resource_ids_key(build_prefix)
+    count_key = build_managed_resource_count_key(build_prefix)
+    if ids_key in state:
+        return [str(resource_id) for resource_id in state.get(ids_key, [])]
+    count = int(state.get(count_key, 0))
     ids: list[str] = []
     for index in range(count):
-        legacy_id_key = managed_resource_widget_key(index, "id")
+        legacy_id_key = managed_resource_widget_key(index, "id", build_prefix)
         resource_id = str(state.get(legacy_id_key, f"resource-{index + 1}"))
         ids.append(resource_id)
         for legacy_field, stable_field in (
@@ -362,59 +366,78 @@ def _managed_resource_ids_from_state(state) -> list[str]:
             ("starting-value", "starting-value"),
         ):
             legacy_key = managed_resource_widget_key(index, legacy_field)
-            stable_key = managed_resource_widget_key(resource_id, stable_field)
+            stable_key = managed_resource_widget_key(
+                resource_id, stable_field, build_prefix
+            )
             if legacy_key in state and stable_key not in state:
                 state[stable_key] = state[legacy_key]
-    state[MANAGED_RESOURCE_IDS_KEY] = ids
-    state[MANAGED_RESOURCE_COUNT_KEY] = len(ids)
+    state[ids_key] = ids
+    state[count_key] = len(ids)
     return ids
 
 
-def _delete_managed_resource_state(resource_id: str) -> None:
+def _delete_managed_resource_state(
+    resource_id: str, build_prefix: str = "scenario"
+) -> None:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
-    state[MANAGED_RESOURCE_IDS_KEY] = [
+    ids_key = build_managed_resource_ids_key(build_prefix)
+    count_key = build_managed_resource_count_key(build_prefix)
+    state[ids_key] = [
         current_id
-        for current_id in _managed_resource_ids_from_state(state)
+        for current_id in _managed_resource_ids_from_state(state, build_prefix)
         if current_id != resource_id
     ]
-    state[MANAGED_RESOURCE_COUNT_KEY] = len(state[MANAGED_RESOURCE_IDS_KEY])
+    state[count_key] = len(state[ids_key])
     for key in list(state):
-        if str(key).startswith(f"scenario-managed-resource-{resource_id}-"):
+        if str(key).startswith(f"{build_prefix}-managed-resource-{resource_id}-"):
             del state[key]
 
 
-def _managed_resources_from_state() -> tuple[ManagedResource, ...]:
+def _managed_resources_from_state(
+    build_prefix: str = "scenario",
+) -> tuple[ManagedResource, ...]:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
-    ids = _managed_resource_ids_from_state(state)
+    ids = _managed_resource_ids_from_state(state, build_prefix)
     return tuple(
         ManagedResource(
             resource_id=resource_id,
             name=str(
                 state.get(
-                    managed_resource_widget_key(resource_id, "name"),
+                    managed_resource_widget_key(resource_id, "name", build_prefix),
                     f"Resource {index + 1}",
                 )
             ),
             starting_value=int(
-                state.get(managed_resource_widget_key(resource_id, "starting-value"), 0)
+                state.get(
+                    managed_resource_widget_key(
+                        resource_id, "starting-value", build_prefix
+                    ),
+                    0,
+                )
             ),
         )
         for index, resource_id in enumerate(ids)
     )
 
 
-def _resource_usage_profile_keys(resource_id: str) -> list[str]:
+def _resource_usage_profile_keys(
+    resource_id: str, build_prefix: str | None = None
+) -> list[str]:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
     used_by: list[str] = []
-    for build_prefix in ("first", "second"):
-        for index, attack_id in enumerate(_attack_ids_from_state(state, build_prefix)):
-            widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+    for current_build_prefix in (
+        (build_prefix,) if build_prefix else ("first", "second")
+    ):
+        for index, attack_id in enumerate(
+            _attack_ids_from_state(state, current_build_prefix)
+        ):
+            widget_prefix = _state_widget_prefix(current_build_prefix, attack_id)
             if (
                 state.get(profile_widget_key(widget_prefix, "resource_enabled"), False)
                 and state.get(profile_widget_key(widget_prefix, "resource_id"))
@@ -432,13 +455,17 @@ def _resource_usage_profile_keys(resource_id: str) -> list[str]:
     return used_by
 
 
-def _clear_resource_from_profiles(resource_id: str) -> None:
+def _clear_resource_from_profiles(
+    resource_id: str, build_prefix: str | None = None
+) -> None:
     import streamlit as st
 
     state = getattr(st, "session_state", {})
-    for build_prefix in ("first", "second"):
-        for attack_id in _attack_ids_from_state(state, build_prefix):
-            widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+    for current_build_prefix in (
+        (build_prefix,) if build_prefix else ("first", "second")
+    ):
+        for attack_id in _attack_ids_from_state(state, current_build_prefix):
+            widget_prefix = _state_widget_prefix(current_build_prefix, attack_id)
             if (
                 state.get(profile_widget_key(widget_prefix, "resource_id"))
                 == resource_id
@@ -572,19 +599,25 @@ def hydrate_session_state_from_shared_configuration(
     session_state[SCENARIO_WIDGET_KEYS["simulations"]] = scenario.simulations
     session_state[SCENARIO_WIDGET_KEYS["seed"]] = scenario.seed
     session_state[COMPARE_WIDGET_KEY] = configuration.compare_enabled
-    session_state[MANAGED_RESOURCE_IDS_KEY] = [
-        resource.resource_id for resource in configuration.scenario.managed_resources
-    ]
-    session_state[MANAGED_RESOURCE_COUNT_KEY] = len(
-        configuration.scenario.managed_resources
-    )
-    for resource in configuration.scenario.managed_resources:
-        session_state[managed_resource_widget_key(resource.resource_id, "name")] = (
-            resource.name
-        )
-        session_state[
-            managed_resource_widget_key(resource.resource_id, "starting-value")
-        ] = resource.starting_value
+    for build_prefix, shared_build in (
+        ("first", configuration.build_a),
+        ("second", configuration.build_b),
+    ):
+        ids_key = build_managed_resource_ids_key(build_prefix)
+        count_key = build_managed_resource_count_key(build_prefix)
+        session_state[ids_key] = [
+            resource.resource_id for resource in shared_build.managed_resources
+        ]
+        session_state[count_key] = len(shared_build.managed_resources)
+        for resource in shared_build.managed_resources:
+            session_state[
+                managed_resource_widget_key(resource.resource_id, "name", build_prefix)
+            ] = resource.name
+            session_state[
+                managed_resource_widget_key(
+                    resource.resource_id, "starting-value", build_prefix
+                )
+            ] = resource.starting_value
     _hydrate_build_session_state(
         session_state,
         "first",
@@ -642,6 +675,7 @@ def _build_config_from_profiles(
     name: str,
     profiles: tuple[AttackProfile, ...],
     math_defaults: BuildMathDefaults | None = None,
+    managed_resources: tuple[ManagedResource, ...] = (),
 ) -> BuildConfig:
     """Create a build config with every displayed profile attached."""
     primary = profiles[0]
@@ -654,6 +688,7 @@ def _build_config_from_profiles(
         attack_roll_mode=primary.attack_roll_mode,
         attack_profiles=profiles,
         math_defaults=resolved_defaults,
+        managed_resources=managed_resources,
     )
 
 
@@ -889,6 +924,7 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
         session_state.get(f"{prefix}-build-name", default_build_name),
         tuple(profiles),
         _build_math_defaults_from_state(session_state, prefix),
+        _managed_resources_from_state(prefix),
     )
 
 

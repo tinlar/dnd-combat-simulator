@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.sharing import (
     deserialize_shared_configuration,
@@ -45,7 +47,8 @@ def test_resource_serializes_and_restores_renamed_stable_id() -> None:
     )
 
     restored = deserialize_shared_configuration(serialize_shared_configuration(config))
-    restored_resource = restored.scenario.managed_resources[0]
+    restored_resource = restored.build_a.managed_resources[0]
+    assert restored.scenario.to_json_dict().get("managed_resources") is None
 
     assert restored_resource.resource_id == "spell-slots"
     assert restored_resource.name == "Spell Slots"
@@ -250,3 +253,125 @@ def test_multiple_resources_only_one_blocks_execution() -> None:
     }
     assert by_id["a"].blocked_execution_combat_rate == 1
     assert by_id["b"].blocked_execution_combat_rate == 0
+
+
+def _build(name, resources=(), profiles=()):
+    return BuildConfig(
+        name,
+        5,
+        "1",
+        1,
+        attack_profiles=profiles or (AttackProfile("Hit", 5, "1", 1),),
+        managed_resources=resources,
+    )
+
+
+def test_build_scoped_resources_are_independent_and_not_shared_serialized():
+    a_res = (ManagedResource("a", "A Dice", 1),)
+    b_res = (ManagedResource("b", "B Slots", 2),)
+    a = _build(
+        "A",
+        a_res,
+        (
+            AttackProfile(
+                "A use",
+                None,
+                "1",
+                2,
+                resolution_type="automatic_damage",
+                resource_costs=(ResourceCost("a", 1),),
+            ),
+        ),
+    )
+    b = _build(
+        "B",
+        b_res,
+        (
+            AttackProfile(
+                "B use",
+                None,
+                "1",
+                2,
+                resolution_type="automatic_damage",
+                resource_costs=(ResourceCost("b", 1),),
+            ),
+        ),
+    )
+    result = compare_builds(
+        first_build=a, second_build=b, scenario=ScenarioConfig(15, 1, 1), seed=1
+    )
+    assert result.first_result.resource_usage_results[0].resource.resource_id == "a"
+    assert (
+        result.first_result.resource_usage_results[0].average_consumed_per_combat == 1
+    )
+    assert result.second_result.resource_usage_results[0].resource.resource_id == "b"
+    assert (
+        result.second_result.resource_usage_results[0].average_consumed_per_combat == 2
+    )
+    shared = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 1, 1),
+        seed=1,
+        build_a=a,
+        build_b=b,
+    )
+    raw = shared.to_json_dict()
+    assert "managed_resources" not in raw["scenario"]
+    assert raw["build_a"]["managed_resources"][0]["resource_id"] == "a"
+    assert raw["build_b"]["managed_resources"][0]["resource_id"] == "b"
+
+
+def test_resource_pool_resets_every_simulation_iteration():
+    res = (ManagedResource("slot", "Slot", 1),)
+    build = _build(
+        "A",
+        res,
+        (
+            AttackProfile(
+                "Spell",
+                None,
+                "1",
+                1,
+                resolution_type="automatic_damage",
+                resource_costs=(ResourceCost("slot", 1),),
+            ),
+        ),
+    )
+    result = simulate_build(build, ScenarioConfig(15, 1, 3), 1)
+    assert result.resource_usage_results[0].average_consumed_per_combat == 1
+    assert result.total_resource_blocked_executions == 0
+
+
+def test_renaming_resource_keeps_reference_and_deleting_only_clears_same_build():
+    profile = AttackProfile(
+        "Spend", 5, "1", 1, resource_costs=(ResourceCost("stable", 1),)
+    )
+    renamed = ManagedResource("stable", "New Name", 1)
+    build = _build("A", (renamed,), (profile,))
+    assert build.attack_profiles[0].resource_costs[0].resource_id == renamed.resource_id
+    other = _build("B", (ManagedResource("stable", "Other", 1),), (profile,))
+    repaired_a = replace(
+        build,
+        managed_resources=(),
+        attack_profiles=(replace(profile, resource_costs=()),),
+    )
+    assert repaired_a.attack_profiles[0].resource_costs == ()
+    assert other.attack_profiles[0].resource_costs[0].resource_id == "stable"
+
+
+def test_shared_url_round_trip_and_legacy_shared_resources_migrate():
+    legacy_res = ManagedResource("ki", "Ki", 1)
+    prof = AttackProfile("Spend", 5, "1", 1, resource_costs=(ResourceCost("ki", 1),))
+    legacy = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 1, 1, managed_resources=(legacy_res,)),
+        seed=1,
+        build_a=_build("A", profiles=(prof,)),
+        build_b=_build("B", profiles=(prof,)),
+    )
+    token = serialize_shared_configuration(legacy)
+    restored = deserialize_shared_configuration(token)
+    assert restored.scenario.to_json_dict().get("managed_resources") is None
+    assert restored.build_a.managed_resources[0].resource_id == "ki"
+    assert restored.build_b.managed_resources[0].resource_id == "ki"
+    assert restored.build_a.to_build_config().managed_resources[0].resource_id == "ki"

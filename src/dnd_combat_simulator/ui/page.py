@@ -20,7 +20,6 @@ from dnd_combat_simulator.ui.constants import (
 from dnd_combat_simulator.ui.inputs import (
     _build_inputs,
     _render_configuration_toolbar,
-    _render_managed_resources,
 )
 from dnd_combat_simulator.ui.results import (
     _render_comparison_results,
@@ -112,8 +111,6 @@ def main() -> None:
             SCENARIO_WIDGET_KEYS["simulations"],
         ):
             _field_error(scenario_pre_errors, key)
-        managed_resources = _render_managed_resources(scenario_pre_errors)
-
         compare_container = scenario_row[3]
         compare_toggle = getattr(compare_container, "toggle", st.toggle)
         compare_enabled = compare_toggle(
@@ -137,10 +134,6 @@ def main() -> None:
         enemy_save_bonus=int(enemy_save_bonus),
         rounds=int(rounds),
         simulations=int(simulations),
-        managed_resources=managed_resources,
-    )
-    available_resource_ids = frozenset(
-        resource.resource_id for resource in managed_resources if resource.resource_id
     )
 
     if compare_enabled:
@@ -149,12 +142,20 @@ def main() -> None:
                 *validate_build_fields(
                     _build_from_state("first", "Build A"),
                     prefix="first",
-                    available_resource_ids=available_resource_ids,
+                    available_resource_ids=frozenset(
+                        r.resource_id
+                        for r in _build_from_state("first", "Build A").managed_resources
+                    ),
                 ),
                 *validate_build_fields(
                     _build_from_state("second", "Build B"),
                     prefix="second",
-                    available_resource_ids=available_resource_ids,
+                    available_resource_ids=frozenset(
+                        r.resource_id
+                        for r in _build_from_state(
+                            "second", "Build B"
+                        ).managed_resources
+                    ),
                 ),
             ]
         )
@@ -169,12 +170,16 @@ def main() -> None:
             *validate_build_fields(
                 first_build,
                 prefix="first",
-                available_resource_ids=available_resource_ids,
+                available_resource_ids=frozenset(
+                    r.resource_id for r in first_build.managed_resources
+                ),
             ),
             *validate_build_fields(
                 second_build,
                 prefix="second",
-                available_resource_ids=available_resource_ids,
+                available_resource_ids=frozenset(
+                    r.resource_id for r in second_build.managed_resources
+                ),
             ),
         ]
         if current_errors:
@@ -206,11 +211,14 @@ def main() -> None:
                 )
                 _render_comparison_results(comparison)
     else:
+        first_state_build = _build_from_state("first", "Build A")
         pre_render_errors = validation_errors_by_key(
             validate_build_fields(
-                _build_from_state("first", "Build A"),
+                first_state_build,
                 prefix="first",
-                available_resource_ids=available_resource_ids,
+                available_resource_ids=frozenset(
+                    r.resource_id for r in first_state_build.managed_resources
+                ),
             )
         )
         first_build = _build_inputs("first", "Build A", pre_render_errors)
@@ -220,7 +228,9 @@ def main() -> None:
             *validate_build_fields(
                 first_build,
                 prefix="first",
-                available_resource_ids=available_resource_ids,
+                available_resource_ids=frozenset(
+                    r.resource_id for r in first_build.managed_resources
+                ),
             ),
         ]
         if current_errors:
