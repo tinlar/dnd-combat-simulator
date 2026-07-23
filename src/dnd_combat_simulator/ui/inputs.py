@@ -642,6 +642,8 @@ def _attack_profile_inputs(
     if stored_resolution_type_label not in resolution_type_options:
         stored_resolution_type_label = "Attack Roll"
 
+    resolution_columns: list[Any]
+
     if stored_resolution_type_label == "Automatic Damage":
         resolution_columns = [st]
     else:
