@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from secrets import randbelow
 from uuid import uuid4
 
@@ -593,13 +594,42 @@ def _clear_build_session_state(session_state, prefix: str) -> None:
             del session_state[key]
 
 
+def _clone_shared_build_for_destination(
+    shared_source: SharedBuildConfiguration, dest_prefix: str
+) -> SharedBuildConfiguration:
+    """Return an independent clone with destination-owned attack identifiers."""
+    serialized_clone = _build_from_json(shared_source.to_json_dict(), dest_prefix)
+    id_mapping = {
+        profile.attack_id: _new_attack_id(dest_prefix, index)
+        for index, profile in enumerate(serialized_clone.attack_profiles)
+    }
+    cloned_profiles = tuple(
+        replace(
+            profile,
+            attack_id=id_mapping[profile.attack_id],
+            trigger_source_attack_id=(
+                id_mapping.get(profile.trigger_source_attack_id)
+                if profile.trigger_source_attack_id is not None
+                else None
+            ),
+        )
+        for profile in serialized_clone.attack_profiles
+    )
+    return replace(serialized_clone, attack_profiles=cloned_profiles)
+
+
 def clone_build_session_state(
     session_state, source_prefix: str, dest_prefix: str
 ) -> None:
-    """Replace one build's widget state with a deep serialized copy of another."""
+    """Replace one build's widget state with a deep clone of another build.
+
+    Source state is first converted to a serialized build snapshot. All
+    destination-specific identifier remapping happens on that snapshot, never on
+    the source build or source widget state.
+    """
     source = _build_from_state(source_prefix, "Build A")
     shared_source = SharedBuildConfiguration.from_build_config(source)
-    cloned = _build_from_json(shared_source.to_json_dict(), dest_prefix)
+    cloned = _clone_shared_build_for_destination(shared_source, dest_prefix)
     _clear_build_session_state(session_state, dest_prefix)
     ids_key = build_managed_resource_ids_key(dest_prefix)
     count_key = build_managed_resource_count_key(dest_prefix)
