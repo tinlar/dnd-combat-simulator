@@ -1300,7 +1300,7 @@ def _build_inputs(
             _heading,
             default_attack_name,
         ) in enumerate(_profile_definitions(prefix, 0)):
-            with _render_section_container():
+            with _render_section_container(key=f"{prefix}-{attack_id}-card"):
                 st.markdown(
                     '<span class="attack-card-marker" aria-hidden="true"></span>',
                     unsafe_allow_html=True,
