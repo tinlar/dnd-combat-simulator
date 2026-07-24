@@ -61,12 +61,23 @@ CALCULATING_SPINNER_HTML = f"""
 """
 
 
-def _render_calculating_indicator() -> None:
+def _render_calculating_indicator():
     import streamlit as st
 
+    placeholder_factory = getattr(st, "empty", None)
+    if placeholder_factory is not None:
+        placeholder = placeholder_factory()
+        placeholder.markdown(CALCULATING_SPINNER_HTML, unsafe_allow_html=True)
+        return placeholder
     markdown = getattr(st, "markdown", None)
     if markdown is not None:
         markdown(CALCULATING_SPINNER_HTML, unsafe_allow_html=True)
+    return None
+
+
+def _clear_calculating_indicator(indicator) -> None:
+    if indicator is not None and hasattr(indicator, "empty"):
+        indicator.empty()
 
 
 @dataclass(frozen=True)
@@ -321,10 +332,10 @@ def _run_single_build_with_feedback(
     state[SIMULATION_RUNNING_KEY] = True
     start = clock()
     logger.info("Starting single-build simulation")
+    indicator = None
     try:
-        with st.spinner("Calculating..."):
-            _render_calculating_indicator()
-            result = execute(inputs)
+        indicator = _render_calculating_indicator()
+        result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
@@ -340,6 +351,7 @@ def _run_single_build_with_feedback(
         )
         return result
     finally:
+        _clear_calculating_indicator(indicator)
         state[SIMULATION_RUNNING_KEY] = False
         state[SIMULATION_PENDING_KEY] = False
 
@@ -356,10 +368,10 @@ def _run_comparison_with_feedback(
     state[SIMULATION_RUNNING_KEY] = True
     start = clock()
     logger.info("Starting comparison simulation")
+    indicator = None
     try:
-        with st.spinner("Calculating..."):
-            _render_calculating_indicator()
-            result = execute(inputs)
+        indicator = _render_calculating_indicator()
+        result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
         raise
@@ -375,6 +387,7 @@ def _run_comparison_with_feedback(
         )
         return result
     finally:
+        _clear_calculating_indicator(indicator)
         state[SIMULATION_RUNNING_KEY] = False
         state[SIMULATION_PENDING_KEY] = False
 
