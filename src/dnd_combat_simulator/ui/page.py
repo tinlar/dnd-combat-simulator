@@ -116,7 +116,18 @@ def _render_validation_diagnostics(errors, rendered_keys, builds):
     }
     attack_ids = {key for key in attack_names}
     with st.expander("Development validation diagnostics", expanded=False):
+        st.markdown(
+            "Configured builds: "
+            + ", ".join(
+                f"`{prefix}` / `{name}`" for prefix, name in build_names.items()
+            )
+        )
         for issue in errors:
+            attack_name = (
+                attack_names.get((issue.build_key or "", issue.attack_id), "")
+                if issue.attack_id
+                else ""
+            )
             exists = (
                 (issue.build_key, issue.attack_id) in attack_ids
                 if issue.attack_id
@@ -130,8 +141,7 @@ def _render_validation_diagnostics(errors, rendered_keys, builds):
                         f"- Build: `{issue.build_key or 'scenario'}` / "
                         f"`{build_names.get(issue.build_key or '', 'Scenario')}`",
                         f"- Attack ID: `{issue.attack_id or ''}`",
-                        f"- Attack name: "
-                        f"`{attack_names.get((issue.build_key or '', issue.attack_id), '') if issue.attack_id else ''}`",
+                        f"- Attack name: `{attack_name}`",
                         f"- Scope: `{issue.scope}`",
                         f"- Field: `{issue.field or ''}`",
                         f"- Widget key: `{issue.key}`",
@@ -279,7 +289,9 @@ def _main_tracked(st) -> None:
             ),
         ]
         rendered_keys = rendered_widget_keys(getattr(st, "session_state", {}))
-        active_errors = _active_rendered_validation_errors(current_errors, rendered_keys)
+        active_errors = _active_rendered_validation_errors(
+            current_errors, rendered_keys
+        )
         if active_errors:
             getattr(st, "warning", lambda *args, **kwargs: None)(
                 "Fix the highlighted fields before running the simulation."
@@ -371,7 +383,9 @@ def _main_tracked(st) -> None:
             ),
         ]
         rendered_keys = rendered_widget_keys(getattr(st, "session_state", {}))
-        active_errors = _active_rendered_validation_errors(current_errors, rendered_keys)
+        active_errors = _active_rendered_validation_errors(
+            current_errors, rendered_keys
+        )
         if active_errors:
             getattr(st, "warning", lambda *args, **kwargs: None)(
                 "Fix the highlighted fields before running the simulation."
@@ -380,7 +394,7 @@ def _main_tracked(st) -> None:
             _render_validation_diagnostics(
                 current_errors,
                 rendered_keys,
-                {"first": first_build, "second": second_build},
+                {"first": first_build},
             )
             getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
         if message := getattr(st, "session_state", {}).pop(
