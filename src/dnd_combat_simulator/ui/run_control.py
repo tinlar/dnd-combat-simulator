@@ -33,6 +33,41 @@ logger = logging.getLogger(__name__)
 SIMULATION_CACHE_VERSION = 3
 SIMULATION_CACHE_MAX_ENTRIES = 64
 
+CALCULATING_SPINNER_CLASS = "dnd-combat-calculating-spinner"
+CALCULATING_SPINNER_HTML = f"""
+<style>
+.{CALCULATING_SPINNER_CLASS} {{
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}}
+.{CALCULATING_SPINNER_CLASS}::before {{
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  border: 0.18rem solid rgba(49, 51, 63, 0.25);
+  border-top-color: rgb(255, 75, 75);
+  border-radius: 50%;
+  animation: dnd-combat-calculating-spin 0.8s linear infinite;
+}}
+@keyframes dnd-combat-calculating-spin {{
+  to {{ transform: rotate(360deg); }}
+}}
+</style>
+<div class="{CALCULATING_SPINNER_CLASS}" role="status" aria-live="polite">
+  Calculating...
+</div>
+"""
+
+
+def _render_calculating_indicator() -> None:
+    import streamlit as st
+
+    markdown = getattr(st, "markdown", None)
+    if markdown is not None:
+        markdown(CALCULATING_SPINNER_HTML, unsafe_allow_html=True)
+
 
 @dataclass(frozen=True)
 class SimulationInputs:
@@ -287,6 +322,7 @@ def _run_single_build_with_feedback(
     logger.info("Starting single-build simulation")
     try:
         with st.spinner("Calculating..."):
+            _render_calculating_indicator()
             result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
@@ -321,6 +357,7 @@ def _run_comparison_with_feedback(
     logger.info("Starting comparison simulation")
     try:
         with st.spinner("Calculating..."):
+            _render_calculating_indicator()
             result = execute(inputs)
     except (ValueError, SharedConfigurationError):
         state.pop(SIMULATION_DURATION_MESSAGE_KEY, None)
@@ -362,6 +399,7 @@ __all__ = [
     "ComparisonInputs",
     "SingleBuildInputs",
     "SimulationInputs",
+    "CALCULATING_SPINNER_CLASS",
     "canonical_comparison_request",
     "canonical_single_build_request",
     "execute_canonical_request",

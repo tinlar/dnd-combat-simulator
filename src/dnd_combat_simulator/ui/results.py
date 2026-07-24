@@ -149,7 +149,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
             y=alt.Y(y, title="Average total damage"),
             color=alt.Color(color, title="Build"),
             tooltip=[
-                alt.Tooltip(x, title="Round"),
+            alt.Tooltip(x, title="Round"),
                 alt.Tooltip(y, title="Average damage", format=".2f"),
                 alt.Tooltip(color, title="Build"),
             ],
@@ -157,81 +157,107 @@ def _line_chart(data, *, x: str, y: str, color: str):
     )
 
 
-def _profile_contribution_bar_chart(data):
+def _bar_chart_with_value_labels(
+    data,
+    *,
+    x_field: str,
+    y_field: str,
+    y_title: str,
+    tooltip: list,
+    label_format: str,
+):
     import altair as alt
     import pandas as pd
 
-    return (
-        alt.Chart(pd.DataFrame(data))
-        .mark_bar()
-        .encode(
-            x=alt.X("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
-            y=alt.Y(
+    frame = pd.DataFrame(data)
+    base = alt.Chart(frame).encode(
+        x=alt.X(f"{x_field}:N", sort=alt.SortField("Order"), title="Attack profile"),
+        y=alt.Y(
+            f"{y_field}:Q",
+            title=y_title,
+            scale=alt.Scale(zero=True, nice=True, padding=16),
+        ),
+    )
+    bars = base.mark_bar().encode(tooltip=tooltip)
+    labels = base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-4,
+        color="#262730",
+        fontSize=11,
+        fontWeight="bold",
+    ).encode(
+        text=alt.Text(f"{y_field}:Q", format=label_format),
+        tooltip=tooltip,
+    )
+    return (bars + labels).properties(padding={"top": 24})
+
+
+def _profile_contribution_bar_chart(data):
+    import altair as alt
+
+    return _bar_chart_with_value_labels(
+        data,
+        x_field="Profile",
+        y_field="Damage per Round contribution",
+        y_title="Damage per Round contribution",
+        label_format=".2f",
+        tooltip=[
+            alt.Tooltip("Profile:N", title="Attack name"),
+            alt.Tooltip("Resolution type:N", title="Resolution type"),
+            alt.Tooltip(
                 "Damage per Round contribution:Q",
                 title="Damage per Round contribution",
+                format=".2f",
             ),
-            tooltip=[
-                alt.Tooltip("Profile:N", title="Attack name"),
-                alt.Tooltip("Resolution type:N", title="Resolution type"),
-                alt.Tooltip(
-                    "Damage per Round contribution:Q",
-                    title="Damage per Round contribution",
-                    format=".2f",
-                ),
-                alt.Tooltip(
-                    "Contribution percentage:Q",
-                    title="Contribution percentage",
-                    format=".1f",
-                ),
-                alt.Tooltip("Active Rounds:N", title="Active Rounds"),
-                alt.Tooltip(
-                    "Maximum attacks per active round:Q",
-                    title="Maximum attacks per active round",
-                ),
-                alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
-                alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
-                alt.Tooltip(
-                    "Average damage per use:Q",
-                    title="Average damage per use",
-                    format=".2f",
-                ),
-                alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
-            ],
-        )
+            alt.Tooltip(
+                "Contribution percentage:Q",
+                title="Contribution percentage",
+                format=".1f",
+            ),
+            alt.Tooltip("Active Rounds:N", title="Active Rounds"),
+            alt.Tooltip(
+                "Maximum attacks per active round:Q",
+                title="Maximum attacks per active round",
+            ),
+            alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
+            alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
+            alt.Tooltip(
+                "Average damage per use:Q",
+                title="Average damage per use",
+                format=".2f",
+            ),
+            alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
+        ],
     )
 
 
 def _profile_damage_per_use_bar_chart(data):
     import altair as alt
-    import pandas as pd
 
-    return (
-        alt.Chart(pd.DataFrame(data))
-        .mark_bar()
-        .encode(
-            x=alt.X("Profile:N", sort=alt.SortField("Order"), title="Attack profile"),
-            y=alt.Y(
+    return _bar_chart_with_value_labels(
+        data,
+        x_field="Profile",
+        y_field="Average damage per use",
+        y_title="Average total damage from one use",
+        label_format=".2f",
+        tooltip=[
+            alt.Tooltip("Profile:N", title="Attack name"),
+            alt.Tooltip("Resolution type:N", title="Resolution type"),
+            alt.Tooltip(
                 "Average damage per use:Q",
-                title="Average total damage from one use",
+                title="Average damage per use",
+                format=".2f",
             ),
-            tooltip=[
-                alt.Tooltip("Profile:N", title="Attack name"),
-                alt.Tooltip("Resolution type:N", title="Resolution type"),
-                alt.Tooltip(
-                    "Average damage per use:Q",
-                    title="Average damage per use",
-                    format=".2f",
-                ),
-                alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
-                alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
-                alt.Tooltip(
-                    "Maximum attacks per active round:Q",
-                    title="Maximum attacks per active round",
-                ),
-                alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
-                alt.Tooltip("Active Rounds:N", title="Active Rounds"),
-            ],
-        )
+            alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
+            alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
+            alt.Tooltip(
+                "Maximum attacks per active round:Q",
+                title="Maximum attacks per active round",
+            ),
+            alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
+            alt.Tooltip("Active Rounds:N", title="Active Rounds"),
+        ],
     )
 
 

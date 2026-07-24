@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Iterator
+from typing import Any
 
 RENDERED_WIDGET_KEYS_STATE_KEY = "__dnd_rendered_widget_keys"
 _WIDGET_METHODS = (
@@ -34,7 +35,9 @@ def rendered_widget_keys(state: Any) -> set[str]:
     return {str(key) for key in value} if isinstance(value, (list, tuple)) else set()
 
 
-def _record_key(rendered: set[str], args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+def _record_key(
+    rendered: set[str], args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> None:
     key = kwargs.get("key")
     if key is not None:
         rendered.add(str(key))
@@ -54,7 +57,7 @@ def track_streamlit_widget_keys(st: Any) -> Iterator[set[str]]:
             if original is None or getattr(original, "_dnd_tracks_widget_key", False):
                 continue
 
-            @wraps(original)
+            @wraps(original)  # type: ignore[arg-type]
             def wrapper(*args: Any, __original=original, **kwargs: Any) -> Any:
                 _record_key(rendered, args, kwargs)
                 return __original(*args, **kwargs)
@@ -72,7 +75,7 @@ def track_streamlit_widget_keys(st: Any) -> Iterator[set[str]]:
         if original is None or getattr(original, "_dnd_tracks_widget_key", False):
             return
 
-        @wraps(original)
+        @wraps(original)  # type: ignore[arg-type]
         def wrapper(*args: Any, __original=original, **kwargs: Any) -> Any:
             result = __original(*args, **kwargs)
             if isinstance(result, (list, tuple)):

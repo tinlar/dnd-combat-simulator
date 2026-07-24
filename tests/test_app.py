@@ -725,6 +725,8 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
     assert [call["label"] for call in checkbox_calls] == [
         "Inherit triggering critical",
         "Require matching damage dice to continue",
+        "Empowered Spell",
+        "Empowered Matching Rescue",
         "Elven Accuracy",
         "Great Weapon Fighting",
         "Tavern Brawler",
@@ -738,11 +740,11 @@ def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
         == "first-primary-require-matching-damage-dice-to-continue"
     )
     assert checkbox_calls[1]["disabled"] is True
-    assert checkbox_calls[2]["key"] == "first-primary-feature-elven_accuracy"
-    assert checkbox_calls[2]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
-    assert checkbox_calls[5]["key"] == "first-primary-feature-stop_on_miss"
-    assert checkbox_calls[5]["help"] == FEATURE_HELP[AttackFeature.STOP_ON_MISS]
-    assert checkbox_calls[3]["disabled"] is False
+    assert checkbox_calls[4]["key"] == "first-primary-feature-elven_accuracy"
+    assert checkbox_calls[4]["help"] == FEATURE_HELP[AttackFeature.ELVEN_ACCURACY]
+    assert checkbox_calls[7]["key"] == "first-primary-feature-stop_on_miss"
+    assert checkbox_calls[7]["help"] == FEATURE_HELP[AttackFeature.STOP_ON_MISS]
+    assert checkbox_calls[7]["disabled"] is False
 
 
 def test_profile_breakdown_rows_include_formatted_features() -> None:
@@ -4881,3 +4883,178 @@ def test_duplicate_attack_state_copies_every_attack_profile_widget_field() -> No
         assert getattr(copied_profile, field_name) == getattr(
             source_profile, field_name
         )
+
+
+def test_adding_attack_preserves_existing_card_resource_state(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    state = {}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    first_id = app._state._attack_ids_from_state(state, "first")[0]
+    first_prefix = app._state._state_widget_prefix("first", first_id)
+    state[app.profile_widget_key(first_prefix, "resource_enabled")] = True
+    state[app.profile_widget_key(first_prefix, "resource_id")] = "sorcery-points"
+    state[app.profile_widget_key(first_prefix, "resource_amount")] = 2
+
+    new_id = app._state._new_attack_id("first", 1)
+    state[app.build_attack_ids_key("first")] = [
+        *app._state._attack_ids_from_state(state, "first"),
+        new_id,
+    ]
+    state[
+        app.profile_widget_key(app.attack_widget_prefix("first", new_id), "name")
+    ] = "Attack 2"
+
+    assert state[app.profile_widget_key(first_prefix, "resource_enabled")] is True
+    assert (
+        state[app.profile_widget_key(first_prefix, "resource_id")]
+        == "sorcery-points"
+    )
+    assert state[app.profile_widget_key(first_prefix, "resource_amount")] == 2
+
+
+def test_copying_attack_preserves_unrelated_resource_state(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    state = {}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    source_id, other_id = "attack-source", "attack-other"
+    state[app.build_attack_ids_key("first")] = [source_id, other_id]
+    source_prefix = app.attack_widget_prefix("first", source_id)
+    other_prefix = app.attack_widget_prefix("first", other_id)
+    state[app.profile_widget_key(source_prefix, "name")] = "Copied"
+    state[app.profile_widget_key(other_prefix, "resource_enabled")] = True
+    state[app.profile_widget_key(other_prefix, "resource_id")] = "ki"
+    state[app.profile_widget_key(other_prefix, "resource_amount")] = 3
+
+    copied = app._duplicate_attack_state(
+        state,
+        source_prefix,
+        app.attack_widget_prefix("first", "attack-copy"),
+        source_attack_id=source_id,
+        dest_attack_id="attack-copy",
+    )
+    state.update(copied)
+    state[app.build_attack_ids_key("first")] = [source_id, "attack-copy", other_id]
+
+    assert state[app.profile_widget_key(other_prefix, "resource_id")] == "ki"
+    assert state[app.profile_widget_key(other_prefix, "resource_amount")] == 3
+
+
+def test_build_resource_state_is_independent_between_build_columns(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    state = {}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    for build_prefix, resource_id in (("first", "ki"), ("second", "sorcery")):
+        attack_id = app._state._attack_ids_from_state(state, build_prefix)[0]
+        widget_prefix = app._state._state_widget_prefix(build_prefix, attack_id)
+        state[app.profile_widget_key(widget_prefix, "resource_enabled")] = True
+        state[app.profile_widget_key(widget_prefix, "resource_id")] = resource_id
+        state[app.profile_widget_key(widget_prefix, "resource_amount")] = 1
+
+    new_id = app._state._new_attack_id("first", 1)
+    state[app.build_attack_ids_key("first")] = [
+        *app._state._attack_ids_from_state(state, "first"),
+        new_id,
+    ]
+
+    second_prefix = app._state._state_widget_prefix(
+        "second", app._state._attack_ids_from_state(state, "second")[0]
+    )
+    assert state[app.profile_widget_key(second_prefix, "resource_id")] == "sorcery"
+
+
+def test_deleting_one_managed_resource_preserves_other_resource_references(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    state = {app.build_attack_ids_key("first"): ["attack-1", "attack-2"]}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+    for attack_id, resource_id in (("attack-1", "ki"), ("attack-2", "sorcery")):
+        prefix = app.attack_widget_prefix("first", attack_id)
+        state[app.profile_widget_key(prefix, "resource_enabled")] = True
+        state[app.profile_widget_key(prefix, "resource_id")] = resource_id
+        state[app.profile_widget_key(prefix, "resource_amount")] = 1
+
+    app._clear_resource_from_profiles("ki", "first")
+
+    first_prefix = app.attack_widget_prefix("first", "attack-1")
+    second_prefix = app.attack_widget_prefix("first", "attack-2")
+    assert state[app.profile_widget_key(first_prefix, "resource_id")] == ""
+    assert state[app.profile_widget_key(second_prefix, "resource_id")] == "sorcery"
+
+
+def test_bar_charts_generate_labels_for_all_bar_values() -> None:
+    from dnd_combat_simulator.ui.results import (
+        _profile_contribution_bar_chart,
+        _profile_damage_per_use_bar_chart,
+    )
+
+    rows = [
+        {
+            "Profile": "Narrow",
+            "Order": 1,
+            "Damage per Round contribution": 0,
+            "Contribution percentage": 0,
+            "Average damage per use": 1234.5,
+            "Resolution type": "Attack Roll",
+            "Active Rounds": "Every round",
+            "Maximum attacks per active round": 1,
+            "Actual profile uses": 1,
+            "Skipped profile uses": 0,
+            "Target resolutions": 1,
+        }
+    ]
+
+    for chart in (
+        _profile_contribution_bar_chart(rows),
+        _profile_damage_per_use_bar_chart(rows),
+    ):
+        spec = chart.to_dict()
+        assert [layer["mark"]["type"] for layer in spec["layer"]] == ["bar", "text"]
+        assert spec["layer"][1]["encoding"]["text"]["format"] == ".2f"
+        assert spec["padding"]["top"] >= 24
+
+
+def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:
+    import sys
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    state = {}
+    monkeypatch.setitem(
+        sys.modules,
+        "streamlit",
+        SimpleNamespace(
+            session_state=state,
+            spinner=lambda message: nullcontext(),
+            markdown=lambda *a, **k: None,
+        ),
+    )
+
+    def fail(inputs):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        app._run_control._run_single_build_with_feedback(
+            object(), execute=fail, clock=lambda: 1.0
+        )
+
+    assert state[app.SIMULATION_RUNNING_KEY] is False
+    assert state[app.SIMULATION_PENDING_KEY] is False

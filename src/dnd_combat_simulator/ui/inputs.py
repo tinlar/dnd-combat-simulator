@@ -239,11 +239,16 @@ def _feature_inputs(
         empowered_rescue_key = profile_widget_key(
             prefix, "empowered_matching_rescue_enabled"
         )
+        build_prefix = prefix.split("-", 1)[0]
+        empowered_resources_available = bool(
+            _managed_resources_from_state(build_prefix)
+        )
         empowered_spell_enabled = checkbox(
             "Empowered Spell",
             value=False,
             key=empowered_spell_key,
             help="Costs 1 selected resource point per damage roll where rerolls occur.",
+            disabled=not empowered_resources_available,
         )
         empowered_matching_rescue_enabled = checkbox(
             "Empowered Matching Rescue",
@@ -257,8 +262,9 @@ def _feature_inputs(
         )
         empowered_resource_id = ""
         empowered_max_dice_rerolled = 1
-        if empowered_spell_enabled or (
-            empowered_matching_rescue_enabled and can_require_matching_damage_dice
+        if empowered_resources_available and (
+            empowered_spell_enabled
+            or (empowered_matching_rescue_enabled and can_require_matching_damage_dice)
         ):
             build_prefix = prefix.split("-", 1)[0]
             resources = _managed_resources_from_state(build_prefix)
@@ -1250,8 +1256,10 @@ def _build_math_metric(container: Any, label: str, value: str) -> None:
     st.markdown(f"**{label}:** {value}")
 
 
-def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
-    """Render visible build-level math defaults for one build."""
+def _build_math_inputs(
+    build_prefix: str, errors_by_key: dict[str, str] | None = None
+) -> tuple[BuildMathDefaults, tuple[ManagedResource, ...]]:
+    """Render visible build setup defaults and managed resources for one build."""
     import streamlit as st
 
     default_values = BuildMathDefaults()
@@ -1315,7 +1323,8 @@ def _build_math_inputs(build_prefix: str) -> BuildMathDefaults:
             "bonus. Save DC = 8 + ability modifier + proficiency bonus + "
             "other Save DC bonus."
         )
-        return defaults
+        managed_resources = _render_managed_resources(errors_by_key, build_prefix)
+        return defaults, managed_resources
 
 
 def _build_config_from_profiles(
@@ -1408,8 +1417,7 @@ def _build_inputs(
             "Build name", value=default_name, key=f"{prefix}-build-name"
         )
         _field_error(errors_by_key, f"{prefix}-build-name")
-        math_defaults = _build_math_inputs(prefix)
-        managed_resources = _render_managed_resources(errors_by_key, prefix)
+        math_defaults, managed_resources = _build_math_inputs(prefix, errors_by_key)
         attack_ids = _attack_ids_from_state(getattr(st, "session_state", {}), prefix)
         if st.button(
             "Add Attack",
