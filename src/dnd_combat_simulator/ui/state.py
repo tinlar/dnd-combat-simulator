@@ -615,7 +615,11 @@ def _clone_shared_build_for_destination(
         )
         for profile in serialized_clone.attack_profiles
     )
-    return replace(serialized_clone, attack_profiles=cloned_profiles)
+    return replace(
+        serialized_clone,
+        attack_profiles=cloned_profiles,
+        managed_resources=shared_source.managed_resources,
+    )
 
 
 def clone_build_session_state(

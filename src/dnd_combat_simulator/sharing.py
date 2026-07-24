@@ -164,6 +164,8 @@ class SharedBuildConfiguration:
     name: str
     attack_profiles: tuple[SharedAttackProfileConfiguration, ...]
     math_defaults: BuildMathDefaults = field(default_factory=BuildMathDefaults)
+    # Legacy migration input only. New shared configurations must store resources
+    # on SharedScenarioConfiguration.
     managed_resources: tuple[SharedManagedResourceConfiguration, ...] = ()
 
     @classmethod
@@ -209,9 +211,6 @@ class SharedBuildConfiguration:
             "name": self.name,
             "attack_profiles": [p.to_json_dict() for p in self.attack_profiles],
             "math_defaults": _build_math_defaults_to_json_dict(self.math_defaults),
-            "managed_resources": [
-                resource.to_json_dict() for resource in self.managed_resources
-            ],
         }
 
 
@@ -239,6 +238,7 @@ class SharedScenarioConfiguration:
     rounds: int
     simulations: int
     seed: int
+    managed_resources: tuple[SharedManagedResourceConfiguration, ...] = ()
 
     def to_scenario_config(self) -> ScenarioConfig:
         return ScenarioConfig(
@@ -246,16 +246,24 @@ class SharedScenarioConfiguration:
             self.rounds,
             self.simulations,
             self.enemy_save_bonus,
+            managed_resources=tuple(
+                resource.to_managed_resource() for resource in self.managed_resources
+            ),
         )
 
-    def to_json_dict(self) -> dict[str, int]:
-        return {
+    def to_json_dict(self) -> dict[str, object]:
+        raw: dict[str, object] = {
             "target_armor_class": self.target_armor_class,
             "enemy_save_bonus": self.enemy_save_bonus,
             "rounds": self.rounds,
             "simulations": self.simulations,
             "seed": self.seed,
         }
+        if self.managed_resources:
+            raw["managed_resources"] = [
+                resource.to_json_dict() for resource in self.managed_resources
+            ]
+        return raw
 
 
 @dataclass(frozen=True)
@@ -293,16 +301,18 @@ def shared_configuration_from_configs(
             scenario.rounds,
             scenario.simulations,
             seed,
+            tuple(
+                SharedManagedResourceConfiguration(
+                    r.resource_id, r.name, r.starting_value
+                )
+                for r in scenario.managed_resources
+            ),
         ),
-        SharedBuildConfiguration.from_build_config(
-            build_a
-            if build_a.managed_resources
-            else replace(build_a, managed_resources=scenario.managed_resources)
+        replace(
+            SharedBuildConfiguration.from_build_config(build_a), managed_resources=()
         ),
-        SharedBuildConfiguration.from_build_config(
-            build_b
-            if build_b.managed_resources
-            else replace(build_b, managed_resources=scenario.managed_resources)
+        replace(
+            SharedBuildConfiguration.from_build_config(build_b), managed_resources=()
         ),
     )
 
@@ -516,24 +526,29 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
             f"Unsupported shared configuration version: {version}."
         )
     scenario_raw = _required_dict(obj.get("scenario"), "scenario")
+    scenario_resources = tuple(
+        _resource_from_json(resource, f"scenario managed resource {i}")
+        for i, resource in enumerate(scenario_raw.get("managed_resources", []), 1)
+    )
     scenario = SharedScenarioConfiguration(
         _expect(scenario_raw, "target_armor_class", int, "scenario"),
         _expect(scenario_raw, "enemy_save_bonus", int, "scenario"),
         _expect(scenario_raw, "rounds", int, "scenario"),
         _expect(scenario_raw, "simulations", int, "scenario"),
         _expect(scenario_raw, "seed", int, "scenario"),
+        scenario_resources,
     )
     build_a = _build_from_json(obj.get("build_a"), "build_a")
     build_b = _build_from_json(obj.get("build_b"), "build_b")
-    legacy_resources = tuple(
-        _resource_from_json(resource, f"scenario managed resource {i}")
-        for i, resource in enumerate(scenario_raw.get("managed_resources", []), 1)
-    )
-    if legacy_resources:
-        if not build_a.managed_resources:
-            build_a = replace(build_a, managed_resources=legacy_resources)
-        if not build_b.managed_resources:
-            build_b = replace(build_b, managed_resources=legacy_resources)
+    if not scenario.managed_resources:
+        scenario = replace(
+            scenario,
+            managed_resources=_migrate_legacy_build_resources(
+                build_a.managed_resources, build_b.managed_resources
+            ),
+        )
+    build_a = replace(build_a, managed_resources=())
+    build_b = replace(build_b, managed_resources=())
     return SharedConfiguration(
         version,
         _expect(obj, "compare_enabled", bool, "Shared configuration"),
@@ -541,6 +556,19 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
         build_a,
         build_b,
     )
+
+
+def _migrate_legacy_build_resources(
+    build_a_resources: tuple[SharedManagedResourceConfiguration, ...],
+    build_b_resources: tuple[SharedManagedResourceConfiguration, ...],
+) -> tuple[SharedManagedResourceConfiguration, ...]:
+    if build_a_resources and build_b_resources:
+        if build_a_resources != build_b_resources:
+            raise SharedConfigurationError(
+                "Legacy build-level managed resource definitions conflict."
+            )
+        return build_a_resources
+    return build_a_resources or build_b_resources
 
 
 def _build_from_json(raw: object, name: str) -> SharedBuildConfiguration:
@@ -701,20 +729,12 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
         or scenario.simulations < 1
     ):
         raise SharedConfigurationError("Shared scenario contains invalid values.")
+    resource_ids = _validate_scenario_managed_resources(scenario.managed_resources)
     for label, build in (("Build A", config.build_a), ("Build B", config.build_b)):
-        resource_ids = {resource.resource_id for resource in build.managed_resources}
-        if any(
-            not resource.resource_id.strip()
-            or not resource.name.strip()
-            or resource.starting_value < 0
-            for resource in build.managed_resources
-        ):
+        if build.managed_resources:
             raise SharedConfigurationError(
-                f"{label} contains invalid managed resources."
-            )
-        if len(resource_ids) != len(build.managed_resources):
-            raise SharedConfigurationError(
-                f"{label} managed resource IDs must be unique."
+                f"{label} contains legacy build-level managed resources; "
+                "managed resources must be owned by the scenario."
             )
         if not build.name.strip() or not build.attack_profiles:
             raise SharedConfigurationError(
@@ -738,6 +758,36 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
             )
         except ValueError as error:
             raise SharedConfigurationError(str(error)) from error
+
+
+def _validate_scenario_managed_resources(
+    resources: tuple[SharedManagedResourceConfiguration, ...],
+) -> set[str]:
+    resource_ids: set[str] = set()
+    for resource in resources:
+        if not resource.resource_id.strip():
+            raise SharedConfigurationError(
+                "Scenario managed resource IDs must be non-empty."
+            )
+        if resource.resource_id in resource_ids:
+            raise SharedConfigurationError(
+                "Scenario managed resource IDs must be unique."
+            )
+        if not resource.name.strip():
+            raise SharedConfigurationError(
+                "Scenario managed resource names must be non-empty."
+            )
+        if (
+            not isinstance(resource.starting_value, int)
+            or isinstance(resource.starting_value, bool)
+            or resource.starting_value < 0
+        ):
+            raise SharedConfigurationError(
+                "Scenario managed resource starting values must be integers "
+                "greater than or equal to 0."
+            )
+        resource_ids.add(resource.resource_id)
+    return resource_ids
 
 
 def _validate_profile(
@@ -770,7 +820,12 @@ def _validate_profile(
         )
     resource_ids = resource_ids or set()
     for cost in profile.resource_costs:
-        if cost.resource_id not in resource_ids or cost.amount < 1:
+        if (
+            not isinstance(cost.amount, int)
+            or isinstance(cost.amount, bool)
+            or cost.amount < 1
+            or cost.resource_id not in resource_ids
+        ):
             raise SharedConfigurationError(f"{label} has invalid resource costs.")
     try:
         roll_damage_formula(profile.damage_formula)
