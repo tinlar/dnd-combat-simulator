@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 
 from dnd_combat_simulator.combat import (
@@ -265,7 +265,14 @@ def validate_build_fields(
 ) -> list[ValidationIssue]:
     errors: list[ValidationIssue] = []
     if not build.name.strip():
-        _add_error(errors, f"{prefix}-build-name", "Build name is required.")
+        _add_error(
+            errors,
+            f"{prefix}-build-name",
+            "Build name is required.",
+            scope=ValidationScope.BUILD,
+            build_key=prefix,
+            field="name",
+        )
     profiles = build.resolved_attack_profiles()
     for index, profile in enumerate(profiles):
         widget_prefix = (
@@ -273,12 +280,18 @@ def validate_build_fields(
             if profile.attack_id
             else profile_prefix(prefix, index)
         )
+        profile_errors = _validate_profile_fields(
+            profile,
+            prefix=widget_prefix,
+            available_resource_ids=available_resource_ids,
+        )
         errors.extend(
-            _validate_profile_fields(
-                profile,
-                prefix=widget_prefix,
-                available_resource_ids=available_resource_ids,
+            replace(
+                error,
+                build_key=error.build_key or prefix,
+                attack_id=error.attack_id or profile.attack_id,
             )
+            for error in profile_errors
         )
     profile_ids = [profile.attack_id for profile in profiles]
     explicit_profile_ids = [profile.attack_id for profile in build.attack_profiles]
@@ -287,6 +300,9 @@ def validate_build_fields(
             errors,
             f"{prefix}-attack-ids",
             f"{build.name or 'Build'} contains an empty attack ID.",
+            scope=ValidationScope.BUILD,
+            build_key=prefix,
+            field="attack_ids",
         )
     duplicate_ids = {
         attack_id
@@ -299,6 +315,9 @@ def validate_build_fields(
             f"{prefix}-attack-ids",
             f"{build.name or 'Build'} contains duplicate attack IDs: "
             + ", ".join(sorted(duplicate_ids)),
+            scope=ValidationScope.BUILD,
+            build_key=prefix,
+            field="attack_ids",
         )
         return errors
     trigger_source_error_keys: set[str] = set()
