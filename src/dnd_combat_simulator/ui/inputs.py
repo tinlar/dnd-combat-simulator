@@ -1256,9 +1256,47 @@ def _build_math_metric(container: Any, label: str, value: str) -> None:
     st.markdown(f"**{label}:** {value}")
 
 
+class BuildMathInputsResult:
+    """Build-math input values plus adjacent resources.
+
+    The result remains iterable so callers can unpack the complete payload while
+    still behaving like the underlying ``BuildMathDefaults`` value for focused
+    tests and helper callers that only need the build-math defaults.
+    """
+
+    def __init__(
+        self,
+        defaults: BuildMathDefaults,
+        managed_resources: tuple[ManagedResource, ...],
+    ) -> None:
+        self.defaults = defaults
+        self.managed_resources = managed_resources
+
+    def __iter__(self):
+        yield self.defaults
+        yield self.managed_resources
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.defaults, name)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, BuildMathInputsResult):
+            return (
+                self.defaults,
+                self.managed_resources,
+            ) == (
+                other.defaults,
+                other.managed_resources,
+            )
+        return self.defaults == other
+
+    def __repr__(self) -> str:
+        return repr(self.defaults)
+
+
 def _build_math_inputs(
     build_prefix: str, errors_by_key: dict[str, str] | None = None
-) -> tuple[BuildMathDefaults, tuple[ManagedResource, ...]]:
+) -> BuildMathInputsResult:
     """Render visible build setup defaults and managed resources for one build."""
     import streamlit as st
 
@@ -1324,7 +1362,7 @@ def _build_math_inputs(
             "other Save DC bonus."
         )
         managed_resources = _render_managed_resources(errors_by_key, build_prefix)
-        return defaults, managed_resources
+        return BuildMathInputsResult(defaults, managed_resources)
 
 
 def _build_config_from_profiles(
