@@ -181,7 +181,7 @@ def _feature_inputs(
     *,
     can_inherit_triggering_critical: bool = False,
     can_require_matching_damage_dice: bool = False,
-) -> tuple[frozenset[AttackFeature], bool, bool]:
+) -> tuple[frozenset[AttackFeature], bool, bool, bool, bool, str, int]:
     """Render feats and features controls for one attack profile."""
     import streamlit as st
 
@@ -191,7 +191,7 @@ def _feature_inputs(
     expander = getattr(st, "expander", None)
     checkbox = getattr(st, "checkbox", None)
     if expander is None or checkbox is None:
-        return frozenset(), False, False
+        return frozenset(), False, False, False, False, "", 1
     try:
         feature_context = expander(
             f"{_features_summary_from_state(prefix)}",
@@ -234,6 +234,59 @@ def _feature_inputs(
             ),
             disabled=not can_require_matching_damage_dice,
         )
+        empowered_spell_key = profile_widget_key(prefix, "empowered_spell_enabled")
+        empowered_rescue_key = profile_widget_key(
+            prefix, "empowered_matching_rescue_enabled"
+        )
+        empowered_spell_enabled = checkbox(
+            "Empowered Spell",
+            value=False,
+            key=empowered_spell_key,
+            help="Costs 1 selected resource point per damage roll where rerolls occur.",
+        )
+        empowered_matching_rescue_enabled = checkbox(
+            "Empowered Matching Rescue",
+            value=False,
+            key=empowered_rescue_key,
+            help="Spends points only when a roll fails to produce a required match.",
+            disabled=not (
+                can_require_matching_damage_dice
+                and require_matching_damage_dice_to_continue
+            ),
+        )
+        empowered_resource_id = ""
+        empowered_max_dice_rerolled = 1
+        if empowered_spell_enabled or (
+            empowered_matching_rescue_enabled and can_require_matching_damage_dice
+        ):
+            build_prefix = prefix.split("-", 1)[0]
+            resources = _managed_resources_from_state(build_prefix)
+            options = [""] + [resource.resource_id for resource in resources]
+            labels = {"": "Select a resource"} | {
+                resource.resource_id: resource.name for resource in resources
+            }
+            empowered_resource_id = str(
+                st.selectbox(
+                    "Sorcery Point Resource",
+                    options,
+                    format_func=lambda value: labels.get(value, str(value)),
+                    key=profile_widget_key(prefix, "empowered_resource_id"),
+                    help=(
+                        "Empowered uses the selected managed-resource ID and "
+                        "costs exactly 1 point when rerolls occur."
+                    ),
+                )
+            )
+            empowered_max_dice_rerolled = int(
+                st.number_input(
+                    "Maximum Dice Rerolled",
+                    min_value=1,
+                    value=1,
+                    step=1,
+                    key=profile_widget_key(prefix, "empowered_max_dice_rerolled"),
+                    help="This represents the character's Charisma modifier.",
+                )
+            )
         for index, feature in enumerate(FEATURE_ORDER):
             disabled = not is_feature_available(
                 feature, resolution_type, affected_targets=affected_targets
@@ -262,6 +315,14 @@ def _feature_inputs(
             require_matching_damage_dice_to_continue
             and can_require_matching_damage_dice
         ),
+        bool(empowered_spell_enabled),
+        bool(
+            empowered_matching_rescue_enabled
+            and can_require_matching_damage_dice
+            and require_matching_damage_dice_to_continue
+        ),
+        empowered_resource_id,
+        empowered_max_dice_rerolled,
     )
 
 
@@ -1053,14 +1114,20 @@ def _attack_profile_inputs(
         trigger_type not in (TriggerType.ALWAYS, TriggerType.SOMETIMES)
         and trigger_source_attack_id is not None
     )
-    features, inherit_triggering_critical, require_matching_damage_dice_to_continue = (
-        _feature_inputs(
-            prefix,
-            resolution_type,
-            int(affected_targets),
-            can_inherit_triggering_critical=can_inherit_triggering_critical,
-            can_require_matching_damage_dice=int(attacks_per_round) > 1,
-        )
+    (
+        features,
+        inherit_triggering_critical,
+        require_matching_damage_dice_to_continue,
+        empowered_spell_enabled,
+        empowered_matching_rescue_enabled,
+        empowered_resource_id,
+        empowered_max_dice_rerolled,
+    ) = _feature_inputs(
+        prefix,
+        resolution_type,
+        int(affected_targets),
+        can_inherit_triggering_critical=can_inherit_triggering_critical,
+        can_require_matching_damage_dice=int(attacks_per_round) > 1,
     )
     return AttackProfile(
         name=attack_name,
@@ -1084,6 +1151,10 @@ def _attack_profile_inputs(
         use_build_save_dc=use_build_save_dc,
         inherit_triggering_critical=inherit_triggering_critical,
         require_matching_damage_dice_to_continue=require_matching_damage_dice_to_continue,
+        empowered_spell_enabled=empowered_spell_enabled,
+        empowered_matching_rescue_enabled=empowered_matching_rescue_enabled,
+        empowered_resource_id=empowered_resource_id,
+        empowered_max_dice_rerolled=empowered_max_dice_rerolled,
     )
 
 

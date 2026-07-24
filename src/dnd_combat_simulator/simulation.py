@@ -18,8 +18,12 @@ from dnd_combat_simulator.combat import (
     validate_feature_resolution_combination,
 )
 from dnd_combat_simulator.dice import (
+    ConstantTermRoll,
     DamageExpression,
+    DiceTermRoll,
     RandomNumberGenerator,
+    _damage_contribution,
+    _roll_accepted_face,
     parse_damage_expression,
     roll_compiled_damage_breakdown,
     roll_compiled_damage_expression,
@@ -91,6 +95,10 @@ class AttackProfile:
     use_build_save_dc: bool = False
     inherit_triggering_critical: bool = False
     require_matching_damage_dice_to_continue: bool = False
+    empowered_spell_enabled: bool = False
+    empowered_matching_rescue_enabled: bool = False
+    empowered_resource_id: str = ""
+    empowered_max_dice_rerolled: int = 1
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -98,6 +106,8 @@ class AttackProfile:
             "use_build_save_dc",
             "inherit_triggering_critical",
             "require_matching_damage_dice_to_continue",
+            "empowered_spell_enabled",
+            "empowered_matching_rescue_enabled",
         ):
             if type(getattr(self, field_name)) is not bool:
                 raise ValueError(f"{field_name} must be a boolean")
@@ -220,6 +230,15 @@ class AttackProfileResult:
     )
     average_executions_per_combat: float = field(default=0, compare=False)
     average_executions_per_round: float = field(default=0, compare=False)
+    average_empowered_uses_per_combat: float = field(default=0, compare=False)
+    average_empowered_damage_gained_per_combat: float = field(default=0, compare=False)
+    average_empowered_matching_rescue_attempts_per_combat: float = field(
+        default=0, compare=False
+    )
+    empowered_matching_rescue_success_rate: float = field(default=0, compare=False)
+    average_empowered_matching_rescue_attacks_enabled_per_combat: float = field(
+        default=0, compare=False
+    )
 
 
 @dataclass(frozen=True)
@@ -384,6 +403,7 @@ class ProfileExecutionPlan:
     effective_save_dc: int | None
     inherit_triggering_critical: bool
     require_matching_damage_dice_to_continue: bool
+    empowered_resource_index: int | None
 
 
 @dataclass
@@ -403,6 +423,11 @@ class ProfileAccumulator:
     failed_saves: int = 0
     successful_saves: int = 0
     damaging_resolutions: int = 0
+    empowered_uses: int = 0
+    empowered_damage_gained: int = 0
+    empowered_rescue_attempts: int = 0
+    empowered_rescue_successes: int = 0
+    empowered_rescue_attacks_enabled: int = 0
 
 
 @dataclass
@@ -489,6 +514,140 @@ def parse_active_rounds(active_rounds: str | None) -> frozenset[int] | None:
     return frozenset(sorted(rounds))
 
 
+@dataclass(frozen=True)
+class EmpoweredDie:
+    term_index: int
+    chain_index: int
+    roll_index: int
+    sides: int
+    face: int
+    contribution: int
+
+
+def _included_empowered_dice(breakdown) -> tuple[EmpoweredDie, ...]:
+    dice: list[EmpoweredDie] = []
+    for term_index, term_roll in enumerate(breakdown.terms):
+        if not isinstance(term_roll, DiceTermRoll) or term_roll.term.sign <= 0:
+            continue
+        sides = term_roll.term.dice.sides
+        for chain_index, chain in enumerate(term_roll.chains):
+            if not chain.retained:
+                continue
+            for roll_index, face in enumerate(chain.rolls):
+                dice.append(
+                    EmpoweredDie(
+                        term_index,
+                        chain_index,
+                        roll_index,
+                        sides,
+                        face,
+                        _damage_contribution(face, frozenset()),
+                    )
+                )
+    return tuple(dice)
+
+
+def _replace_empowered_dice_total(
+    breakdown, selected: tuple[EmpoweredDie, ...], rng, features: frozenset[str]
+) -> tuple[int, tuple[int, ...], int]:
+    selected_keys = {(d.term_index, d.chain_index, d.roll_index): d for d in selected}
+    total = 0
+    faces: list[int] = []
+    damage_delta = 0
+    for term_index, term_roll in enumerate(breakdown.terms):
+        if isinstance(term_roll, ConstantTermRoll):
+            total += term_roll.subtotal
+            continue
+        subtotal = 0
+        sign = term_roll.term.sign
+        for chain_index, chain in enumerate(term_roll.chains):
+            chain_total = 0
+            for roll_index, face in enumerate(chain.rolls):
+                old_contribution = _damage_contribution(face, features)
+                key = (term_index, chain_index, roll_index)
+                if key in selected_keys:
+                    new_face = _roll_accepted_face(term_roll.term.dice, rng)
+                    if "tavern_brawler" in features and new_face == 1:
+                        new_face = rng.randint(1, term_roll.term.dice.sides)
+                    new_contribution = _damage_contribution(new_face, features)
+                    damage_delta += sign * (new_contribution - old_contribution)
+                    face = new_face
+                    old_contribution = new_contribution
+                chain_total += old_contribution
+                if chain.retained and sign > 0:
+                    faces.append(face)
+            if chain.retained:
+                subtotal += chain_total
+        total += sign * subtotal
+    return max(0, total), tuple(faces), damage_delta
+
+
+def _select_empowered_damage_dice(
+    dice: tuple[EmpoweredDie, ...], max_dice: int, protected_match: bool = False
+) -> tuple[EmpoweredDie, ...]:
+    protected: set[int] = set()
+    if protected_match:
+        counts: dict[int, list[int]] = {}
+        for i, die in enumerate(dice):
+            counts.setdefault(die.face, []).append(i)
+        pairs = [indexes for indexes in counts.values() if len(indexes) >= 2]
+        if pairs:
+            protected = set(pairs[0][:2])
+    candidates = [
+        ((die.sides + 1) / 2 - die.face, die.face, i, die)
+        for i, die in enumerate(dice)
+        if i not in protected and (die.sides + 1) / 2 > die.face
+    ]
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return tuple(item[3] for item in candidates[:max_dice])
+
+
+def _match_probability_after_reroll(
+    dice: tuple[EmpoweredDie, ...], indexes: tuple[int, ...]
+) -> float:
+    retained = [die.face for i, die in enumerate(dice) if i not in indexes]
+    if _has_matching_pair(tuple(retained)):
+        return 1.0
+    total = 1
+    success = 0
+    sides = [dice[i].sides for i in indexes]
+
+    def rec(pos: int, rolls: list[int]):
+        nonlocal success
+        if pos == len(sides):
+            success += int(_has_matching_pair(tuple(retained + rolls)))
+            return
+        for face in range(1, sides[pos] + 1):
+            rec(pos + 1, rolls + [face])
+
+    for side in sides:
+        total *= side
+    rec(0, [])
+    return success / total if total else 0
+
+
+def _select_empowered_rescue_dice(
+    dice: tuple[EmpoweredDie, ...], max_dice: int
+) -> tuple[EmpoweredDie, ...]:
+    from itertools import combinations
+
+    best: tuple[tuple[float, tuple[int, ...], float, int], tuple[int, ...]] | None = (
+        None
+    )
+    n = len(dice)
+    for count in range(1, min(max_dice, n) + 1):
+        for indexes in combinations(range(n), count):
+            prob = _match_probability_after_reroll(dice, indexes)
+            if prob <= 0:
+                continue
+            low = tuple(sorted(dice[i].face for i in indexes))
+            improvement = sum((dice[i].sides + 1) / 2 - dice[i].face for i in indexes)
+            key = (prob, tuple(-v for v in low), improvement, -count)
+            if best is None or key > best[0]:
+                best = (key, indexes)
+    return tuple(dice[i] for i in best[1]) if best else ()
+
+
 def _profile_id(profile: AttackProfile) -> str:
     return profile.attack_id.strip() or profile.name.strip()
 
@@ -566,6 +725,34 @@ def _validate_resource_costs(
 ) -> None:
     resource_ids = {resource.resource_id for resource in resources}
     for profile_index, profile in enumerate(profiles, start=1):
+        profile_label = f"{label} profile {profile_index}"
+        if profile.empowered_spell_enabled or profile.empowered_matching_rescue_enabled:
+            if not profile.empowered_resource_id:
+                raise ValueError(
+                    f"{profile_label} Empowered resource selection is required."
+                )
+            if profile.empowered_resource_id not in resource_ids:
+                raise ValueError(
+                    f"{profile_label} references a missing Empowered resource."
+                )
+            if (
+                not isinstance(profile.empowered_max_dice_rerolled, int)
+                or profile.empowered_max_dice_rerolled < 1
+            ):
+                raise ValueError(
+                    f"{profile_label} Maximum Dice Rerolled must be at least 1."
+                )
+        if profile.empowered_matching_rescue_enabled:
+            if not profile.require_matching_damage_dice_to_continue:
+                raise ValueError(
+                    f"{profile_label} Empowered Matching Rescue requires "
+                    "matching damage dice."
+                )
+            if profile.attacks_per_round <= 1:
+                raise ValueError(
+                    f"{profile_label} Empowered Matching Rescue requires "
+                    "more than 1 attack."
+                )
         for cost in profile.resource_costs:
             if not cost.resource_id:
                 raise ValueError(
@@ -640,6 +827,14 @@ def _build_execution_plan(
                 effective_save_dc=resolved.save_dc,
                 inherit_triggering_critical=profile.inherit_triggering_critical,
                 require_matching_damage_dice_to_continue=profile.require_matching_damage_dice_to_continue,
+                empowered_resource_index=(
+                    resource_indexes.get(profile.empowered_resource_id)
+                    if (
+                        profile.empowered_spell_enabled
+                        or profile.empowered_matching_rescue_enabled
+                    )
+                    else None
+                ),
             )
         )
     return tuple(plans)
@@ -865,6 +1060,63 @@ def _triggering_critical_for_execution(
     return any(queue)
 
 
+def _maybe_apply_empowered(
+    *,
+    plan: ProfileExecutionPlan,
+    breakdown,
+    damage: int,
+    included_die_faces: tuple[int, ...],
+    is_matching_gate: bool,
+    remaining_resources: list[int],
+    resource_consumed_totals: list[int],
+    profile_stat: ProfileAccumulator,
+    rng: RandomNumberGenerator,
+) -> tuple[int, tuple[int, ...]]:
+    resource_index = plan.empowered_resource_index
+    if (
+        breakdown is None
+        or resource_index is None
+        or remaining_resources[resource_index] < 1
+    ):
+        return damage, included_die_faces
+    dice = _included_empowered_dice(breakdown)
+    if not dice:
+        return damage, included_die_faces
+    selected: tuple[EmpoweredDie, ...] = ()
+    rescue = False
+    if (
+        plan.profile.empowered_matching_rescue_enabled
+        and is_matching_gate
+        and not _has_matching_pair(included_die_faces)
+    ):
+        selected = _select_empowered_rescue_dice(
+            dice, plan.profile.empowered_max_dice_rerolled
+        )
+        rescue = bool(selected)
+    elif plan.profile.empowered_spell_enabled:
+        selected = _select_empowered_damage_dice(
+            dice,
+            plan.profile.empowered_max_dice_rerolled,
+            protected_match=is_matching_gate and _has_matching_pair(included_die_faces),
+        )
+    if not selected or remaining_resources[resource_index] < 1:
+        return damage, included_die_faces
+    remaining_resources[resource_index] -= 1
+    resource_consumed_totals[resource_index] += 1
+    new_total, new_faces, delta = _replace_empowered_dice_total(
+        breakdown, selected, rng, plan.damage_features
+    )
+    if rescue:
+        profile_stat.empowered_rescue_attempts += 1
+        if _has_matching_pair(new_faces):
+            profile_stat.empowered_rescue_successes += 1
+            profile_stat.empowered_rescue_attacks_enabled += 1
+    else:
+        profile_stat.empowered_uses += 1
+        profile_stat.empowered_damage_gained += delta
+    return new_total, new_faces
+
+
 def _resolve_attack_roll_profile_execution(
     *,
     plan: ProfileExecutionPlan,
@@ -872,7 +1124,7 @@ def _resolve_attack_roll_profile_execution(
     rng: RandomNumberGenerator,
     force_critical_damage: bool = False,
     capture_damage_dice: bool = False,
-) -> tuple[int, bool, bool, tuple[int, ...]]:
+) -> tuple[int, bool, bool, tuple[int, ...], object | None]:
     attack_roll = roll_attack_d20(
         plan.attack_roll_mode, rng=rng, features=plan.attack_features
     )
@@ -891,7 +1143,13 @@ def _resolve_attack_roll_profile_execution(
                 rng=rng,
                 features=plan.damage_features,
             )
-            return breakdown.total, hit, critical_hit, breakdown.included_die_faces
+            return (
+                breakdown.total,
+                hit,
+                critical_hit,
+                breakdown.included_die_faces,
+                breakdown,
+            )
         return (
             roll_compiled_damage_expression(
                 plan.compiled_damage_expression, rng=rng, features=plan.damage_features
@@ -899,6 +1157,7 @@ def _resolve_attack_roll_profile_execution(
             hit,
             critical_hit,
             (),
+            None,
         )
     if AttackFeature.POTENT_CANTRIP in plan.attack_features:
         damage = (
@@ -907,8 +1166,8 @@ def _resolve_attack_roll_profile_execution(
             )
             // 2
         )
-        return damage, hit, critical_hit, ()
-    return 0, hit, critical_hit, ()
+        return damage, hit, critical_hit, (), None
+    return 0, hit, critical_hit, (), None
 
 
 def _resolve_saving_throw_profile_execution(
@@ -918,7 +1177,7 @@ def _resolve_saving_throw_profile_execution(
     rng: RandomNumberGenerator,
     force_critical_damage: bool = False,
     capture_damage_dice: bool = False,
-) -> tuple[int, bool, bool, tuple[int, ...]]:
+) -> tuple[int, bool, bool, tuple[int, ...], object | None]:
     save = resolve_compiled_saving_throw_damage(
         save_dc=plan.effective_save_dc or 0,
         enemy_save_bonus=enemy_save_bonus,
@@ -941,8 +1200,9 @@ def _resolve_saving_throw_profile_execution(
             save.failed_save,
             save.successful_save,
             breakdown.included_die_faces,
+            breakdown,
         )
-    return save.damage_dealt, save.failed_save, save.successful_save, ()
+    return save.damage_dealt, save.failed_save, save.successful_save, (), None
 
 
 def _resolve_automatic_damage_profile_execution(
@@ -950,14 +1210,14 @@ def _resolve_automatic_damage_profile_execution(
     plan: ProfileExecutionPlan,
     rng: RandomNumberGenerator,
     force_critical_damage: bool = False,
-) -> tuple[int, tuple[int, ...]]:
+) -> tuple[int, tuple[int, ...], object]:
     breakdown = roll_compiled_damage_breakdown(
         plan.compiled_damage_expression,
         critical=force_critical_damage,
         rng=rng,
         features=plan.damage_features,
     )
-    return breakdown.total, breakdown.included_die_faces
+    return breakdown.total, breakdown.included_die_faces, breakdown
 
 
 def _finalize_profile_results(
@@ -1015,6 +1275,18 @@ def _finalize_profile_results(
                 if stat.automatic_damage_applications
                 else 0
             ),
+            average_empowered_uses_per_combat=stat.empowered_uses / simulations,
+            average_empowered_damage_gained_per_combat=stat.empowered_damage_gained
+            / simulations,
+            average_empowered_matching_rescue_attempts_per_combat=stat.empowered_rescue_attempts
+            / simulations,
+            empowered_matching_rescue_success_rate=(
+                stat.empowered_rescue_successes / stat.empowered_rescue_attempts
+                if stat.empowered_rescue_attempts
+                else 0
+            ),
+            average_empowered_matching_rescue_attacks_enabled_per_combat=stat.empowered_rescue_attacks_enabled
+            / simulations,
         )
         for profile, stat in zip(profiles, profile_stats, strict=True)
     )
@@ -1150,6 +1422,11 @@ def run_damage_simulations(
     used_resource_indexes = {
         cost.resource_index for plan in execution_plan for cost in plan.resource_costs
     }
+    used_resource_indexes.update(
+        plan.empowered_resource_index
+        for plan in execution_plan
+        if plan.empowered_resource_index is not None
+    )
     resource_consumed_totals = [0 for _ in managed_resources]
     resource_remaining_totals = [0 for _ in managed_resources]
     resource_ended_at_zero_combats = [0 for _ in managed_resources]
@@ -1236,14 +1513,34 @@ def run_damage_simulations(
                     chain_die_faces: tuple[int, ...] = ()
                     if plan.resolution_type is ResolutionType.ATTACK_ROLL:
                         for _target_index in range(profile.affected_targets):
-                            damage, hit, critical_hit, included_die_faces = (
+                            capture_empowered_damage = (
+                                plan.require_matching_damage_dice_to_continue
+                                or plan.profile.empowered_spell_enabled
+                                or plan.profile.empowered_matching_rescue_enabled
+                            )
+                            damage, hit, critical_hit, included_die_faces, breakdown = (
                                 _resolve_attack_roll_profile_execution(
                                     plan=plan,
                                     target_armor_class=target_armor_class,
                                     rng=random_number_generator,
                                     force_critical_damage=force_critical_damage,
-                                    capture_damage_dice=plan.require_matching_damage_dice_to_continue,
+                                    capture_damage_dice=capture_empowered_damage,
                                 )
+                            )
+                            is_matching_gate = (
+                                plan.require_matching_damage_dice_to_continue
+                                and attack_index < execution_count - 1
+                            )
+                            damage, included_die_faces = _maybe_apply_empowered(
+                                plan=plan,
+                                breakdown=breakdown,
+                                damage=damage,
+                                included_die_faces=included_die_faces,
+                                is_matching_gate=is_matching_gate,
+                                remaining_resources=remaining_resources,
+                                resource_consumed_totals=resource_consumed_totals,
+                                profile_stat=profile_stats[profile_index],
+                                rng=random_number_generator,
                             )
                             if not chain_die_faces:
                                 chain_die_faces = included_die_faces
@@ -1286,14 +1583,37 @@ def run_damage_simulations(
                                 stop_profile_after_miss = True
                     elif plan.resolution_type is ResolutionType.SAVING_THROW:
                         if profile.affected_targets == 1:
-                            damage, failed_save, successful_save, included_die_faces = (
-                                _resolve_saving_throw_profile_execution(
-                                    plan=plan,
-                                    enemy_save_bonus=enemy_save_bonus,
-                                    rng=random_number_generator,
-                                    force_critical_damage=force_critical_damage,
-                                    capture_damage_dice=plan.require_matching_damage_dice_to_continue,
-                                )
+                            (
+                                damage,
+                                failed_save,
+                                successful_save,
+                                included_die_faces,
+                                breakdown,
+                            ) = _resolve_saving_throw_profile_execution(
+                                plan=plan,
+                                enemy_save_bonus=enemy_save_bonus,
+                                rng=random_number_generator,
+                                force_critical_damage=force_critical_damage,
+                                capture_damage_dice=(
+                                    plan.require_matching_damage_dice_to_continue
+                                    or plan.profile.empowered_spell_enabled
+                                    or plan.profile.empowered_matching_rescue_enabled
+                                ),
+                            )
+                            is_matching_gate = (
+                                plan.require_matching_damage_dice_to_continue
+                                and attack_index < execution_count - 1
+                            )
+                            damage, included_die_faces = _maybe_apply_empowered(
+                                plan=plan,
+                                breakdown=breakdown,
+                                damage=damage,
+                                included_die_faces=included_die_faces,
+                                is_matching_gate=is_matching_gate,
+                                remaining_resources=remaining_resources,
+                                resource_consumed_totals=resource_consumed_totals,
+                                profile_stat=profile_stats[profile_index],
+                                rng=random_number_generator,
                             )
                             chain_die_faces = included_die_faces
                             simulation_damage += damage
@@ -1329,10 +1649,22 @@ def run_damage_simulations(
                                 successful_save
                             )
                             continue
-                        shared_damage = roll_compiled_damage_expression(
+                        shared_breakdown = roll_compiled_damage_breakdown(
                             plan.compiled_damage_expression,
                             rng=random_number_generator,
                             features=plan.damage_features,
+                        )
+                        shared_damage, _shared_faces = _maybe_apply_empowered(
+                            plan=plan,
+                            breakdown=shared_breakdown,
+                            damage=shared_breakdown.total,
+                            included_die_faces=shared_breakdown.included_die_faces,
+                            is_matching_gate=plan.require_matching_damage_dice_to_continue
+                            and attack_index < execution_count - 1,
+                            remaining_resources=remaining_resources,
+                            resource_consumed_totals=resource_consumed_totals,
+                            profile_stat=profile_stats[profile_index],
+                            rng=random_number_generator,
                         )
                         for _target_index in range(profile.affected_targets):
                             natural_save = random_number_generator.randint(1, 20)
@@ -1385,7 +1717,7 @@ def run_damage_simulations(
 
                     else:
                         for _target_index in range(profile.affected_targets):
-                            damage, included_die_faces = (
+                            damage, included_die_faces, breakdown = (
                                 _resolve_automatic_damage_profile_execution(
                                     plan=plan,
                                     rng=random_number_generator,

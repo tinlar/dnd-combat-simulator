@@ -72,6 +72,10 @@ class SharedAttackProfileConfiguration:
     use_build_save_dc: bool = False
     inherit_triggering_critical: bool = False
     require_matching_damage_dice_to_continue: bool = False
+    empowered_spell_enabled: bool = False
+    empowered_matching_rescue_enabled: bool = False
+    empowered_resource_id: str = ""
+    empowered_max_dice_rerolled: int = 1
 
     @classmethod
     def from_attack_profile(
@@ -99,6 +103,10 @@ class SharedAttackProfileConfiguration:
             use_build_save_dc=profile.use_build_save_dc,
             inherit_triggering_critical=profile.inherit_triggering_critical,
             require_matching_damage_dice_to_continue=profile.require_matching_damage_dice_to_continue,
+            empowered_spell_enabled=profile.empowered_spell_enabled,
+            empowered_matching_rescue_enabled=profile.empowered_matching_rescue_enabled,
+            empowered_resource_id=profile.empowered_resource_id,
+            empowered_max_dice_rerolled=profile.empowered_max_dice_rerolled,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -124,6 +132,10 @@ class SharedAttackProfileConfiguration:
             use_build_save_dc=self.use_build_save_dc,
             inherit_triggering_critical=self.inherit_triggering_critical,
             require_matching_damage_dice_to_continue=self.require_matching_damage_dice_to_continue,
+            empowered_spell_enabled=self.empowered_spell_enabled,
+            empowered_matching_rescue_enabled=self.empowered_matching_rescue_enabled,
+            empowered_resource_id=self.empowered_resource_id,
+            empowered_max_dice_rerolled=self.empowered_max_dice_rerolled,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -156,6 +168,10 @@ class SharedAttackProfileConfiguration:
             "require_matching_damage_dice_to_continue": (
                 self.require_matching_damage_dice_to_continue
             ),
+            "empowered_spell_enabled": self.empowered_spell_enabled,
+            "empowered_matching_rescue_enabled": self.empowered_matching_rescue_enabled,
+            "empowered_resource_id": self.empowered_resource_id,
+            "empowered_max_dice_rerolled": self.empowered_max_dice_rerolled,
         }
 
 
@@ -697,6 +713,10 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
         _optional_bool(obj, "use_build_save_dc", ctx),
         _optional_bool(obj, "inherit_triggering_critical", ctx),
         _optional_bool(obj, "require_matching_damage_dice_to_continue", ctx),
+        _optional_bool(obj, "empowered_spell_enabled", ctx),
+        _optional_bool(obj, "empowered_matching_rescue_enabled", ctx),
+        obj.get("empowered_resource_id", ""),
+        obj.get("empowered_max_dice_rerolled", 1),
     )
 
 

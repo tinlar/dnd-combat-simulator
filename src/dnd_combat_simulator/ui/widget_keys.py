@@ -64,6 +64,10 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "require_matching_damage_dice_to_continue": (
             "require-matching-damage-dice-to-continue"
         ),
+        "empowered_spell_enabled": "empowered-spell-enabled",
+        "empowered_matching_rescue_enabled": "empowered-matching-rescue-enabled",
+        "empowered_resource_id": "empowered-resource-id",
+        "empowered_max_dice_rerolled": "empowered-max-dice-rerolled",
     }
     return f"{prefix}-{suffixes[field]}"
 

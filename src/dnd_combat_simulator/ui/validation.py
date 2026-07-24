@@ -171,6 +171,51 @@ def _validate_profile_fields(
         parse_active_rounds(profile.active_rounds)
     except ValueError as error:
         _add_error(errors, profile_widget_key(prefix, "active_rounds"), str(error))
+    if profile.empowered_spell_enabled or profile.empowered_matching_rescue_enabled:
+        if not profile.empowered_resource_id:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "empowered_resource_id"),
+                "Select an Empowered resource.",
+                scope=ValidationScope.RESOURCE,
+                field="empowered_resource_id",
+                attack_id=profile.attack_id,
+            )
+        elif (
+            available_resource_ids is not None
+            and profile.empowered_resource_id not in available_resource_ids
+        ):
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "empowered_resource_id"),
+                "Select an existing Empowered resource.",
+                scope=ValidationScope.RESOURCE,
+                field="empowered_resource_id",
+                attack_id=profile.attack_id,
+                resource_id=profile.empowered_resource_id,
+            )
+        if (
+            not isinstance(profile.empowered_max_dice_rerolled, int)
+            or profile.empowered_max_dice_rerolled < 1
+        ):
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "empowered_max_dice_rerolled"),
+                "Maximum Dice Rerolled must be at least 1.",
+            )
+    if profile.empowered_matching_rescue_enabled:
+        if not profile.require_matching_damage_dice_to_continue:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "empowered_matching_rescue_enabled"),
+                "Requires matching damage dice to continue.",
+            )
+        if profile.attacks_per_round <= 1:
+            _add_error(
+                errors,
+                profile_widget_key(prefix, "empowered_matching_rescue_enabled"),
+                "Requires more than one configured attack.",
+            )
     for cost in profile.resource_costs:
         if not cost.resource_id:
             _add_error(

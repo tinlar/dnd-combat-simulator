@@ -641,6 +641,21 @@ def _profile_breakdown_rows(result: SimulationResult) -> list[dict[str, str]]:
             "Average executions per round": format_compact_decimal(
                 profile_result.average_executions_per_round
             ),
+            "Average Empowered uses per combat": format_compact_decimal(
+                profile_result.average_empowered_uses_per_combat
+            ),
+            "Average damage gained from Empowered": format_damage(
+                profile_result.average_empowered_damage_gained_per_combat
+            ),
+            "Average Matching Rescue attempts per combat": format_compact_decimal(
+                profile_result.average_empowered_matching_rescue_attempts_per_combat
+            ),
+            "Matching Rescue success rate": (
+                f"{profile_result.empowered_matching_rescue_success_rate:.1%}"
+            ),
+            "Average attacks enabled by Matching Rescue": format_compact_decimal(
+                profile_result.average_empowered_matching_rescue_attacks_enabled_per_combat
+            ),
         }
         average_triggered = profile_result.average_triggered_profile_uses_per_simulation
         if profile.trigger_type is TriggerType.ALWAYS:
