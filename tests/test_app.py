@@ -1085,6 +1085,81 @@ def test_render_share_configuration_button_invalid_damage_does_not_raise_or_seri
     assert mounts[0]["data"]["disabled"] is True
 
 
+def test_share_enabled_for_active_build_managed_resource(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    mounts: list[dict[str, object]] = []
+    state = {
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): ["primary"],
+        app.build_managed_resource_ids_key("first"): ["focus"],
+        app.managed_resource_widget_key("focus", "name", "first"): "Focus",
+        app.managed_resource_widget_key("focus", "starting-value", "first"): 2,
+        app.profile_widget_key("first-primary", "name"): "Focused Strike",
+        app.profile_widget_key("first-primary", "damage_formula"): "1d6+3",
+        app.profile_widget_key("first-primary", "resource_enabled"): True,
+        app.profile_widget_key("first-primary", "resource_id"): "focus",
+        app.profile_widget_key("first-primary", "resource_amount"): 1,
+    }
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/app"),
+        components=SimpleNamespace(
+            v2=SimpleNamespace(
+                component=lambda *a, **k: lambda **kwargs: mounts.append(kwargs)
+            )
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: _FakeShareStore())
+
+    app._render_share_configuration_button()
+
+    assert mounts[0]["data"]["disabled"] is False
+    assert mounts[0]["data"]["message"] == ""
+
+
+def test_share_validation_ignores_disabled_optional_resource_and_trigger_state(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    mounts: list[dict[str, object]] = []
+    state = {
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): ["primary"],
+        app.profile_widget_key("first-primary", "name"): "Strike",
+        app.profile_widget_key("first-primary", "damage_formula"): "1d6+3",
+        app.profile_widget_key("first-primary", "resource_enabled"): False,
+        app.profile_widget_key("first-primary", "resource_id"): "",
+        app.profile_widget_key("first-primary", "trigger_type"): "Always",
+        app.profile_widget_key("first-primary", "trigger_source_attack_id"): "",
+        app.profile_widget_key("first-primary", "trigger_chance_percent"): "",
+    }
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/app"),
+        components=SimpleNamespace(
+            v2=SimpleNamespace(
+                component=lambda *a, **k: lambda **kwargs: mounts.append(kwargs)
+            )
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: _FakeShareStore())
+
+    app._render_share_configuration_button()
+
+    assert mounts[0]["data"]["disabled"] is False
+    assert mounts[0]["data"]["message"] == ""
+
+
 def test_validate_configuration_for_ui_scopes_damage_error_to_exact_build_profile() -> (
     None
 ):

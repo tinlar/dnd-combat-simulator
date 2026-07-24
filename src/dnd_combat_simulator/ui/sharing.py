@@ -26,6 +26,7 @@ from dnd_combat_simulator.sharing import (
     shared_configuration_from_configs,
 )
 from dnd_combat_simulator.simulation import (
+    ManagedResource,
     ScenarioConfig,
 )
 from dnd_combat_simulator.ui.components import _mount_unified_share_component
@@ -46,8 +47,10 @@ from dnd_combat_simulator.ui.state import (
     hydrate_session_state_from_shared_configuration,
 )
 from dnd_combat_simulator.ui.validation import (
+    ValidationIssue,
     _validation_errors_for_configuration,
-    validate_configuration_for_ui,
+    validate_build_fields,
+    validate_scenario_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -206,6 +209,54 @@ def save_shared_configuration(
     return share_store.save(configuration)
 
 
+def _active_build_prefixes_from_state(session_state) -> tuple[str, ...]:
+    if bool(session_state.get(COMPARE_WIDGET_KEY, False)):
+        return ("first", "second")
+    return ("first",)
+
+
+def _active_managed_resources_from_state(session_state) -> tuple[ManagedResource, ...]:
+    resources_by_id: dict[str, ManagedResource] = {}
+    for build_prefix in _active_build_prefixes_from_state(session_state):
+        for resource in _managed_resources_from_state(build_prefix):
+            if resource.resource_id and resource.resource_id not in resources_by_id:
+                resources_by_id[resource.resource_id] = resource
+    return tuple(resources_by_id.values())
+
+
+def _current_active_validation_issues() -> list[ValidationIssue]:
+    """Return the active configuration validation used by run and share controls."""
+    import streamlit as st
+
+    session_state = getattr(st, "session_state", {})
+    scenario = ScenarioConfig(
+        target_armor_class=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["target_armor_class"], 15)
+        ),
+        enemy_save_bonus=int(
+            session_state.get(SCENARIO_WIDGET_KEYS["enemy_save_bonus"], 3)
+        ),
+        rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
+        simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
+        managed_resources=_active_managed_resources_from_state(session_state),
+    )
+    issues = [*validate_scenario_fields(scenario)]
+    for build_prefix in _active_build_prefixes_from_state(session_state):
+        build = _build_from_state(
+            build_prefix, "Build A" if build_prefix == "first" else "Build B"
+        )
+        issues.extend(
+            validate_build_fields(
+                build,
+                prefix=build_prefix,
+                available_resource_ids=frozenset(
+                    r.resource_id for r in build.managed_resources
+                ),
+            )
+        )
+    return issues
+
+
 def _current_shared_configuration() -> SharedConfiguration:
     import streamlit as st
 
@@ -219,7 +270,7 @@ def _current_shared_configuration() -> SharedConfiguration:
         ),
         rounds=int(session_state.get(SCENARIO_WIDGET_KEYS["rounds"], 4)),
         simulations=int(session_state.get(SCENARIO_WIDGET_KEYS["simulations"], 10_000)),
-        managed_resources=_managed_resources_from_state(),
+        managed_resources=_active_managed_resources_from_state(session_state),
     )
     return shared_configuration_from_configs(
         compare_enabled=bool(session_state.get(COMPARE_WIDGET_KEY, False)),
@@ -266,7 +317,7 @@ def _render_share_configuration_button() -> None:
         "message": state.pop(SHARE_ERROR_MESSAGE_KEY, ""),
     }
 
-    if validate_configuration_for_ui(_current_shared_configuration()):
+    if _current_active_validation_issues():
         state.pop(GENERATED_SHARE_URL_KEY, None)
         state.pop(GENERATED_SHARE_FINGERPRINT_KEY, None)
         base_data.update(
