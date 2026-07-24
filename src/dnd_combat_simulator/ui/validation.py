@@ -506,10 +506,11 @@ def validate_configuration_for_ui(
         for resource in configuration.scenario.to_scenario_config().managed_resources
         if resource.resource_id
     )
-    for build_key, prefix, build in (
-        ("build_a", "first", configuration.build_a),
-        ("build_b", "second", configuration.build_b),
-    ):
+    active_builds = [("build_a", "first", configuration.build_a)]
+    if configuration.compare_enabled:
+        active_builds.append(("build_b", "second", configuration.build_b))
+
+    for build_key, prefix, build in active_builds:
         attack_ids = [profile.attack_id for profile in build.attack_profiles]
         widget_to_attack = {
             _state_widget_prefix(prefix, attack_id): attack_id
@@ -552,16 +553,20 @@ def _validation_errors_for_configuration(
         for resource in scenario.managed_resources
         if resource.resource_id
     )
-    return [
+    issues = [
         *validate_scenario_fields(scenario),
         *validate_build_fields(
             configuration.build_a.to_build_config(),
             prefix="first",
             available_resource_ids=available_resource_ids,
         ),
-        *validate_build_fields(
-            configuration.build_b.to_build_config(),
-            prefix="second",
-            available_resource_ids=available_resource_ids,
-        ),
     ]
+    if configuration.compare_enabled:
+        issues.extend(
+            validate_build_fields(
+                configuration.build_b.to_build_config(),
+                prefix="second",
+                available_resource_ids=available_resource_ids,
+            )
+        )
+    return issues

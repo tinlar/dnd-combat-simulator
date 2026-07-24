@@ -1211,7 +1211,6 @@ def test_run_single_build_with_feedback_sets_running_state_and_duration(
     monkeypatch,
 ) -> None:
     import sys
-    from contextlib import contextmanager
     from types import SimpleNamespace
 
     import ui_test_api as app
@@ -1219,24 +1218,28 @@ def test_run_single_build_with_feedback_sets_running_state_and_duration(
     state = {}
     events: list[str] = []
 
-    @contextmanager
-    def spinner(message):
-        events.append(message)
-        assert state[app.SIMULATION_RUNNING_KEY] is True
-        yield
+    class Placeholder:
+        def markdown(self, body, **kwargs):
+            events.append("markdown")
+            assert app.CALCULATING_SPINNER_CLASS in body
+            assert kwargs == {"unsafe_allow_html": True}
+            assert state[app.SIMULATION_RUNNING_KEY] is True
+
+        def empty(self):
+            events.append("empty")
 
     result = object()
     monkeypatch.setitem(
         sys.modules,
         "streamlit",
-        SimpleNamespace(session_state=state, spinner=spinner),
+        SimpleNamespace(session_state=state, empty=Placeholder),
     )
     monkeypatch.setattr(app.time, "perf_counter", iter([10.0, 17.24]).__next__)
     monkeypatch.setattr(app, "run_single_build_from_inputs", lambda inputs: result)
 
     assert app._run_single_build_with_feedback(object()) is result
 
-    assert events == ["Calculating..."]
+    assert events == ["markdown", "empty"]
     assert state[app.SIMULATION_RUNNING_KEY] is False
     assert state[app.SIMULATION_PENDING_KEY] is False
     assert state[app.SIMULATION_DURATION_MESSAGE_KEY] == (
@@ -5031,7 +5034,6 @@ def test_bar_charts_generate_labels_for_all_bar_values() -> None:
 
 def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:
     import sys
-    from contextlib import nullcontext
     from types import SimpleNamespace
 
     import ui_test_api as app
@@ -5042,8 +5044,10 @@ def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:
         "streamlit",
         SimpleNamespace(
             session_state=state,
-            spinner=lambda message: nullcontext(),
-            markdown=lambda *a, **k: None,
+            empty=lambda: SimpleNamespace(
+                markdown=lambda *a, **k: None,
+                empty=lambda: None,
+            ),
         ),
     )
 
@@ -5057,3 +5061,132 @@ def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:
 
     assert state[app.SIMULATION_RUNNING_KEY] is False
     assert state[app.SIMULATION_PENDING_KEY] is False
+
+
+def test_share_validation_ignores_hidden_second_build_errors_when_not_comparing() -> (
+    None
+):
+    import ui_test_api as app
+
+    from dnd_combat_simulator.sharing import shared_configuration_from_configs
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    configuration = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 4, 10),
+        seed=1,
+        build_a=BuildConfig(
+            "Build A",
+            5,
+            "1d6+3",
+            1,
+            attack_profiles=(AttackProfile("A", 5, "1d6+3", 1),),
+        ),
+        build_b=BuildConfig(
+            "Build B",
+            5,
+            "1d6+",
+            1,
+            attack_profiles=(AttackProfile("B", 5, "1d6+", 1),),
+        ),
+    )
+
+    from dnd_combat_simulator.ui.validation import _validation_errors_for_configuration
+
+    assert app.validate_configuration_for_ui(configuration) == {}
+    assert _validation_errors_for_configuration(configuration) == []
+
+
+def test_share_validation_uses_current_attack_cards_only() -> None:
+    import ui_test_api as app
+
+    from dnd_combat_simulator.sharing import shared_configuration_from_configs
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+    )
+
+    deleted_invalid_attack = AttackProfile("Deleted", 5, "1d6+", 1)
+    active_attack = AttackProfile("Active", 5, "1d6+3", 1, attack_id="kept")
+    invalid_configuration = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 4, 10),
+        seed=1,
+        build_a=BuildConfig(
+            "Build A",
+            5,
+            "1d6+3",
+            1,
+            attack_profiles=(deleted_invalid_attack, active_attack),
+        ),
+        build_b=BuildConfig("Build B", 5, "1d6+3", 1),
+    )
+    corrected_configuration = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 4, 10),
+        seed=1,
+        build_a=BuildConfig(
+            "Build A",
+            5,
+            "1d6+3",
+            1,
+            attack_profiles=(active_attack,),
+        ),
+        build_b=BuildConfig("Build B", 5, "1d6+3", 1),
+    )
+
+    assert app.validate_configuration_for_ui(invalid_configuration)
+    assert app.validate_configuration_for_ui(corrected_configuration) == {}
+
+
+def test_share_button_enabled_for_valid_configuration_despite_simulation_state(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    mounts: list[dict[str, object]] = []
+    state = {
+        app.SCENARIO_WIDGET_KEYS["target_armor_class"]: 15,
+        app.SCENARIO_WIDGET_KEYS["enemy_save_bonus"]: 3,
+        app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
+        app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
+        app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+        app.COMPARE_WIDGET_KEY: False,
+        app.SIMULATION_RUNNING_KEY: False,
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): ["attack-primary"],
+        app.profile_widget_key("first-attack-primary", "damage_formula"): "1d6+3",
+        "second-build-name": "Build B",
+        app.build_attack_ids_key("second"): ["attack-primary"],
+        app.profile_widget_key("second-attack-primary", "damage_formula"): "1d6+",
+    }
+
+    def mount(**kwargs):
+        mounts.append(kwargs)
+        return None
+
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        context=SimpleNamespace(url="https://example.test/sim"),
+        components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(app, "get_streamlit_share_store", lambda: _FakeShareStore())
+    monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
+
+    app._render_share_configuration_button()
+
+    assert mounts[-1]["data"] == {
+        "url": "",
+        "creating": False,
+        "disabled": False,
+        "message": "",
+    }

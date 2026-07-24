@@ -750,7 +750,10 @@ def _validate_shared_configuration(config: SharedConfiguration) -> None:
     ):
         raise SharedConfigurationError("Shared scenario contains invalid values.")
     resource_ids = _validate_scenario_managed_resources(scenario.managed_resources)
-    for label, build in (("Build A", config.build_a), ("Build B", config.build_b)):
+    active_builds = [("Build A", config.build_a)]
+    if config.compare_enabled:
+        active_builds.append(("Build B", config.build_b))
+    for label, build in active_builds:
         if build.managed_resources:
             raise SharedConfigurationError(
                 f"{label} contains legacy build-level managed resources; "
