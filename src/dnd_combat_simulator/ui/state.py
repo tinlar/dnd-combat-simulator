@@ -200,6 +200,7 @@ def _duplicate_attack_state(
     source_attack_id: str,
     dest_attack_id: str,
 ) -> dict[str, object]:
+    _delete_widget_prefix_state(state, dest_widget_prefix)
     copied = _copied_attack_widget_state(
         state, source_widget_prefix, dest_widget_prefix
     )
@@ -221,8 +222,8 @@ def _duplicate_attack_state(
     return copied
 
 
-def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
-    widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+def _delete_widget_prefix_state(state, widget_prefix: str) -> None:
+    """Remove persisted Streamlit state for one attack widget prefix."""
     profile_prefix_text = f"profile-{widget_prefix}-"
     transient_prefix = f"{widget_prefix}-"
     exact_keys = {
@@ -239,6 +240,11 @@ def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
             or key_text in exact_keys
         ):
             del state[key]
+
+
+def _delete_attack_state(state, build_prefix: str, attack_id: str) -> None:
+    widget_prefix = _state_widget_prefix(build_prefix, attack_id)
+    _delete_widget_prefix_state(state, widget_prefix)
     if state.get(ATTACK_DELETE_CONFIRMATION_KEY) == _attack_confirmation_id(
         build_prefix, attack_id
     ):

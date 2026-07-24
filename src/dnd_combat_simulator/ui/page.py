@@ -53,6 +53,14 @@ from dnd_combat_simulator.ui.validation_rendering import (
 
 __all__ = ("main",)
 
+
+def _active_rendered_validation_errors(errors):
+    """Return errors that can be shown on currently rendered field widgets."""
+    return [
+        error for error in errors if error.key and not error.key.endswith("-attack-ids")
+    ]
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -182,7 +190,8 @@ def main() -> None:
                 ),
             ),
         ]
-        if current_errors:
+        active_errors = _active_rendered_validation_errors(current_errors)
+        if active_errors:
             getattr(st, "warning", lambda *args, **kwargs: None)(
                 "Fix the highlighted fields before running the simulation."
             )
@@ -191,7 +200,38 @@ def main() -> None:
             SIMULATION_DURATION_MESSAGE_KEY, None
         ):
             st.success(message)
-        if _render_run_simulation_button(bool(current_errors)):
+        if _render_run_simulation_button(bool(active_errors)):
+            fallback_errors = _active_rendered_validation_errors(
+                [
+                    *validate_scenario_fields(scenario),
+                    *validate_build_fields(
+                        _build_from_state("first", "Build A"),
+                        prefix="first",
+                        available_resource_ids=frozenset(
+                            r.resource_id
+                            for r in _build_from_state(
+                                "first", "Build A"
+                            ).managed_resources
+                        ),
+                    ),
+                    *validate_build_fields(
+                        _build_from_state("second", "Build B"),
+                        prefix="second",
+                        available_resource_ids=frozenset(
+                            r.resource_id
+                            for r in _build_from_state(
+                                "second", "Build B"
+                            ).managed_resources
+                        ),
+                    ),
+                ]
+            )
+            if fallback_errors:
+                getattr(st, "warning", lambda *args, **kwargs: None)(
+                    "Fix the highlighted fields before running the simulation."
+                )
+                getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
+                return
             inputs = ComparisonInputs(
                 first_build=first_build,
                 second_build=second_build,
@@ -233,7 +273,8 @@ def main() -> None:
                 ),
             ),
         ]
-        if current_errors:
+        active_errors = _active_rendered_validation_errors(current_errors)
+        if active_errors:
             getattr(st, "warning", lambda *args, **kwargs: None)(
                 "Fix the highlighted fields before running the simulation."
             )
@@ -244,7 +285,26 @@ def main() -> None:
             st.success(message)
 
         state = getattr(st, "session_state", {})
-        if _render_run_simulation_button(bool(current_errors)):
+        if _render_run_simulation_button(bool(active_errors)):
+            fallback_build = _build_from_state("first", "Build A")
+            fallback_errors = _active_rendered_validation_errors(
+                [
+                    *validate_scenario_fields(scenario),
+                    *validate_build_fields(
+                        fallback_build,
+                        prefix="first",
+                        available_resource_ids=frozenset(
+                            r.resource_id for r in fallback_build.managed_resources
+                        ),
+                    ),
+                ]
+            )
+            if fallback_errors:
+                getattr(st, "warning", lambda *args, **kwargs: None)(
+                    "Fix the highlighted fields before running the simulation."
+                )
+                getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
+                return
             single_inputs = SingleBuildInputs(
                 build=first_build,
                 scenario=scenario,
