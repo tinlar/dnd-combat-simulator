@@ -4207,3 +4207,186 @@ def test_clone_uses_central_shared_build_configuration_for_future_fields(monkeyp
         state_module._build_from_state("first", "Build A")
     ).to_json_dict()
     assert calls == [(expected, "second")]
+
+
+def _run_button(at):
+    return next(button for button in at.button if button.label == "Run Simulation")
+
+
+def test_duplicate_valid_attack_has_no_global_validation_error_and_run_enabled(
+    monkeypatch,
+) -> None:
+    import ui_test_api as app
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    assert not at.exception
+    source_id = at.session_state[app.build_attack_ids_key("first")][0]
+    source_prefix = app.attack_widget_prefix("first", source_id)
+    at.session_state[app.profile_widget_key(source_prefix, "name")] = "Valid Blade"
+    at.session_state[app.profile_widget_key(source_prefix, "damage_formula")] = "2d6+4"
+    at.run()
+
+    next(
+        button for button in at.button if button.key == f"{source_prefix}-duplicate"
+    ).click()
+    at.run()
+
+    ids = at.session_state[app.build_attack_ids_key("first")]
+    assert len(ids) == 2
+    assert ids[1] != source_id
+    assert not any(
+        "Fix the highlighted fields before running the simulation." in warning.value
+        for warning in at.warning
+    )
+    assert _run_button(at).disabled is False
+
+
+def test_duplicate_invalid_attack_can_be_corrected_or_deleted_to_enable_run(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+    from dnd_combat_simulator.ui.validation import validate_build_fields
+
+    source_id = "attack-source"
+    copied_id = "attack-copy"
+    source_prefix = app.attack_widget_prefix("first", source_id)
+    copied_prefix = app.attack_widget_prefix("first", copied_id)
+    state = {
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): [source_id],
+        app.profile_widget_key(source_prefix, "name"): "Broken",
+        app.profile_widget_key(source_prefix, "damage_formula"): "1d6+",
+        app.profile_widget_key(source_prefix, "attacks_per_round"): 1,
+        app.profile_widget_key(source_prefix, "affected_targets"): 1,
+    }
+    state.update(
+        app._duplicate_attack_state(
+            state,
+            source_prefix,
+            copied_prefix,
+            source_attack_id=source_id,
+            dest_attack_id=copied_id,
+        )
+    )
+    state[app.build_attack_ids_key("first")] = [source_id, copied_id]
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    build = app._build_from_state("first", "Build A")
+    copied_error_key = app.profile_widget_key(copied_prefix, "damage_formula")
+    assert any(
+        error.key == copied_error_key
+        for error in validate_build_fields(build, prefix="first")
+    )
+
+    state[app.profile_widget_key(source_prefix, "damage_formula")] = "1d6"
+    state[app.profile_widget_key(copied_prefix, "damage_formula")] = "1d6"
+    assert (
+        validate_build_fields(app._build_from_state("first", "Build A"), prefix="first")
+        == []
+    )
+
+    state[app.profile_widget_key(copied_prefix, "damage_formula")] = "1d6+"
+    state[app.build_attack_ids_key("first")] = [source_id]
+    app._delete_attack_state(state, "first", copied_id)
+    assert (
+        validate_build_fields(app._build_from_state("first", "Build A"), prefix="first")
+        == []
+    )
+    assert not any(str(key).startswith(f"profile-{copied_prefix}-") for key in state)
+
+
+def test_duplicate_attack_validation_uses_copied_current_data_for_advanced_modes(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+    from dnd_combat_simulator.combat import AttackFeature
+    from dnd_combat_simulator.ui.validation import validate_build_fields
+
+    resource_id = "resource-main"
+    source_id = "attack-source"
+    trigger_id = "attack-trigger"
+    copied_id = "attack-copy"
+    source = app.attack_widget_prefix("first", source_id)
+    trigger = app.attack_widget_prefix("first", trigger_id)
+    copied = app.attack_widget_prefix("first", copied_id)
+    state = {
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): [trigger_id, source_id],
+        app.build_managed_resource_ids_key("first"): [resource_id],
+        app.managed_resource_widget_key(resource_id, "name", "first"): "Slots",
+        app.managed_resource_widget_key(resource_id, "starting-value", "first"): 3,
+        app.profile_widget_key(trigger, "name"): "Trigger",
+        app.profile_widget_key(trigger, "resolution_type"): "Attack Roll",
+        app.profile_widget_key(trigger, "damage_formula"): "1d4",
+        app.profile_widget_key(trigger, "attack_bonus"): 7,
+        app.profile_widget_key(source, "name"): "Fireball",
+        app.profile_widget_key(source, "resolution_type"): "Saving Throw",
+        app.profile_widget_key(source, "save_dc"): 15,
+        app.profile_widget_key(source, "successful_save_damage"): "Half damage",
+        app.profile_widget_key(source, "damage_formula"): "8d6",
+        app.profile_widget_key(source, "trigger_type"): "Another attack succeeds",
+        app.profile_widget_key(source, "trigger_source_attack_id"): trigger_id,
+        app.profile_widget_key(source, "trigger_frequency"): "Once per combat",
+        app.profile_widget_key(source, "resource_enabled"): True,
+        app.profile_widget_key(source, "resource_id"): resource_id,
+        app.profile_widget_key(source, "resource_amount"): 1,
+        app.feature_widget_key(source, AttackFeature.POTENT_CANTRIP): True,
+        app.profile_widget_key(copied, "damage_formula"): "stale+",
+        f"{copied}-dirty": True,
+        f"{copied}-validation-error": "stale",
+    }
+    copied_state = app._duplicate_attack_state(
+        state,
+        source,
+        copied,
+        source_attack_id=source_id,
+        dest_attack_id=copied_id,
+    )
+    state.update(copied_state)
+    state[app.build_attack_ids_key("first")] = [trigger_id, source_id, copied_id]
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    build = app._build_from_state("first", "Build A")
+    copied_profile = next(
+        profile for profile in build.attack_profiles if profile.attack_id == copied_id
+    )
+    assert copied_profile.resolution_type.value == "saving_throw"
+    assert copied_profile.resource_costs[0].resource_id == resource_id
+    assert copied_profile.trigger_source_attack_id == trigger_id
+    assert (
+        validate_build_fields(
+            build,
+            prefix="first",
+            available_resource_ids=frozenset(
+                resource.resource_id for resource in build.managed_resources
+            ),
+        )
+        == []
+    )
+    assert f"{copied}-dirty" not in state
+    assert f"{copied}-validation-error" not in state
+
+    state[app.profile_widget_key(source, "resolution_type")] = "Automatic Damage"
+    state[app.profile_widget_key(copied, "resolution_type")] = "Automatic Damage"
+    build = app._build_from_state("first", "Build A")
+    assert (
+        validate_build_fields(
+            build,
+            prefix="first",
+            available_resource_ids=frozenset(
+                resource.resource_id for resource in build.managed_resources
+            ),
+        )
+        == []
+    )
