@@ -3241,7 +3241,7 @@ def test_build_inputs_uses_attack_name_input_without_markdown_heading(
     assert "value" not in attack_name_inputs[0]
 
 
-def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
+def test_copy_attack_widget_state_copies_persistent_prefix_state_only() -> None:
     import ui_test_api as app
 
     from dnd_combat_simulator.combat import AttackFeature
@@ -3250,7 +3250,33 @@ def test_copy_attack_widget_state_uses_persistent_allowlist_only() -> None:
     dest = app.attack_widget_prefix("first", "attack-dest")
     state = {}
     expected_dest_keys = set()
-    for field in app.ATTACK_WIDGET_STATE_FIELDS:
+    for field in (
+        "name",
+        "resolution_type",
+        "attack_bonus",
+        "save_dc",
+        "successful_save_damage",
+        "attack_roll_mode",
+        "damage_formula",
+        "attacks_per_round",
+        "affected_targets",
+        "active_rounds",
+        "trigger_type",
+        "trigger_source_attack_id",
+        "trigger_frequency",
+        "trigger_chance_percent",
+        "resource_enabled",
+        "resource_id",
+        "resource_amount",
+        "use_build_attack_bonus",
+        "use_build_save_dc",
+        "inherit_triggering_critical",
+        "require_matching_damage_dice_to_continue",
+        "empowered_spell_enabled",
+        "empowered_matching_rescue_enabled",
+        "empowered_resource_id",
+        "empowered_max_dice_rerolled",
+    ):
         source_key = app.profile_widget_key(source, field)
         state[source_key] = f"value-{field}"
         expected_dest_keys.add(app.profile_widget_key(dest, field))
@@ -4213,6 +4239,126 @@ def _run_button(at):
     return next(button for button in at.button if button.label == "Run Simulation")
 
 
+def test_copy_button_preserves_empowered_attack_profile_through_reruns(
+    monkeypatch,
+) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+    from dnd_combat_simulator.combat import AttackFeature
+
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    assert not at.exception
+
+    resource_id = "sorcery-points"
+    at.session_state[app.build_managed_resource_ids_key("first")] = [resource_id]
+    at.session_state[app.build_managed_resource_count_key("first")] = 1
+    at.session_state[app.managed_resource_widget_key(resource_id, "name", "first")] = (
+        "Sorcery Points"
+    )
+    at.session_state[
+        app.managed_resource_widget_key(resource_id, "starting-value", "first")
+    ] = 5
+
+    source_id = at.session_state[app.build_attack_ids_key("first")][0]
+    source_prefix = app.attack_widget_prefix("first", source_id)
+    for field, value in {
+        "name": "Empowered Volley",
+        "resolution_type": "Attack Roll",
+        "attack_roll_mode": "Advantage",
+        "damage_formula": "2d6+4",
+        "attacks_per_round": 3,
+        "affected_targets": 1,
+        "active_rounds": "1-3",
+        "trigger_type": "Always",
+        "resource_enabled": False,
+        "use_build_attack_bonus": False,
+        "use_build_save_dc": False,
+        "require_matching_damage_dice_to_continue": True,
+        "empowered_spell_enabled": True,
+        "empowered_matching_rescue_enabled": True,
+        "empowered_resource_id": resource_id,
+        "empowered_max_dice_rerolled": 3,
+    }.items():
+        at.session_state[app.profile_widget_key(source_prefix, field)] = value
+    at.session_state[
+        app.feature_widget_key(source_prefix, AttackFeature.ELVEN_ACCURACY)
+    ] = True
+    at.session_state[
+        app.feature_widget_key(source_prefix, AttackFeature.STOP_ON_MISS)
+    ] = True
+    at.run()
+
+    next(
+        button for button in at.button if button.key == f"{source_prefix}-duplicate"
+    ).click()
+    at.run()
+
+    ids = at.session_state[app.build_attack_ids_key("first")]
+    assert len(ids) == 2
+    copied_id = ids[1]
+    copied_prefix = app.attack_widget_prefix("first", copied_id)
+    assert copied_id != source_id
+    assert at.session_state[app.profile_widget_key(copied_prefix, "name")] == (
+        "Empowered Volley copy"
+    )
+    for field in (
+        "require_matching_damage_dice_to_continue",
+        "empowered_spell_enabled",
+        "empowered_matching_rescue_enabled",
+    ):
+        assert at.session_state[app.profile_widget_key(copied_prefix, field)] is True
+    assert (
+        at.session_state[app.profile_widget_key(copied_prefix, "empowered_resource_id")]
+        == resource_id
+    )
+    assert (
+        at.session_state[
+            app.profile_widget_key(copied_prefix, "empowered_max_dice_rerolled")
+        ]
+        == 3
+    )
+    assert (
+        at.session_state[
+            app.feature_widget_key(copied_prefix, AttackFeature.ELVEN_ACCURACY)
+        ]
+        is True
+    )
+    assert (
+        at.session_state[
+            app.feature_widget_key(copied_prefix, AttackFeature.STOP_ON_MISS)
+        ]
+        is True
+    )
+
+    at.session_state[app.profile_widget_key(copied_prefix, "name")] = "Renamed Copy"
+    at.run()
+
+    for field in (
+        "require_matching_damage_dice_to_continue",
+        "empowered_spell_enabled",
+        "empowered_matching_rescue_enabled",
+    ):
+        assert at.session_state[app.profile_widget_key(copied_prefix, field)] is True
+    assert (
+        at.session_state[app.profile_widget_key(copied_prefix, "empowered_resource_id")]
+        == resource_id
+    )
+    assert not any(
+        "Fix the highlighted fields before running the simulation." in warning.value
+        for warning in at.warning
+    )
+    run_button = _run_button(at)
+    assert run_button.disabled is False
+    run_button.click()
+    at.run(timeout=10)
+    assert not at.exception
+
+
 def test_duplicate_valid_attack_has_no_global_validation_error_and_run_enabled(
     monkeypatch,
 ) -> None:
@@ -4648,3 +4794,90 @@ def test_comparison_diagnostics_show_build_b_validation_error(monkeypatch) -> No
     assert "`first` / `Build A`" in text
     assert "`second` / `Build B`" in text
     assert any("Fix the highlighted fields" in warning.value for warning in at.warning)
+
+
+def test_duplicate_attack_state_copies_every_attack_profile_widget_field() -> None:
+    import streamlit as st
+    import ui_test_api as app
+
+    from dnd_combat_simulator.combat import AttackFeature
+
+    source_id = "attack-source-complete"
+    dest_id = "attack-dest-complete"
+    source = app.attack_widget_prefix("first", source_id)
+    dest = app.attack_widget_prefix("first", dest_id)
+    resource_id = "sorcery-points"
+    state = {
+        "first-build-name": "Build A",
+        app.build_attack_ids_key("first"): [source_id],
+        app.build_managed_resource_ids_key("first"): [resource_id],
+        app.build_managed_resource_count_key("first"): 1,
+        app.managed_resource_widget_key(resource_id, "name", "first"): "Sorcery Points",
+        app.managed_resource_widget_key(resource_id, "starting-value", "first"): 5,
+        app.profile_widget_key(source, "name"): "Empowered Volley",
+        app.profile_widget_key(source, "resolution_type"): "Attack Roll",
+        app.profile_widget_key(source, "attack_bonus"): 9,
+        app.profile_widget_key(source, "save_dc"): 16,
+        app.profile_widget_key(source, "successful_save_damage"): "Half damage",
+        app.profile_widget_key(source, "attack_roll_mode"): "Advantage",
+        app.profile_widget_key(source, "damage_formula"): "2d6+4",
+        app.profile_widget_key(source, "attacks_per_round"): 3,
+        app.profile_widget_key(source, "affected_targets"): 1,
+        app.profile_widget_key(source, "active_rounds"): "1-3",
+        app.profile_widget_key(source, "trigger_type"): "Sometimes",
+        app.profile_widget_key(source, "trigger_source_attack_id"): None,
+        app.profile_widget_key(source, "trigger_frequency"): "Once per combat",
+        app.profile_widget_key(source, "trigger_chance_percent"): "75",
+        app.profile_widget_key(source, "resource_enabled"): True,
+        app.profile_widget_key(source, "resource_id"): resource_id,
+        app.profile_widget_key(source, "resource_amount"): 1,
+        app.profile_widget_key(source, "use_build_attack_bonus"): False,
+        app.profile_widget_key(source, "use_build_save_dc"): False,
+        app.profile_widget_key(source, "inherit_triggering_critical"): True,
+        app.profile_widget_key(
+            source, "require_matching_damage_dice_to_continue"
+        ): True,
+        app.profile_widget_key(source, "empowered_spell_enabled"): True,
+        app.profile_widget_key(source, "empowered_matching_rescue_enabled"): True,
+        app.profile_widget_key(source, "empowered_resource_id"): resource_id,
+        app.profile_widget_key(source, "empowered_max_dice_rerolled"): 3,
+        app.feature_widget_key(source, AttackFeature.STOP_ON_MISS): True,
+        app.feature_widget_key(source, AttackFeature.ELVEN_ACCURACY): True,
+    }
+
+    copied = app._duplicate_attack_state(
+        state,
+        source,
+        dest,
+        source_attack_id=source_id,
+        dest_attack_id=dest_id,
+    )
+    state.update(copied)
+    state[app.build_attack_ids_key("first")] = [source_id, dest_id]
+
+    original_state = st.session_state
+    try:
+        st.session_state = state
+        build = app._build_from_state("first", "Build A")
+    finally:
+        st.session_state = original_state
+
+    source_profile, copied_profile = build.attack_profiles
+    assert copied_profile.attack_id == dest_id
+    assert source_profile.attack_id != copied_profile.attack_id
+    assert copied_profile.name == "Empowered Volley copy"
+    assert copied_profile.empowered_resource_id == resource_id
+    assert copied_profile.empowered_max_dice_rerolled == 3
+    assert copied_profile.empowered_spell_enabled is True
+    assert copied_profile.empowered_matching_rescue_enabled is True
+    assert copied_profile.require_matching_damage_dice_to_continue is True
+    assert AttackFeature.STOP_ON_MISS in copied_profile.features
+    assert AttackFeature.ELVEN_ACCURACY in copied_profile.features
+
+    ignored = {"attack_id", "name"}
+    for field_name in source_profile.__dataclass_fields__:
+        if field_name in ignored:
+            continue
+        assert getattr(copied_profile, field_name) == getattr(
+            source_profile, field_name
+        )

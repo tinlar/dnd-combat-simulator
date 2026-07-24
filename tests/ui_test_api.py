@@ -35,7 +35,7 @@ from dnd_combat_simulator.ui.sharing import (  # noqa: F401
 )
 from dnd_combat_simulator.ui.state import *  # noqa: F403
 from dnd_combat_simulator.ui.state import (  # noqa: F401
-    ATTACK_WIDGET_STATE_FIELDS,
+    ATTACK_WIDGET_TRANSIENT_SUFFIXES,
     _build_from_state,
     _clear_resource_from_profiles,
     _copy_attack_widget_state,
