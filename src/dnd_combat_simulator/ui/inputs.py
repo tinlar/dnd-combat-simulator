@@ -181,6 +181,7 @@ def _feature_inputs(
     *,
     can_inherit_triggering_critical: bool = False,
     can_require_matching_damage_dice: bool = False,
+    errors_by_key: dict[str, str] | None = None,
 ) -> tuple[frozenset[AttackFeature], bool, bool, bool, bool, str, int]:
     """Render feats and features controls for one attack profile."""
     import streamlit as st
@@ -262,6 +263,10 @@ def _feature_inputs(
             build_prefix = prefix.split("-", 1)[0]
             resources = _managed_resources_from_state(build_prefix)
             options = [""] + [resource.resource_id for resource in resources]
+            resource_key = profile_widget_key(prefix, "empowered_resource_id")
+            session_state = getattr(st, "session_state", {})
+            if session_state.get(resource_key, "") not in options:
+                session_state[resource_key] = ""
             labels = {"": "Select a resource"} | {
                 resource.resource_id: resource.name for resource in resources
             }
@@ -270,13 +275,15 @@ def _feature_inputs(
                     "Sorcery Point Resource",
                     options,
                     format_func=lambda value: labels.get(value, str(value)),
-                    key=profile_widget_key(prefix, "empowered_resource_id"),
+                    key=resource_key,
                     help=(
                         "Empowered uses the selected managed-resource ID and "
                         "costs exactly 1 point when rerolls occur."
                     ),
                 )
             )
+            if errors_by_key is not None:
+                _field_error(errors_by_key, resource_key)
             empowered_max_dice_rerolled = int(
                 st.number_input(
                     "Maximum Dice Rerolled",
@@ -1128,6 +1135,7 @@ def _attack_profile_inputs(
         int(affected_targets),
         can_inherit_triggering_critical=can_inherit_triggering_critical,
         can_require_matching_damage_dice=int(attacks_per_round) > 1,
+        errors_by_key=errors_by_key,
     )
     return AttackProfile(
         name=attack_name,

@@ -178,16 +178,17 @@ def validate_canonical_request(
     """Validate the complete immutable request before it reaches the cache."""
     issues: list[ValidationIssue] = []
     issues.extend(validate_scenario_fields(request.scenario))
-    available_resource_ids = frozenset(
-        resource.resource_id
-        for resource in request.scenario.managed_resources
-        if resource.resource_id
-    )
+    def resource_ids_for_build(build: BuildConfig) -> frozenset[str]:
+        resources = build.managed_resources or request.scenario.managed_resources
+        return frozenset(
+            resource.resource_id for resource in resources if resource.resource_id
+        )
+
     issues.extend(
         validate_build_fields(
             request.first_build,
             prefix="first",
-            available_resource_ids=available_resource_ids,
+            available_resource_ids=resource_ids_for_build(request.first_build),
         )
     )
     if request.comparison_enabled:
@@ -205,7 +206,7 @@ def validate_canonical_request(
                 validate_build_fields(
                     request.second_build,
                     prefix="second",
-                    available_resource_ids=available_resource_ids,
+                    available_resource_ids=resource_ids_for_build(request.second_build),
                 )
             )
     elif request.second_build is not None:
@@ -232,9 +233,10 @@ def validate_canonical_request(
 def _raise_for_canonical_issues(issues: tuple[ValidationIssue, ...]) -> None:
     if not issues:
         return
-    summary = "; ".join(issue.message for issue in issues[:3])
-    if len(issues) > 3:
-        summary += f"; and {len(issues) - 3} more validation issue(s)"
+    deduped = tuple(dict.fromkeys(issues))
+    summary = "; ".join(dict.fromkeys(issue.message for issue in deduped[:3]))
+    if len(deduped) > 3:
+        summary += f"; and {len(deduped) - 3} more validation issue(s)"
     raise ValueError(f"Invalid simulation request: {summary}")
 
 

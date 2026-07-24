@@ -340,3 +340,49 @@ def test_math_defaults_participate_in_canonical_cache_identity_and_not_results()
     assert run_control.simulate_build(
         base, scenario, seed=1
     ) == run_control.simulate_build(changed_a, scenario, seed=1)
+
+
+def test_empowered_build_scoped_resource_validates_at_canonical_boundary() -> None:
+    resource = ManagedResource("sp", "Sorcery Points", 2)
+    profile = AttackProfile(
+        "Empowered Bolt",
+        20,
+        "1d6",
+        1,
+        attack_id="empowered",
+        empowered_spell_enabled=True,
+        empowered_resource_id="sp",
+    )
+    build = BuildConfig(
+        "Sorcerer",
+        20,
+        "1",
+        1,
+        attack_profiles=(profile,),
+        managed_resources=(resource,),
+    )
+    request = canonical_single_build_request(SingleBuildInputs(build, _scenario(), 1))
+
+    result = run_control.execute_canonical_request(request)
+
+    assert isinstance(result, SimulationResult)
+    assert result.resource_usage_results[0].resource.resource_id == "sp"
+
+
+def test_canonical_empowered_resource_errors_are_deduplicated() -> None:
+    profile = AttackProfile(
+        "Empowered Bolt",
+        20,
+        "1d6",
+        1,
+        attack_id="empowered",
+        empowered_spell_enabled=True,
+        empowered_resource_id="missing",
+    )
+    build = BuildConfig("Sorcerer", 20, "1", 1, attack_profiles=(profile,))
+    request = canonical_single_build_request(SingleBuildInputs(build, _scenario(), 1))
+
+    with pytest.raises(ValueError) as error:
+        run_control.execute_canonical_request(request)
+
+    assert str(error.value).count("Select an existing Empowered resource.") == 1

@@ -13,14 +13,14 @@ def issues_by_widget_key(
 ) -> dict[str, tuple[ValidationIssue, ...]]:
     grouped: dict[str, list[ValidationIssue]] = defaultdict(list)
     for issue in issues:
-        if issue.widget_key:
+        if issue.widget_key and issue not in grouped[issue.widget_key]:
             grouped[issue.widget_key].append(issue)
     return {key: tuple(value) for key, value in grouped.items()}
 
 
 def validation_errors_by_key(issues: Iterable[ValidationIssue]) -> dict[str, str]:
     return {
-        key: " ".join(issue.message for issue in grouped)
+        key: " ".join(dict.fromkeys(issue.message for issue in grouped))
         for key, grouped in issues_by_widget_key(issues).items()
     }
 
@@ -41,7 +41,7 @@ def render_field_issues(
     if isinstance(value, str):
         message = value
     else:
-        message = " ".join(issue.message for issue in value)
+        message = " ".join(dict.fromkeys(issue.message for issue in value))
     _render_error(message)
     return True
 
