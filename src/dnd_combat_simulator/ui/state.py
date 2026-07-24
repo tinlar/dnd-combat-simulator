@@ -564,6 +564,18 @@ def _hydrate_build_session_state(
                 widget_prefix, "require_matching_damage_dice_to_continue"
             )
         ] = profile.require_matching_damage_dice_to_continue
+        session_state[profile_widget_key(widget_prefix, "empowered_spell_enabled")] = (
+            profile.empowered_spell_enabled
+        )
+        session_state[
+            profile_widget_key(widget_prefix, "empowered_matching_rescue_enabled")
+        ] = profile.empowered_matching_rescue_enabled
+        session_state[profile_widget_key(widget_prefix, "empowered_resource_id")] = (
+            profile.empowered_resource_id
+        )
+        session_state[
+            profile_widget_key(widget_prefix, "empowered_max_dice_rerolled")
+        ] = profile.empowered_max_dice_rerolled
         session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = {
             TriggerFrequency.ONCE_PER_ROUND: "Once per round",
             TriggerFrequency.ONCE_PER_COMBAT: "Once per combat",
