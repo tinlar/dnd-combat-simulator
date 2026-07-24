@@ -1,7 +1,11 @@
+import base64
+import json
+import zlib
 from dataclasses import replace
 
 from dnd_combat_simulator.combat import AttackRollMode
 from dnd_combat_simulator.sharing import (
+    SharedConfigurationError,
     deserialize_shared_configuration,
     serialize_shared_configuration,
     shared_configuration_from_configs,
@@ -17,6 +21,11 @@ from dnd_combat_simulator.simulation import (
     compare_builds,
     simulate_build,
 )
+
+
+def _encode_raw(raw: dict[str, object]) -> str:
+    payload = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(zlib.compress(payload)).decode().rstrip("=")
 
 
 def resource_build(*profiles: AttackProfile) -> BuildConfig:
@@ -46,9 +55,13 @@ def test_resource_serializes_and_restores_renamed_stable_id() -> None:
         build_b=resource_build(AttackProfile("Other", 5, "1", 1)),
     )
 
+    raw = config.to_json_dict()
+    assert raw["scenario"]["managed_resources"][0]["resource_id"] == "spell-slots"
+    assert "managed_resources" not in raw["build_a"]
+    assert "managed_resources" not in raw["build_b"]
+
     restored = deserialize_shared_configuration(serialize_shared_configuration(config))
-    restored_resource = restored.build_a.managed_resources[0]
-    assert restored.scenario.to_json_dict().get("managed_resources") is None
+    restored_resource = restored.scenario.managed_resources[0]
 
     assert restored_resource.resource_id == "spell-slots"
     assert restored_resource.name == "Spell Slots"
@@ -310,15 +323,18 @@ def test_build_scoped_resources_are_independent_and_not_shared_serialized():
     )
     shared = shared_configuration_from_configs(
         compare_enabled=True,
-        scenario=ScenarioConfig(15, 1, 1),
+        scenario=ScenarioConfig(15, 1, 1, managed_resources=a_res + b_res),
         seed=1,
         build_a=a,
         build_b=b,
     )
     raw = shared.to_json_dict()
-    assert "managed_resources" not in raw["scenario"]
-    assert raw["build_a"]["managed_resources"][0]["resource_id"] == "a"
-    assert raw["build_b"]["managed_resources"][0]["resource_id"] == "b"
+    assert [r["resource_id"] for r in raw["scenario"]["managed_resources"]] == [
+        "a",
+        "b",
+    ]
+    assert "managed_resources" not in raw["build_a"]
+    assert "managed_resources" not in raw["build_b"]
 
 
 def test_resource_pool_resets_every_simulation_iteration():
@@ -371,7 +387,119 @@ def test_shared_url_round_trip_and_legacy_shared_resources_migrate():
     )
     token = serialize_shared_configuration(legacy)
     restored = deserialize_shared_configuration(token)
-    assert restored.scenario.to_json_dict().get("managed_resources") is None
-    assert restored.build_a.managed_resources[0].resource_id == "ki"
-    assert restored.build_b.managed_resources[0].resource_id == "ki"
-    assert restored.build_a.to_build_config().managed_resources[0].resource_id == "ki"
+    assert restored.scenario.managed_resources[0].resource_id == "ki"
+    assert restored.build_a.managed_resources == ()
+    assert restored.build_b.managed_resources == ()
+    assert "managed_resources" not in restored.build_a.to_json_dict()
+    assert "managed_resources" not in restored.build_b.to_json_dict()
+
+
+def _shared_raw_with_resources(
+    scenario_resources=(), a_resources=(), b_resources=(), cost_id="ki"
+):
+    profile = AttackProfile(
+        "Spend",
+        5,
+        "1",
+        1,
+        attack_id="spend",
+        resource_costs=(ResourceCost(cost_id, 1),),
+    )
+    shared = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 1, 1, managed_resources=scenario_resources),
+        seed=1,
+        build_a=_build("A", profiles=(profile,)),
+        build_b=_build("B", profiles=(profile,)),
+    ).to_json_dict()
+    if a_resources:
+        shared["build_a"]["managed_resources"] = [
+            {
+                "resource_id": r.resource_id,
+                "name": r.name,
+                "starting_value": r.starting_value,
+            }
+            for r in a_resources
+        ]
+    if b_resources:
+        shared["build_b"]["managed_resources"] = [
+            {
+                "resource_id": r.resource_id,
+                "name": r.name,
+                "starting_value": r.starting_value,
+            }
+            for r in b_resources
+        ]
+    return shared
+
+
+def test_scenario_resource_survives_round_trip_and_cost_refs_for_both_builds():
+    resource = ManagedResource("ki", "Ki", 1)
+    profile = AttackProfile(
+        "Spend", 5, "1", 1, resource_costs=(ResourceCost("ki", 1),)
+    )
+    shared = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 1, 1, managed_resources=(resource,)),
+        seed=1,
+        build_a=_build("A", profiles=(profile,)),
+        build_b=_build("B", profiles=(profile,)),
+    )
+    restored = deserialize_shared_configuration(serialize_shared_configuration(shared))
+    assert restored.scenario.managed_resources[0].resource_id == "ki"
+    assert restored.build_a.attack_profiles[0].resource_costs[0].resource_id == "ki"
+    assert restored.build_b.attack_profiles[0].resource_costs[0].resource_id == "ki"
+
+
+def test_legacy_build_resources_migrate_and_conflicts_raise():
+    ki = ManagedResource("ki", "Ki", 1)
+    raw = _shared_raw_with_resources(a_resources=(ki,))
+    raw["scenario"].pop("managed_resources", None)
+    token = serialize_shared_configuration(
+        deserialize_shared_configuration(_encode_raw(raw))
+    )
+    restored = deserialize_shared_configuration(token)
+    assert restored.scenario.managed_resources[0].resource_id == "ki"
+    assert "managed_resources" not in restored.to_json_dict()["build_a"]
+
+    raw = _shared_raw_with_resources(b_resources=(ki,))
+    raw["scenario"].pop("managed_resources", None)
+    restored = deserialize_shared_configuration(_encode_raw(raw))
+    assert restored.scenario.managed_resources[0].resource_id == "ki"
+
+    raw = _shared_raw_with_resources(a_resources=(ki,), b_resources=(ki,))
+    raw["scenario"].pop("managed_resources", None)
+    restored = deserialize_shared_configuration(_encode_raw(raw))
+    assert len(restored.scenario.managed_resources) == 1
+
+    conflict = ManagedResource("ki", "Different", 1)
+    raw = _shared_raw_with_resources(a_resources=(ki,), b_resources=(conflict,))
+    raw["scenario"].pop("managed_resources", None)
+    try:
+        deserialize_shared_configuration(_encode_raw(raw))
+    except SharedConfigurationError as error:
+        assert "conflict" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("conflicting legacy resources were accepted")
+
+
+def test_invalid_or_missing_shared_resource_references_raise():
+    raw = _shared_raw_with_resources(
+        scenario_resources=(ManagedResource("ki", "Ki", 1),), cost_id="missing"
+    )
+    try:
+        deserialize_shared_configuration(_encode_raw(raw))
+    except SharedConfigurationError as error:
+        assert "resource costs" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("missing resource reference was accepted")
+
+    raw = _shared_raw_with_resources(
+        scenario_resources=(ManagedResource("", "", -1),), cost_id="ki"
+    )
+    try:
+        deserialize_shared_configuration(_encode_raw(raw))
+    except SharedConfigurationError as error:
+        assert "managed resource" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("invalid resource definition was accepted")
