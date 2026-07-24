@@ -4217,8 +4217,9 @@ def test_duplicate_valid_attack_has_no_global_validation_error_and_run_enabled(
     monkeypatch,
 ) -> None:
     import ui_test_api as app
-    import dnd_combat_simulator.ui.sharing as sharing_ui
     from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
 
     monkeypatch.setattr(
         sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
@@ -4250,11 +4251,12 @@ def test_duplicate_attack_ui_ignores_hidden_stale_copied_field_errors(
     monkeypatch,
 ) -> None:
     import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
     import dnd_combat_simulator.ui.sharing as sharing_ui
     from dnd_combat_simulator.ui.page import _active_rendered_validation_errors
     from dnd_combat_simulator.ui.validation import validate_build_fields
     from dnd_combat_simulator.ui.widget_tracking import rendered_widget_keys
-    from streamlit.testing.v1 import AppTest
 
     monkeypatch.setattr(
         sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
@@ -4283,10 +4285,12 @@ def test_duplicate_attack_ui_ignores_hidden_stale_copied_field_errors(
     for key, value in visible_values.items():
         at.session_state[key] = value
     at.session_state[app.profile_widget_key(source_prefix, "resource_enabled")] = True
+    at.session_state[app.profile_widget_key(source_prefix, "resource_id")] = (
+        "removed-resource"
+    )
     at.session_state[
-        app.profile_widget_key(source_prefix, "resource_id")
-    ] = "removed-resource"
-    at.session_state[app.profile_widget_key(source_prefix, "trigger_chance_percent")] = "0"
+        app.profile_widget_key(source_prefix, "trigger_chance_percent")
+    ] = "0"
     at.run()
 
     next(
@@ -4352,6 +4356,7 @@ def test_duplicate_invalid_attack_can_be_corrected_or_deleted_to_enable_run(
     from types import SimpleNamespace
 
     import ui_test_api as app
+
     from dnd_combat_simulator.ui.validation import validate_build_fields
 
     source_id = "attack-source"
@@ -4409,6 +4414,7 @@ def test_duplicate_attack_validation_uses_copied_current_data_for_advanced_modes
     from types import SimpleNamespace
 
     import ui_test_api as app
+
     from dnd_combat_simulator.combat import AttackFeature
     from dnd_combat_simulator.ui.validation import validate_build_fields
 
@@ -4489,3 +4495,156 @@ def test_duplicate_attack_validation_uses_copied_current_data_for_advanced_modes
         )
         == []
     )
+
+
+def _diagnostics_text(at) -> str:
+    return "\n".join(str(getattr(node, "value", "")) for node in at.markdown)
+
+
+def _set_first_attack_damage(at, app, damage: str) -> None:
+    attack_id = at.session_state[app.build_attack_ids_key("first")][0]
+    prefix = app.attack_widget_prefix("first", attack_id)
+    at.session_state[app.profile_widget_key(prefix, "damage_formula")] = damage
+
+
+def _set_second_attack_damage(at, app, damage: str) -> None:
+    attack_id = at.session_state[app.build_attack_ids_key("second")][0]
+    prefix = app.attack_widget_prefix("second", attack_id)
+    at.session_state[app.profile_widget_key(prefix, "damage_formula")] = damage
+
+
+def test_single_build_mode_without_diagnostics_has_no_unboundlocalerror(
+    monkeypatch,
+) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.delenv("DND_VALIDATION_DIAGNOSTICS", raising=False)
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    _set_first_attack_damage(at, app, "1d6+")
+    at.run()
+
+    assert not at.exception
+    assert "Development validation diagnostics" not in _diagnostics_text(at)
+    assert any("Fix the highlighted fields" in warning.value for warning in at.warning)
+
+
+def test_single_build_diagnostics_with_active_error_contains_build_a_only(
+    monkeypatch,
+) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.setenv("DND_VALIDATION_DIAGNOSTICS", "1")
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    _set_first_attack_damage(at, app, "1d6+")
+    at.run()
+
+    text = _diagnostics_text(at)
+    assert not at.exception
+    assert "`first` / `Build A`" in text
+    assert "Build B" not in text
+    assert "`second`" not in text
+    assert any("Fix the highlighted fields" in warning.value for warning in at.warning)
+
+
+def test_single_build_diagnostics_enabled_without_errors_has_no_unboundlocalerror(
+    monkeypatch,
+) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.setenv("DND_VALIDATION_DIAGNOSTICS", "1")
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+
+    assert not at.exception
+    assert "Development validation diagnostics" not in _diagnostics_text(at)
+    assert "second-build-name" not in at.session_state
+
+
+def test_comparison_diagnostics_enabled_contains_both_builds(monkeypatch) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.setenv("DND_VALIDATION_DIAGNOSTICS", "1")
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    next(
+        toggle for toggle in at.toggle if toggle.key == "compare-builds-enabled"
+    ).set_value(True)
+    at.run()
+    _set_first_attack_damage(at, app, "1d6+")
+    at.run()
+
+    text = _diagnostics_text(at)
+    assert not at.exception
+    assert "Build A" in text
+    assert "Build B" in text
+
+
+def test_comparison_diagnostics_show_build_a_validation_error(monkeypatch) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.setenv("DND_VALIDATION_DIAGNOSTICS", "1")
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    next(
+        toggle for toggle in at.toggle if toggle.key == "compare-builds-enabled"
+    ).set_value(True)
+    at.run()
+    _set_first_attack_damage(at, app, "1d6+")
+    at.run()
+
+    text = _diagnostics_text(at)
+    assert not at.exception
+    assert "`first` / `Build A`" in text
+    assert "`second` / `Build B`" in text
+    assert any("Fix the highlighted fields" in warning.value for warning in at.warning)
+
+
+def test_comparison_diagnostics_show_build_b_validation_error(monkeypatch) -> None:
+    import ui_test_api as app
+    from streamlit.testing.v1 import AppTest
+
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+
+    monkeypatch.setenv("DND_VALIDATION_DIAGNOSTICS", "1")
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    next(
+        toggle for toggle in at.toggle if toggle.key == "compare-builds-enabled"
+    ).set_value(True)
+    at.run()
+    _set_second_attack_damage(at, app, "1d6+")
+    at.run()
+
+    text = _diagnostics_text(at)
+    assert not at.exception
+    assert "`first` / `Build A`" in text
+    assert "`second` / `Build B`" in text
+    assert any("Fix the highlighted fields" in warning.value for warning in at.warning)
