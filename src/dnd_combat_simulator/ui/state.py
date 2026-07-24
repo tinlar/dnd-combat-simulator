@@ -62,48 +62,39 @@ BUILD_MATH_DEFAULT_FIELDS = (
     "save_dc_adjustment",
 )
 
-ATTACK_WIDGET_STATE_FIELDS = (
-    "name",
-    "resolution_type",
-    "attack_bonus",
-    "save_dc",
-    "successful_save_damage",
-    "attack_roll_mode",
-    "damage_formula",
-    "attacks_per_round",
-    "affected_targets",
-    "active_rounds",
-    "trigger_type",
-    "trigger_source_attack_id",
-    "trigger_frequency",
-    "trigger_chance_percent",
-    "resource_enabled",
-    "resource_id",
-    "resource_amount",
-    "use_build_attack_bonus",
-    "use_build_save_dc",
+ATTACK_WIDGET_TRANSIENT_SUFFIXES = frozenset(
+    (
+        "duplicate",
+        "up",
+        "down",
+        "delete",
+        "toolbar",
+        "confirm-delete",
+        "cancel-delete",
+    )
 )
 
 
 def _copied_attack_widget_state(
     state, source_prefix: str, dest_prefix: str
 ) -> dict[str, object]:
+    """Return persistent widget state copied from one attack prefix to another.
+
+    Attack profile widgets are the serialized UI representation of the canonical
+    :class:`AttackProfile`.  Copying by prefix keeps newly added profile fields
+    working without maintaining a separate per-field allowlist here.
+    """
     copied: dict[str, object] = {}
-    for field in ATTACK_WIDGET_STATE_FIELDS:
-        source_key = profile_widget_key(source_prefix, field)
-        if source_key in state:
-            copied[profile_widget_key(dest_prefix, field)] = state[source_key]
-    for feature in FEATURE_ORDER:
-        source_key = feature_widget_key(source_prefix, feature)
-        if source_key in state:
-            copied[feature_widget_key(dest_prefix, feature)] = state[source_key]
-    expander_key = trigger_expanded_state_key(source_prefix)
-    if expander_key in state:
-        copied[trigger_expanded_state_key(dest_prefix)] = state[expander_key]
-    for suffix in ("features-expanded", "resource-expanded"):
-        source_key = f"{source_prefix}-{suffix}"
-        if source_key in state:
-            copied[f"{dest_prefix}-{suffix}"] = state[source_key]
+    source_prefix_text = f"{source_prefix}-"
+    dest_prefix_text = f"{dest_prefix}-"
+    for key, value in state.items():
+        key_text = str(key)
+        if not key_text.startswith(source_prefix_text):
+            continue
+        suffix = key_text[len(source_prefix_text) :]
+        if suffix in ATTACK_WIDGET_TRANSIENT_SUFFIXES:
+            continue
+        copied[f"{dest_prefix_text}{suffix}"] = value
     return copied
 
 
@@ -1002,6 +993,45 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                         )
                     )
                     > 1
+                ),
+                empowered_spell_enabled=bool(
+                    session_state.get(
+                        profile_widget_key(widget_prefix, "empowered_spell_enabled"),
+                        False,
+                    )
+                ),
+                empowered_matching_rescue_enabled=bool(
+                    session_state.get(
+                        profile_widget_key(
+                            widget_prefix, "empowered_matching_rescue_enabled"
+                        ),
+                        False,
+                    )
+                    and session_state.get(
+                        profile_widget_key(
+                            widget_prefix, "require_matching_damage_dice_to_continue"
+                        ),
+                        False,
+                    )
+                    and int(
+                        session_state.get(
+                            profile_widget_key(widget_prefix, "attacks_per_round"), 1
+                        )
+                    )
+                    > 1
+                ),
+                empowered_resource_id=str(
+                    session_state.get(
+                        profile_widget_key(widget_prefix, "empowered_resource_id"), ""
+                    )
+                ),
+                empowered_max_dice_rerolled=int(
+                    session_state.get(
+                        profile_widget_key(
+                            widget_prefix, "empowered_max_dice_rerolled"
+                        ),
+                        1,
+                    )
                 ),
             )
         )
