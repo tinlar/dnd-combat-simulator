@@ -80,17 +80,17 @@ def _add_error(
     attack_id: str | None = None,
     resource_id: str | None = None,
 ) -> None:
-    errors.append(
-        ValidationIssue(
-            scope=scope,
-            message=message,
-            field=field,
-            widget_key=key,
-            build_key=build_key,
-            attack_id=attack_id,
-            resource_id=resource_id,
-        )
+    issue = ValidationIssue(
+        scope=scope,
+        message=message,
+        field=field,
+        widget_key=key,
+        build_key=build_key,
+        attack_id=attack_id,
+        resource_id=resource_id,
     )
+    if issue not in errors:
+        errors.append(issue)
 
 
 def _validate_profile_fields(
@@ -461,7 +461,12 @@ def validate_scenario_fields(scenario: ScenarioConfig) -> list[ValidationIssue]:
 
 
 def validation_errors_by_key(errors: list[ValidationIssue]) -> dict[str, str]:
-    return {error.key: error.message for error in errors}
+    messages: dict[str, list[str]] = {}
+    for error in errors:
+        bucket = messages.setdefault(error.key, [])
+        if error.message not in bucket:
+            bucket.append(error.message)
+    return {key: " ".join(value) for key, value in messages.items()}
 
 
 def validate_configuration_for_ui(
