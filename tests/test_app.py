@@ -4904,14 +4904,13 @@ def test_adding_attack_preserves_existing_card_resource_state(monkeypatch) -> No
         *app._state._attack_ids_from_state(state, "first"),
         new_id,
     ]
-    state[
-        app.profile_widget_key(app.attack_widget_prefix("first", new_id), "name")
-    ] = "Attack 2"
+    state[app.profile_widget_key(app.attack_widget_prefix("first", new_id), "name")] = (
+        "Attack 2"
+    )
 
     assert state[app.profile_widget_key(first_prefix, "resource_enabled")] is True
     assert (
-        state[app.profile_widget_key(first_prefix, "resource_id")]
-        == "sorcery-points"
+        state[app.profile_widget_key(first_prefix, "resource_id")] == "sorcery-points"
     )
     assert state[app.profile_widget_key(first_prefix, "resource_amount")] == 2
 
