@@ -435,9 +435,7 @@ def _shared_raw_with_resources(
 
 def test_scenario_resource_survives_round_trip_and_cost_refs_for_both_builds():
     resource = ManagedResource("ki", "Ki", 1)
-    profile = AttackProfile(
-        "Spend", 5, "1", 1, resource_costs=(ResourceCost("ki", 1),)
-    )
+    profile = AttackProfile("Spend", 5, "1", 1, resource_costs=(ResourceCost("ki", 1),))
     shared = shared_configuration_from_configs(
         compare_enabled=True,
         scenario=ScenarioConfig(15, 1, 1, managed_resources=(resource,)),

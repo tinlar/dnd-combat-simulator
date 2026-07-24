@@ -213,6 +213,7 @@ def validate_canonical_request(
     """Validate the complete immutable request before it reaches the cache."""
     issues: list[ValidationIssue] = []
     issues.extend(validate_scenario_fields(request.scenario))
+
     def resource_ids_for_build(build: BuildConfig) -> frozenset[str]:
         resources = build.managed_resources or request.scenario.managed_resources
         return frozenset(

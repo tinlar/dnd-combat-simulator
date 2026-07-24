@@ -149,7 +149,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
             y=alt.Y(y, title="Average total damage"),
             color=alt.Color(color, title="Build"),
             tooltip=[
-            alt.Tooltip(x, title="Round"),
+                alt.Tooltip(x, title="Round"),
                 alt.Tooltip(y, title="Average damage", format=".2f"),
                 alt.Tooltip(color, title="Build"),
             ],
