@@ -4246,6 +4246,105 @@ def test_duplicate_valid_attack_has_no_global_validation_error_and_run_enabled(
     assert _run_button(at).disabled is False
 
 
+def test_duplicate_attack_ui_ignores_hidden_stale_copied_field_errors(
+    monkeypatch,
+) -> None:
+    import ui_test_api as app
+    import dnd_combat_simulator.ui.sharing as sharing_ui
+    from dnd_combat_simulator.ui.page import _active_rendered_validation_errors
+    from dnd_combat_simulator.ui.validation import validate_build_fields
+    from dnd_combat_simulator.ui.widget_tracking import rendered_widget_keys
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(
+        sharing_ui, "_mount_unified_share_component", lambda *args, **kwargs: None
+    )
+    at = AppTest.from_file("src/dnd_combat_simulator/app.py", default_timeout=10).run()
+    assert not at.exception
+
+    source_id = at.session_state[app.build_attack_ids_key("first")][0]
+    source_prefix = app.attack_widget_prefix("first", source_id)
+
+    # Configure a valid visible attack via the live app session, including hidden stale
+    # copied-session-state fields from disabled modes/features. The duplicate action
+    # below is performed through the actual card Copy button.
+    visible_values = {
+        app.profile_widget_key(source_prefix, "name"): "Shared Valid Blade",
+        app.profile_widget_key(source_prefix, "resolution_type"): "Attack Roll",
+        app.profile_widget_key(source_prefix, "attack_roll_mode"): "Advantage",
+        app.profile_widget_key(source_prefix, "damage_formula"): "2d6+4",
+        app.profile_widget_key(source_prefix, "attacks_per_round"): 2,
+        app.profile_widget_key(source_prefix, "affected_targets"): 1,
+        app.profile_widget_key(source_prefix, "active_rounds"): "1-4",
+        app.profile_widget_key(source_prefix, "trigger_type"): "Always",
+        app.profile_widget_key(source_prefix, "use_build_attack_bonus"): True,
+        app.profile_widget_key(source_prefix, "use_build_save_dc"): True,
+    }
+    for key, value in visible_values.items():
+        at.session_state[key] = value
+    at.session_state[app.profile_widget_key(source_prefix, "resource_enabled")] = True
+    at.session_state[
+        app.profile_widget_key(source_prefix, "resource_id")
+    ] = "removed-resource"
+    at.session_state[app.profile_widget_key(source_prefix, "trigger_chance_percent")] = "0"
+    at.run()
+
+    next(
+        button for button in at.button if button.key == f"{source_prefix}-duplicate"
+    ).click()
+    at.run()
+
+    ids = at.session_state[app.build_attack_ids_key("first")]
+    assert len(ids) == 2
+    copied_id = ids[1]
+    copied_prefix = app.attack_widget_prefix("first", copied_id)
+    assert copied_id != source_id
+    for field, expected in {
+        "resolution_type": "Attack Roll",
+        "attack_roll_mode": "Advantage",
+        "damage_formula": "2d6+4",
+        "attacks_per_round": 2,
+        "affected_targets": 1,
+        "active_rounds": "1-4",
+        "trigger_type": "Always",
+    }.items():
+        assert (
+            at.session_state[app.profile_widget_key(copied_prefix, field)] == expected
+        )
+    assert (
+        at.session_state[app.profile_widget_key(copied_prefix, "name")]
+        == "Shared Valid Blade copy"
+    )
+
+    build = app._build_from_state("first", "Build A")
+    issues = validate_build_fields(
+        build,
+        prefix="first",
+        available_resource_ids=frozenset(
+            r.resource_id for r in build.managed_resources
+        ),
+    )
+    rendered = rendered_widget_keys(at.session_state)
+    blocking = _active_rendered_validation_errors(issues, rendered)
+    assert all(
+        (not issue.key) or issue.key in rendered or issue.key.endswith("-attack-ids")
+        for issue in blocking
+    )
+    assert not blocking
+    assert not any(
+        "Fix the highlighted fields before running the simulation." in warning.value
+        for warning in at.warning
+    )
+    assert _run_button(at).disabled is False
+
+    at.run()
+    assert not any(
+        "Fix the highlighted fields before running the simulation." in warning.value
+        for warning in at.warning
+    )
+    assert _run_button(at).disabled is False
+
+
 def test_duplicate_invalid_attack_can_be_corrected_or_deleted_to_enable_run(
     monkeypatch,
 ) -> None:
