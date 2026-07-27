@@ -407,8 +407,8 @@ def test_build_scoped_resources_are_independent_and_not_shared_serialized():
         "a",
         "b",
     ]
-    assert "managed_resources" not in raw["build_a"]
-    assert "managed_resources" not in raw["build_b"]
+    assert [r["resource_id"] for r in raw["build_a"]["managed_resources"]] == ["a"]
+    assert [r["resource_id"] for r in raw["build_b"]["managed_resources"]] == ["b"]
 
 
 def test_resource_pool_resets_every_simulation_iteration():
@@ -526,6 +526,7 @@ def test_scenario_resource_survives_round_trip_and_cost_refs_for_both_builds():
 def test_legacy_build_resources_migrate_and_conflicts_raise():
     ki = ManagedResource("ki", "Ki", 1)
     raw = _shared_raw_with_resources(a_resources=(ki,))
+    raw["version"] = 1
     raw["scenario"].pop("managed_resources", None)
     token = serialize_shared_configuration(
         deserialize_shared_configuration(_encode_raw(raw))
@@ -535,17 +536,20 @@ def test_legacy_build_resources_migrate_and_conflicts_raise():
     assert "managed_resources" not in restored.to_json_dict()["build_a"]
 
     raw = _shared_raw_with_resources(b_resources=(ki,))
+    raw["version"] = 1
     raw["scenario"].pop("managed_resources", None)
     restored = deserialize_shared_configuration(_encode_raw(raw))
     assert restored.scenario.managed_resources[0].resource_id == "ki"
 
     raw = _shared_raw_with_resources(a_resources=(ki,), b_resources=(ki,))
+    raw["version"] = 1
     raw["scenario"].pop("managed_resources", None)
     restored = deserialize_shared_configuration(_encode_raw(raw))
     assert len(restored.scenario.managed_resources) == 1
 
     conflict = ManagedResource("ki", "Different", 1)
     raw = _shared_raw_with_resources(a_resources=(ki,), b_resources=(conflict,))
+    raw["version"] = 1
     raw["scenario"].pop("managed_resources", None)
     try:
         deserialize_shared_configuration(_encode_raw(raw))
