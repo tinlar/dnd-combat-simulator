@@ -372,8 +372,16 @@ def _render_share_configuration_button() -> None:
             )
             state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
             state.pop(SHARE_ERROR_MESSAGE_KEY, None)
-        except (SharedConfigurationError, ShareStoreError):
-            logger.exception("Failed to create share link from current configuration.")
+        except SharedConfigurationError:
+            logger.exception(
+                "Failed to serialize the current configuration for sharing."
+            )
+            state.pop(GENERATED_SHARE_URL_KEY, None)
+            state[SHARE_ERROR_MESSAGE_KEY] = (
+                "Unable to serialize this configuration for sharing. Try again later."
+            )
+        except ShareStoreError:
+            logger.exception("Failed to store the current configuration for sharing.")
             state.pop(GENERATED_SHARE_URL_KEY, None)
             state[SHARE_ERROR_MESSAGE_KEY] = (
                 "Unable to create a share link right now. Try again later."

@@ -33,8 +33,14 @@ from dnd_combat_simulator.simulation import (
     validate_trigger_dependencies,
 )
 
-SHARED_CONFIGURATION_VERSION = 2
+CURRENT_SHARED_CONFIGURATION_VERSION = 2
 LEGACY_SHARED_CONFIGURATION_VERSION = 1
+SUPPORTED_SHARED_CONFIGURATION_VERSIONS = frozenset(
+    {LEGACY_SHARED_CONFIGURATION_VERSION, CURRENT_SHARED_CONFIGURATION_VERSION}
+)
+# Backwards-compatible public name. New code should use the explicit current-version
+# name so it cannot be confused with the set of versions accepted while loading.
+SHARED_CONFIGURATION_VERSION = CURRENT_SHARED_CONFIGURATION_VERSION
 MAX_ENCODED_TOKEN_LENGTH = 50_000
 MAX_DECOMPRESSED_JSON_BYTES = 256 * 1024
 MAX_ATTACK_PROFILES_PER_BUILD = 11
@@ -53,10 +59,7 @@ class SharedConfigurationError(ValueError):
 
 def _validate_shared_configuration_version(version: int) -> None:
     """Reject schema versions that this application cannot safely interpret."""
-    if version not in (
-        LEGACY_SHARED_CONFIGURATION_VERSION,
-        SHARED_CONFIGURATION_VERSION,
-    ):
+    if version not in SUPPORTED_SHARED_CONFIGURATION_VERSIONS:
         raise SharedConfigurationError(
             f"Unsupported shared configuration version: {version}."
         )
@@ -319,11 +322,11 @@ class SharedScenarioConfiguration:
 
 @dataclass(frozen=True)
 class SharedConfiguration:
-    version: int
     compare_enabled: bool
     scenario: SharedScenarioConfiguration
     build_a: SharedBuildConfiguration
     build_b: SharedBuildConfiguration
+    version: int = CURRENT_SHARED_CONFIGURATION_VERSION
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -344,9 +347,8 @@ def shared_configuration_from_configs(
     build_b: BuildConfig,
 ) -> SharedConfiguration:
     return SharedConfiguration(
-        SHARED_CONFIGURATION_VERSION,
-        compare_enabled,
-        SharedScenarioConfiguration(
+        compare_enabled=compare_enabled,
+        scenario=SharedScenarioConfiguration(
             scenario.target_armor_class,
             scenario.enemy_save_bonus,
             scenario.rounds,
@@ -359,8 +361,8 @@ def shared_configuration_from_configs(
                 for r in scenario.managed_resources
             ),
         ),
-        SharedBuildConfiguration.from_build_config(build_a),
-        SharedBuildConfiguration.from_build_config(build_b),
+        build_a=SharedBuildConfiguration.from_build_config(build_a),
+        build_b=SharedBuildConfiguration.from_build_config(build_b),
     )
 
 
@@ -600,11 +602,11 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
         build_a = replace(build_a, managed_resources=())
         build_b = replace(build_b, managed_resources=())
     return SharedConfiguration(
-        SHARED_CONFIGURATION_VERSION,
-        _expect(obj, "compare_enabled", bool, "Shared configuration"),
-        scenario,
-        build_a,
-        build_b,
+        compare_enabled=_expect(obj, "compare_enabled", bool, "Shared configuration"),
+        scenario=scenario,
+        build_a=build_a,
+        build_b=build_b,
+        version=CURRENT_SHARED_CONFIGURATION_VERSION,
     )
 
 
