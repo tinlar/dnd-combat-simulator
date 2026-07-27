@@ -1757,7 +1757,7 @@ def _render_simulation_settings() -> tuple[int, int]:
         simulations_value = container.number_input(
             "Number of simulations",
             min_value=1,
-            value=10_000,
+            value=1_000,
             step=1,
             key=SCENARIO_WIDGET_KEYS["simulations"],
         )
