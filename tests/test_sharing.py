@@ -15,12 +15,16 @@ from dnd_combat_simulator.combat import (
     SuccessfulSaveDamage,
 )
 from dnd_combat_simulator.sharing import (
+    CURRENT_SHARED_CONFIGURATION_VERSION,
     LEGACY_SHARED_CONFIGURATION_VERSION,
     MAX_ATTACK_PROFILES_PER_BUILD,
     MAX_DECOMPRESSED_JSON_BYTES,
     MAX_ENCODED_TOKEN_LENGTH,
     SHARED_CONFIGURATION_VERSION,
+    SUPPORTED_SHARED_CONFIGURATION_VERSIONS,
+    SharedConfiguration,
     SharedConfigurationError,
+    _validate_shared_configuration,
     build_share_url,
     build_short_share_url,
     deserialize_shared_configuration,
@@ -111,6 +115,26 @@ def test_round_trip_default_configuration_and_deterministic_token():
     assert config.version == SHARED_CONFIGURATION_VERSION
     assert deserialize_shared_configuration(token) == config
     assert serialize_shared_configuration(config) == token
+
+
+def test_current_version_two_validates_and_serializes_directly():
+    configuration = shared()
+    configuration = SharedConfiguration(
+        compare_enabled=configuration.compare_enabled,
+        scenario=configuration.scenario,
+        build_a=configuration.build_a,
+        build_b=configuration.build_b,
+        version=2,
+    )
+
+    _validate_shared_configuration(configuration)
+    token = serialize_shared_configuration(configuration)
+
+    assert CURRENT_SHARED_CONFIGURATION_VERSION == 2
+    assert SUPPORTED_SHARED_CONFIGURATION_VERSIONS == frozenset(
+        {LEGACY_SHARED_CONFIGURATION_VERSION, CURRENT_SHARED_CONFIGURATION_VERSION}
+    )
+    assert deserialize_shared_configuration(token) == configuration
 
 
 def test_managed_resources_and_all_profile_references_round_trip_by_build():

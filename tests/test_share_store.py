@@ -51,11 +51,10 @@ def invalid_configuration() -> SharedConfiguration:
         AttackProfile("Sword", 7, "1d8+4", 2)
     )
     return SharedConfiguration(
-        SHARED_CONFIGURATION_VERSION,
-        False,
-        SharedScenarioConfiguration(0, 3, 1, 100, 123),
-        SharedBuildConfiguration("Warrior", (profile,)),
-        SharedBuildConfiguration("Mage", (profile,)),
+        compare_enabled=False,
+        scenario=SharedScenarioConfiguration(0, 3, 1, 100, 123),
+        build_a=SharedBuildConfiguration("Warrior", (profile,)),
+        build_b=SharedBuildConfiguration("Mage", (profile,)),
     )
 
 
@@ -72,6 +71,17 @@ def test_save_and_load_restores_exact_shared_configuration():
     config = shared_configuration()
 
     assert store.load(store.save(config)) == config
+
+
+def test_save_accepts_and_stores_explicit_version_two_configuration():
+    store = InMemoryShareStore(id_generator=lambda _: "version2")
+    config = shared_configuration()
+    assert config.version == 2
+
+    share_id = store.save(config)
+
+    assert share_id == "version2"
+    assert deserialize_shared_configuration(store._tokens_by_id[share_id]) == config
 
 
 def test_save_and_load_shared_link_with_managed_resources():

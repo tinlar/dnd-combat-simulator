@@ -1964,13 +1964,13 @@ def test_unified_share_configuration_change_invalidates_then_saves_new(monkeypat
     )
 
 
-def test_unified_share_save_error_is_safe(monkeypatch):
+def test_unified_share_serialization_error_is_safe(monkeypatch, caplog):
     import sys
     from types import SimpleNamespace
 
     import ui_test_api as app
 
-    from dnd_combat_simulator.share_store import ShareStoreError
+    from dnd_combat_simulator.sharing import SharedConfigurationError
 
     messages = []
     state = {
@@ -1979,6 +1979,7 @@ def test_unified_share_save_error_is_safe(monkeypatch):
         app.SCENARIO_WIDGET_KEYS["rounds"]: 4,
         app.SCENARIO_WIDGET_KEYS["simulations"]: 10,
         app.SCENARIO_WIDGET_KEYS["seed"]: 1,
+        app.GENERATED_SHARE_URL_KEY: "https://example.test/sim?share=stale",
     }
 
     def mount(**kwargs):
@@ -1990,7 +1991,11 @@ def test_unified_share_save_error_is_safe(monkeypatch):
         context=SimpleNamespace(url="https://example.test/sim"),
         components=SimpleNamespace(v2=SimpleNamespace(component=lambda *a, **k: mount)),
     )
-    store = _FakeShareStore(save_error=ShareStoreError("database secret detail"))
+    store = _FakeShareStore(
+        save_error=SharedConfigurationError(
+            "Unsupported shared configuration version: 2."
+        )
+    )
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
     monkeypatch.setattr(app, "get_streamlit_share_store", lambda: store)
     monkeypatch.setattr(app, "_SHARE_TOOLBAR_COMPONENT", None)
@@ -2001,8 +2006,10 @@ def test_unified_share_save_error_is_safe(monkeypatch):
     assert app.GENERATED_SHARE_URL_KEY not in state
     assert (
         state[app.SHARE_ERROR_MESSAGE_KEY]
-        == "Unable to create a share link right now. Try again later."
+        == "Unable to serialize this configuration for sharing. Try again later."
     )
+    assert "Failed to serialize the current configuration for sharing." in caplog.text
+    assert "Unsupported shared configuration version: 2." in caplog.text
 
 
 def test_missing_secrets_disable_unified_component(monkeypatch):
