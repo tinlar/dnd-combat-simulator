@@ -5229,7 +5229,7 @@ def test_deleting_one_managed_resource_preserves_other_resource_references(
     )
 
 
-def test_bar_charts_generate_labels_for_all_bar_values() -> None:
+def test_bar_charts_label_stack_segments_and_totals() -> None:
     from dnd_combat_simulator.ui.results import (
         _profile_contribution_bar_chart,
         _profile_damage_per_use_bar_chart,
@@ -5239,6 +5239,7 @@ def test_bar_charts_generate_labels_for_all_bar_values() -> None:
         {
             "Profile": "Narrow",
             "Order": 1,
+            "Build": "Test build",
             "Damage per Round contribution": 0,
             "Contribution percentage": 0,
             "Average damage per use": 1234.5,
@@ -5256,20 +5257,36 @@ def test_bar_charts_generate_labels_for_all_bar_values() -> None:
         _profile_damage_per_use_bar_chart(rows),
     ):
         spec = chart.to_dict()
-        assert [layer["mark"]["type"] for layer in spec["layer"]] == ["bar", "text"]
+        assert [layer["mark"]["type"] for layer in spec["layer"]] == [
+            "bar",
+            "text",
+            "text",
+        ]
+        assert spec["layer"][0]["transform"][0]["stack"] in {
+            "Damage per Round contribution",
+            "Average damage per use",
+        }
+        assert spec["layer"][0]["encoding"]["y2"]["field"] == "stack_start"
+        assert spec["layer"][1]["encoding"]["y"]["field"] == "stack_midpoint"
         assert spec["layer"][1]["encoding"]["text"]["format"] == ".2f"
         assert spec["layer"][1]["mark"] == {
             "type": "text",
             "align": "center",
-            "baseline": "bottom",
-            "clip": False,
-            "color": "#F8FAFC",
-            "dy": -8,
+            "baseline": "middle",
+            "clip": True,
+            "color": "#FFFFFF",
             "fontSize": 12,
             "fontWeight": "bold",
         }
-        assert spec["layer"][0]["encoding"]["y"]["scale"]["padding"] >= 24
-        assert spec["padding"]["top"] >= 32
+        assert spec["layer"][1]["transform"][-1] == {
+            "filter": "datum.segment_fraction >= 0.08"
+        }
+        assert spec["layer"][2]["transform"][0]["aggregate"][0]["op"] == "sum"
+        assert spec["layer"][2]["encoding"]["text"]["format"] == ".2f"
+        assert spec["layer"][2]["mark"]["dy"] < 0
+        assert spec["layer"][2]["mark"]["clip"] is False
+        assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
+        assert spec["padding"]["top"] >= 38
 
 
 def test_line_chart_adds_formatted_label_for_every_point() -> None:
@@ -5298,6 +5315,7 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
     assert spec["layer"][1]["mark"]["fontSize"] == 11
     assert spec["layer"][1]["mark"]["fontWeight"] == "bold"
     assert spec["layer"][1]["mark"]["color"] == "#F8FAFC"
+    assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
     assert spec["padding"]["top"] >= 30
 
 

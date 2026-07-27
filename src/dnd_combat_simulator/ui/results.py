@@ -156,7 +156,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
         y=alt.Y(
             y,
             title="Average total damage",
-            scale=alt.Scale(zero=True, nice=True, padding=24),
+            scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=24),
         ),
         color=alt.Color(color, title="Build"),
     )
@@ -191,29 +191,83 @@ def _bar_chart_with_value_labels(
     import pandas as pd
 
     frame = pd.DataFrame(data)
-    base = alt.Chart(frame).encode(
-        x=alt.X(f"{x_field}:N", sort=alt.SortField("Order"), title="Attack profile"),
+    stack = (
+        alt.Chart(frame)
+        .transform_stack(
+            stack=y_field,
+            groupby=["Build"],
+            sort=[alt.SortField("Order")],
+            as_=["stack_start", "stack_end"],
+        )
+        .transform_joinaggregate(stack_total=f"sum({y_field})", groupby=["Build"])
+        .transform_calculate(
+            stack_midpoint="(datum.stack_start + datum.stack_end) / 2",
+            segment_fraction=(
+                f"datum.stack_total > 0 ? datum['{y_field}'] / datum.stack_total : 0"
+            ),
+        )
+    )
+    base = stack.encode(
+        x=alt.X("Build:N", title=None),
         y=alt.Y(
-            f"{y_field}:Q",
+            "stack_end:Q",
             title=y_title,
-            scale=alt.Scale(zero=True, nice=True, padding=24),
+            scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=30),
         ),
     )
-    bars = base.mark_bar().encode(tooltip=tooltip)
-    labels = base.mark_text(
-        align="center",
-        baseline="bottom",
-        dy=-8,
-        color="#F8FAFC",
-        fontSize=12,
-        fontWeight="bold",
-        clip=False,
-    ).encode(
-        text=alt.Text(f"{y_field}:Q", format=label_format),
+    bars = base.mark_bar().encode(
+        y2=alt.Y2("stack_start:Q"),
+        color=alt.Color(
+            f"{x_field}:N",
+            title="Attack profile",
+            sort=alt.SortField("Order"),
+            scale=alt.Scale(
+                range=["#1E3A5F", "#4C1D5F", "#14532D", "#713F12", "#7F1D1D"]
+            ),
+        ),
+        order=alt.Order("Order:Q"),
         tooltip=tooltip,
     )
-    return (bars + labels).properties(
-        padding={"top": 32, "left": 8, "right": 8, "bottom": 5}
+    segment_labels = (
+        base.mark_text(
+            align="center",
+            baseline="middle",
+            color="#FFFFFF",
+            fontSize=12,
+            fontWeight="bold",
+            clip=True,
+        )
+        .encode(
+            y=alt.Y("stack_midpoint:Q"),
+            text=alt.Text(f"{y_field}:Q", format=label_format),
+            tooltip=tooltip,
+        )
+        .transform_filter("datum.segment_fraction >= 0.08")
+    )
+    totals = (
+        alt.Chart(frame)
+        .transform_aggregate(total=f"sum({y_field})", groupby=["Build"])
+        .mark_text(
+            align="center",
+            baseline="bottom",
+            dy=-10,
+            color="#FFFFFF",
+            fontSize=12,
+            fontWeight="bold",
+            clip=False,
+        )
+        .encode(
+            x=alt.X("Build:N", title=None),
+            y=alt.Y(
+                "total:Q",
+                title=y_title,
+                scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=30),
+            ),
+            text=alt.Text("total:Q", format=label_format),
+        )
+    )
+    return (bars + segment_labels + totals).properties(
+        padding={"top": 38, "left": 8, "right": 8, "bottom": 5}
     )
 
 
