@@ -73,6 +73,7 @@ ATTACK_WIDGET_TRANSIENT_SUFFIXES = frozenset(
         "toolbar",
         "confirm-delete",
         "cancel-delete",
+        "color-popover",
     )
 )
 
@@ -94,7 +95,7 @@ def _copied_attack_widget_state(
         if not key_text.startswith(source_prefix_text):
             continue
         suffix = key_text[len(source_prefix_text) :]
-        if suffix in ATTACK_WIDGET_TRANSIENT_SUFFIXES:
+        if suffix in ATTACK_WIDGET_TRANSIENT_SUFFIXES or suffix.startswith("color-"):
             continue
         # Session state can contain collections and configuration objects.  In
         # particular, resource selections must not be shared with the source
@@ -606,6 +607,9 @@ def _hydrate_build_session_state(
         session_state[
             profile_widget_key(widget_prefix, "empowered_max_dice_rerolled")
         ] = profile.empowered_max_dice_rerolled
+        session_state[profile_widget_key(widget_prefix, "card_color")] = (
+            profile.card_color
+        )
         session_state[profile_widget_key(widget_prefix, "trigger_frequency")] = {
             TriggerFrequency.ONCE_PER_ROUND: "Once per round",
             TriggerFrequency.ONCE_PER_COMBAT: "Once per combat",
@@ -1000,6 +1004,9 @@ def _build_from_state(prefix: str, default_build_name: str) -> BuildConfig:
                 ),
                 use_build_save_dc=session_state.get(
                     profile_widget_key(widget_prefix, "use_build_save_dc"), False
+                ),
+                card_color=session_state.get(
+                    profile_widget_key(widget_prefix, "card_color")
                 ),
                 inherit_triggering_critical=bool(
                     session_state.get(

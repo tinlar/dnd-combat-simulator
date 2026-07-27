@@ -68,6 +68,7 @@ def profile_widget_key(prefix: str, field: str) -> str:
         "empowered_matching_rescue_enabled": "empowered-matching-rescue-enabled",
         "empowered_resource_id": "empowered-resource-id",
         "empowered_max_dice_rerolled": "empowered-max-dice-rerolled",
+        "card_color": "card-color",
     }
     return f"{prefix}-{suffixes[field]}"
 

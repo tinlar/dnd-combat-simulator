@@ -80,6 +80,21 @@ from dnd_combat_simulator.ui.widget_keys import (
     trigger_expanded_state_key,
 )
 
+ATTACK_CARD_COLORS = {
+    "rose": "Rose",
+    "amber": "Amber",
+    "green": "Green",
+    "blue": "Blue",
+    "violet": "Violet",
+}
+
+
+def _set_attack_card_color(state: Any, widget_prefix: str, color: str | None) -> None:
+    """Set or clear a palette color while leaving all other card state intact."""
+    if color is not None and color not in ATTACK_CARD_COLORS:
+        raise ValueError("Unsupported Attack Card color")
+    state[profile_widget_key(widget_prefix, "card_color")] = color
+
 
 def format_features(features: frozenset[AttackFeature]) -> str:
     """Format selected profile features in stable interface order."""
@@ -1193,13 +1208,53 @@ def _attack_profile_inputs(
         empowered_matching_rescue_enabled=empowered_matching_rescue_enabled,
         empowered_resource_id=empowered_resource_id,
         empowered_max_dice_rerolled=empowered_max_dice_rerolled,
+        card_color=session_state.get(profile_widget_key(prefix, "card_color")),
     )
 
 
-def _attack_card_key(prefix: str, attack_id: str, profile_index: int) -> str:
+def _attack_card_key(
+    prefix: str, attack_id: str, profile_index: int, card_color: str | None = None
+) -> str:
     """Return the keyed attack card container with position-based visual tone."""
     tone = "a" if profile_index % 2 == 0 else "b"
-    return f"{prefix}-{attack_id}-card-tone-{tone}"
+    color_suffix = (
+        f"-card-color-{card_color}" if card_color in ATTACK_CARD_COLORS else ""
+    )
+    return f"{prefix}-{attack_id}-card-tone-{tone}{color_suffix}"
+
+
+def _render_attack_color_picker(toolbar: Any, widget_prefix: str) -> None:
+    """Render a compact palette without disturbing any card form state."""
+    import streamlit as st
+
+    popover = getattr(toolbar, "popover", None)
+    if popover is None:
+        return
+    color_key = profile_widget_key(widget_prefix, "card_color")
+    with popover(
+        ":material/palette:",
+        help="Choose an Attack Card color.",
+        key=f"{widget_prefix}-color-popover",
+        type="tertiary",
+        width="content",
+    ):
+        st.caption("Card color")
+        for color, label in ATTACK_CARD_COLORS.items():
+            if st.button(
+                f"● {label}",
+                key=f"{widget_prefix}-color-{color}",
+                use_container_width=True,
+            ):
+                _set_attack_card_color(st.session_state, widget_prefix, color)
+                st.rerun()
+        if st.button(
+            "Clear color",
+            key=f"{widget_prefix}-color-clear",
+            use_container_width=True,
+            disabled=not st.session_state.get(color_key),
+        ):
+            _set_attack_card_color(st.session_state, widget_prefix, None)
+            st.rerun()
 
 
 def _profile_definitions(
@@ -1515,8 +1570,12 @@ def _build_inputs(
             _heading,
             default_attack_name,
         ) in enumerate(_profile_definitions(prefix, 0)):
+            widget_prefix = _state_widget_prefix(prefix, attack_id)
+            selected_color = getattr(st, "session_state", {}).get(
+                profile_widget_key(widget_prefix, "card_color")
+            )
             with _render_section_container(
-                key=_attack_card_key(prefix, attack_id, profile_index)
+                key=_attack_card_key(prefix, attack_id, profile_index, selected_color)
             ):
                 current_name = (
                     str(
@@ -1554,6 +1613,7 @@ def _build_inputs(
                     )
 
                 at_max = len(ids) >= MAX_ATTACKS_PER_BUILD
+                _render_attack_color_picker(toolbar, widget_prefix)
                 if toolbar_button(
                     ":material/content_copy:",
                     key=f"{prefix}-{attack_id}-duplicate",

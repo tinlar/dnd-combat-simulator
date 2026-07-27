@@ -273,6 +273,12 @@ ATTACK_CARD_CSS = """
     --attack-card-tint: #718F87;
 }
 
+[class*="-card-color-rose"] { --attack-card-tint: #c9687b; }
+[class*="-card-color-amber"] { --attack-card-tint: #b98532; }
+[class*="-card-color-green"] { --attack-card-tint: #4f9271; }
+[class*="-card-color-blue"] { --attack-card-tint: #4f7fb7; }
+[class*="-card-color-violet"] { --attack-card-tint: #826bb0; }
+
 :is(
     [class*="st-key-first-attack-"],
     [class*="st-key-second-attack-"]
