@@ -100,7 +100,6 @@ def _profile_metadata(
         "Target resolutions": profile.affected_targets,
         "Actual profile uses": profile_result.total_profile_uses,
         "Skipped profile uses": profile_result.total_skipped_profile_uses,
-        "Average damage per use": profile_result.average_damage_per_use,
     }
 
 
@@ -122,19 +121,26 @@ def _profile_contribution_chart_data(
     return rows
 
 
-def _profile_damage_per_use_chart_data(
+def _profile_combat_contribution_chart_data(
     result: SimulationResult, build_name: str
 ) -> list[dict[str, int | float | str]]:
-    """Build average damage per profile use chart data in configured order."""
-    return [
-        {
-            **_profile_metadata(profile_result, index, build_name),
-            "Average damage per use": profile_result.average_damage_per_use,
-            "Actual profile uses": profile_result.total_profile_uses,
-            "Skipped profile uses": profile_result.total_skipped_profile_uses,
-        }
-        for index, profile_result in enumerate(result.attack_profile_results, start=1)
-    ]
+    """Build per-combat damage contributions in configured profile order.
+
+    The simulation result accumulates damage at the profile that directly resolved it,
+    so this includes every execution and target, including triggered profiles.
+    """
+    total = result.average_total_damage_per_simulation
+    rows = []
+    for index, profile_result in enumerate(result.attack_profile_results, start=1):
+        contribution = profile_result.average_total_damage_per_simulation
+        rows.append(
+            {
+                **_profile_metadata(profile_result, index, build_name),
+                "Average damage contributed per combat": contribution,
+                "Combat damage percentage": contribution / total * 100 if total else 0,
+            }
+        )
+    return rows
 
 
 def _line_chart(data, *, x: str, y: str, color: str):
@@ -338,41 +344,33 @@ def _profile_contribution_bar_chart(data):
             ),
             alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
             alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
-            alt.Tooltip(
-                "Average damage per use:Q",
-                title="Average damage per use",
-                format=".2f",
-            ),
             alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
         ],
     )
 
 
-def _profile_damage_per_use_bar_chart(data):
+def _profile_combat_contribution_bar_chart(data):
     import altair as alt
 
     return _bar_chart_with_value_labels(
         data,
         x_field="Profile",
-        y_field="Average damage per use",
-        y_title="Average total damage from one use",
+        y_field="Average damage contributed per combat",
+        y_title="Average Damage per Combat",
         label_format=".2f",
         tooltip=[
+            alt.Tooltip("Build:N", title="Build name"),
             alt.Tooltip("Profile:N", title="Attack name"),
-            alt.Tooltip("Resolution type:N", title="Resolution type"),
             alt.Tooltip(
-                "Average damage per use:Q",
-                title="Average damage per use",
+                "Average damage contributed per combat:Q",
+                title="Average damage contributed per combat",
                 format=".2f",
             ),
-            alt.Tooltip("Actual profile uses:Q", title="Actual profile uses"),
-            alt.Tooltip("Skipped profile uses:Q", title="Skipped profile uses"),
             alt.Tooltip(
-                "Maximum attacks per active round:Q",
-                title="Maximum attacks per active round",
+                "Combat damage percentage:Q",
+                title="Percentage of build total combat damage",
+                format=".1f",
             ),
-            alt.Tooltip("Target resolutions:Q", title="Target Resolutions"),
-            alt.Tooltip("Active Rounds:N", title="Active Rounds"),
         ],
     )
 
@@ -394,7 +392,9 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
     )
 
     contribution_data = _profile_contribution_chart_data(result, build.name)
-    damage_per_use_data = _profile_damage_per_use_chart_data(result, build.name)
+    combat_contribution_data = _profile_combat_contribution_chart_data(
+        result, build.name
+    )
     first_col, second_col = st.columns(2)
     with first_col:
         st.markdown("##### Attack Contribution to Damage per Round")
@@ -405,13 +405,13 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
             _profile_contribution_bar_chart(contribution_data), width="stretch"
         )
     with second_col:
-        st.markdown("##### Average Damage per Attack Use")
+        st.markdown("##### Attack Contribution to Damage per Combat")
         st.caption(
-            "Expected total damage each time the attack is used, including misses, "
-            "saves, and all affected targets."
+            "Average total damage each attack contributes across a simulated combat."
         )
         st.altair_chart(
-            _profile_damage_per_use_bar_chart(damage_per_use_data), width="stretch"
+            _profile_combat_contribution_bar_chart(combat_contribution_data),
+            width="stretch",
         )
 
 
@@ -450,14 +450,14 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
                 width="stretch",
             )
         with second_col:
-            st.markdown("###### Average Damage per Attack Use")
+            st.markdown("###### Attack Contribution to Damage per Combat")
             st.caption(
-                "Expected total damage each time the attack is used, including misses, "
-                "saves, and all affected targets."
+                "Average total damage each attack contributes across a simulated "
+                "combat."
             )
             st.altair_chart(
-                _profile_damage_per_use_bar_chart(
-                    _profile_damage_per_use_chart_data(result, build.name)
+                _profile_combat_contribution_bar_chart(
+                    _profile_combat_contribution_chart_data(result, build.name)
                 ),
                 width="stretch",
             )
