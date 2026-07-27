@@ -417,25 +417,47 @@ ATTACK_TOOLBAR_CSS = """
 CONFIGURATION_TOOLBAR_CSS = """
 <style>
 .st-key-configuration-toolbar {
+    width: 100%;
+    max-width: 100%;
+    align-items: center;
+}
+
+.st-key-configuration-toolbar > [data-testid="stHorizontalBlock"] {
+    width: 100%;
+    max-width: 100%;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.st-key-configuration-toolbar-left,
+.st-key-configuration-toolbar-left [data-testid="stHorizontalBlock"] {
     display: inline-flex;
     width: max-content;
     max-width: 100%;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
-.st-key-configuration-toolbar [data-testid="stHorizontalBlock"] {
-    display: inline-flex;
+.st-key-configuration-toolbar-left [data-testid="stVerticalBlock"],
+.st-key-configuration-toolbar-left [data-testid="stElementContainer"] {
     width: max-content;
     max-width: 100%;
+}
+
+.st-key-configuration-toolbar > [data-testid="stHorizontalBlock"]
+    > [data-testid="stColumn"]:last-child {
+    display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    margin-left: auto;
 }
 
-.st-key-configuration-toolbar [data-testid="stVerticalBlock"],
-.st-key-configuration-toolbar [data-testid="stElementContainer"] {
-    width: max-content;
-    max-width: 100%;
+.st-key-configuration-toolbar > [data-testid="stHorizontalBlock"]
+    > [data-testid="stColumn"]:last-child [data-testid="stVerticalBlock"] {
+    align-items: flex-end;
 }
 
 .st-key-configuration-toolbar [data-testid="stPopover"] {

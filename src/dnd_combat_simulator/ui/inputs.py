@@ -1837,16 +1837,43 @@ def _render_configuration_toolbar() -> tuple[int, int]:
         _render_report_bug_button()
         return simulations, seed
 
-    toolbar = container(
-        key="configuration-toolbar",
-        width="content",
-        horizontal=True,
-        horizontal_alignment="left",
-        vertical_alignment="center",
-        gap=None,
-    )
+    try:
+        toolbar = container(key="configuration-toolbar", width="stretch")
+    except TypeError:
+        toolbar = container()
     with toolbar if hasattr(toolbar, "__enter__") else nullcontext():
-        simulations, seed = _render_simulation_settings()
-        _render_share_configuration_button()
-        _render_report_bug_button()
+        columns = getattr(st, "columns", None)
+        if columns is None:
+            simulations, seed = _render_simulation_settings()
+            _render_share_configuration_button()
+            _render_report_bug_button()
+            return simulations, seed
+
+        try:
+            toolbar_columns = columns([1, "content"], vertical_alignment="center")
+        except TypeError:
+            try:
+                toolbar_columns = columns([10, 1], vertical_alignment="center")
+            except TypeError:
+                toolbar_columns = columns([10, 1])
+
+        left_column = toolbar_columns[0]
+        with left_column if hasattr(left_column, "__enter__") else nullcontext():
+            try:
+                left_controls = container(
+                    key="configuration-toolbar-left",
+                    horizontal=True,
+                    vertical_alignment="center",
+                    gap=None,
+                )
+            except TypeError:
+                left_controls = nullcontext()
+            with (
+                left_controls if hasattr(left_controls, "__enter__") else nullcontext()
+            ):
+                simulations, seed = _render_simulation_settings()
+                _render_share_configuration_button()
+        right_column = toolbar_columns[1]
+        with right_column if hasattr(right_column, "__enter__") else nullcontext():
+            _render_report_bug_button()
     return simulations, seed
