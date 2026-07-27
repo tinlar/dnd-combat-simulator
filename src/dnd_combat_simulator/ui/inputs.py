@@ -80,6 +80,11 @@ from dnd_combat_simulator.ui.widget_keys import (
     trigger_expanded_state_key,
 )
 
+BUG_REPORT_URL = (
+    "https://github.com/tinlar/dnd-combat-simulator/issues/new?"
+    "template=bug_report.md&labels=bug&title=%5BBug%5D%20"
+)
+
 ATTACK_CARD_COLORS = {
     "rose": "Rose",
     "amber": "Amber",
@@ -1790,6 +1795,37 @@ def _render_simulation_settings() -> tuple[int, int]:
     return render_controls(st)
 
 
+def _render_report_bug_button() -> None:
+    """Render a content-width link to the GitHub bug-report template."""
+    import streamlit as st
+
+    link_button = getattr(st, "link_button", None)
+    if link_button is None:
+        st.markdown(
+            f'<a class="report-bug-fallback" href="{BUG_REPORT_URL}" '
+            'target="_blank" rel="noopener noreferrer" '
+            'title="Report a problem on GitHub.">Report a Bug</a>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    arguments = {
+        "icon": ":material/bug_report:",
+        "help": "Report a problem on GitHub.",
+        "type": "secondary",
+        "width": "content",
+    }
+    try:
+        link_button("Report a Bug", BUG_REPORT_URL, **arguments)
+    except TypeError:
+        arguments.pop("width")
+        try:
+            link_button("Report a Bug", BUG_REPORT_URL, **arguments)
+        except TypeError:
+            arguments.pop("icon")
+            link_button("Report a Bug", BUG_REPORT_URL, **arguments)
+
+
 def _render_configuration_toolbar() -> tuple[int, int]:
     import streamlit as st
 
@@ -1798,6 +1834,7 @@ def _render_configuration_toolbar() -> tuple[int, int]:
     if container is None:
         simulations, seed = _render_simulation_settings()
         _render_share_configuration_button()
+        _render_report_bug_button()
         return simulations, seed
 
     toolbar = container(
@@ -1811,4 +1848,5 @@ def _render_configuration_toolbar() -> tuple[int, int]:
     with toolbar if hasattr(toolbar, "__enter__") else nullcontext():
         simulations, seed = _render_simulation_settings()
         _render_share_configuration_button()
+        _render_report_bug_button()
     return simulations, seed

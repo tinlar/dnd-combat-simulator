@@ -443,7 +443,9 @@ CONFIGURATION_TOOLBAR_CSS = """
 }
 
 .st-key-configuration-toolbar [data-testid="stPopover"] button,
-.st-key-configuration-toolbar button[kind="secondary"] {
+.st-key-configuration-toolbar button[kind="secondary"],
+.st-key-configuration-toolbar [data-testid="stLinkButton"] a,
+.st-key-configuration-toolbar .report-bug-fallback {
     height: 42px;
     min-height: 42px;
     min-width: 42px;
@@ -466,13 +468,17 @@ CONFIGURATION_TOOLBAR_CSS = """
 }
 
 .st-key-configuration-toolbar [data-testid="stPopover"] button:hover:not(:disabled),
-.st-key-configuration-toolbar button[kind="secondary"]:hover:not(:disabled) {
+.st-key-configuration-toolbar button[kind="secondary"]:hover:not(:disabled),
+.st-key-configuration-toolbar [data-testid="stLinkButton"] a:hover,
+.st-key-configuration-toolbar .report-bug-fallback:hover {
     border-color: var(--st-primary-color);
     color: var(--st-primary-color);
 }
 
 .st-key-configuration-toolbar [data-testid="stPopover"] button:focus-visible,
-.st-key-configuration-toolbar button[kind="secondary"]:focus-visible {
+.st-key-configuration-toolbar button[kind="secondary"]:focus-visible,
+.st-key-configuration-toolbar [data-testid="stLinkButton"] a:focus-visible,
+.st-key-configuration-toolbar .report-bug-fallback:focus-visible {
     outline: 2px solid var(--st-primary-color);
     outline-offset: 2px;
 }
