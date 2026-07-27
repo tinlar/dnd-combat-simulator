@@ -19,6 +19,7 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ManagedResource,
     ResourceCost,
+    ResourceResetTiming,
     TriggerFrequency,
     TriggerType,
 )
@@ -452,11 +453,13 @@ def _render_managed_resources(
             )
         resources: list[ManagedResource] = []
         for index, resource_id in enumerate(resource_ids):
-            id_key = managed_resource_widget_key(resource_id, "id", build_prefix)
-            state[id_key] = resource_id
-            cols = st.columns([3, 2, 1])
+            card = getattr(st, "container", None)
+            with card(border=True) if card is not None else nullcontext():
+                id_key = managed_resource_widget_key(resource_id, "id", build_prefix)
+                state[id_key] = resource_id
+                cols = st.columns([3, 2, 2, 1])
             name = cols[0].text_input(
-                "Resource name",
+                "Resource Name",
                 key=managed_resource_widget_key(resource_id, "name", build_prefix),
                 value=f"Resource {index + 1}",
             )
@@ -465,7 +468,7 @@ def _render_managed_resources(
                 managed_resource_widget_key(resource_id, "name", build_prefix),
             )
             starting = cols[1].number_input(
-                "Starting value",
+                "Starting Value",
                 min_value=0,
                 step=1,
                 key=managed_resource_widget_key(
@@ -480,8 +483,19 @@ def _render_managed_resources(
                 ),
             )
             resource_id = str(state[id_key])
+            reset_value = cols[2].selectbox(
+                "Reset Timing",
+                options=[timing.value for timing in ResourceResetTiming],
+                format_func=lambda value: {
+                    ResourceResetTiming.START_OF_COMBAT.value: "Start of Combat",
+                    ResourceResetTiming.START_OF_ROUND.value: "Start of Round",
+                }[value],
+                key=managed_resource_widget_key(
+                    resource_id, "reset-timing", build_prefix
+                ),
+            )
             used_by = _resource_usage_profile_keys(resource_id, build_prefix)
-            if cols[2].button(
+            if cols[3].button(
                 ":material/delete:",
                 key=managed_resource_widget_key(resource_id, "delete", build_prefix),
                 help=f"Delete {name}. Requires confirmation.",
@@ -519,7 +533,14 @@ def _render_managed_resources(
                     rerun = getattr(st, "rerun", None)
                     if rerun is not None:
                         rerun()
-            resources.append(ManagedResource(resource_id, str(name), int(starting)))
+            resources.append(
+                ManagedResource(
+                    resource_id,
+                    str(name),
+                    int(starting),
+                    ResourceResetTiming(reset_value),
+                )
+            )
         if getattr(st, "button", lambda *args, **kwargs: False)(
             "Add Resource", key=f"{build_prefix}-add-managed-resource"
         ):
@@ -535,6 +556,9 @@ def _render_managed_resources(
             state[
                 managed_resource_widget_key(new_id, "starting-value", build_prefix)
             ] = 0
+            state[managed_resource_widget_key(new_id, "reset-timing", build_prefix)] = (
+                ResourceResetTiming.START_OF_COMBAT.value
+            )
             rerun = getattr(st, "rerun", None)
             if rerun is not None:
                 rerun()

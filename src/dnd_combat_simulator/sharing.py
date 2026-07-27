@@ -25,6 +25,7 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ManagedResource,
     ResourceCost,
+    ResourceResetTiming,
     ScenarioConfig,
     TriggerFrequency,
     TriggerType,
@@ -204,7 +205,7 @@ class SharedBuildConfiguration:
             math_defaults=build.math_defaults,
             managed_resources=tuple(
                 SharedManagedResourceConfiguration(
-                    r.resource_id, r.name, r.starting_value
+                    r.resource_id, r.name, r.starting_value, r.reset_timing
                 )
                 for r in build.managed_resources
             ),
@@ -241,15 +242,22 @@ class SharedManagedResourceConfiguration:
     resource_id: str
     name: str
     starting_value: int
+    reset_timing: ResourceResetTiming = ResourceResetTiming.START_OF_COMBAT
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reset_timing", ResourceResetTiming(self.reset_timing))
 
     def to_managed_resource(self) -> ManagedResource:
-        return ManagedResource(self.resource_id, self.name, self.starting_value)
+        return ManagedResource(
+            self.resource_id, self.name, self.starting_value, self.reset_timing
+        )
 
     def to_json_dict(self) -> dict[str, object]:
         return {
             "resource_id": self.resource_id,
             "name": self.name,
             "starting_value": self.starting_value,
+            "reset_timing": self.reset_timing.value,
         }
 
 
@@ -325,7 +333,7 @@ def shared_configuration_from_configs(
             seed,
             tuple(
                 SharedManagedResourceConfiguration(
-                    r.resource_id, r.name, r.starting_value
+                    r.resource_id, r.name, r.starting_value, r.reset_timing
                 )
                 for r in scenario.managed_resources
             ),
@@ -732,6 +740,7 @@ def _resource_from_json(raw: object, ctx: str) -> SharedManagedResourceConfigura
         _expect(obj, "resource_id", str, ctx),
         _expect(obj, "name", str, ctx),
         _expect(obj, "starting_value", int, ctx),
+        ResourceResetTiming(obj.get("reset_timing", "start_of_combat")),
     )
 
 
@@ -793,6 +802,7 @@ def _validate_scenario_managed_resources(
     resources: tuple[SharedManagedResourceConfiguration, ...],
 ) -> set[str]:
     resource_ids: set[str] = set()
+    resource_names: set[str] = set()
     for resource in resources:
         if not resource.resource_id.strip():
             raise SharedConfigurationError(
@@ -806,6 +816,11 @@ def _validate_scenario_managed_resources(
             raise SharedConfigurationError(
                 "Scenario managed resource names must be non-empty."
             )
+        normalized_name = resource.name.strip().casefold()
+        if normalized_name in resource_names:
+            raise SharedConfigurationError(
+                "Scenario managed resource names must be unique."
+            )
         if (
             not isinstance(resource.starting_value, int)
             or isinstance(resource.starting_value, bool)
@@ -816,6 +831,7 @@ def _validate_scenario_managed_resources(
                 "greater than or equal to 0."
             )
         resource_ids.add(resource.resource_id)
+        resource_names.add(normalized_name)
     return resource_ids
 
 
