@@ -656,6 +656,130 @@ def test_single_build_and_comparison_chart_render_paths_are_separate(
     assert calls == ["single", "comparison"]
 
 
+def test_comparison_contribution_charts_use_stable_build_columns(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import dnd_combat_simulator.ui.results as results
+    from dnd_combat_simulator.simulation import (
+        BuildConfig,
+        ScenarioConfig,
+        compare_builds,
+    )
+
+    events: list[tuple[str, str, object]] = []
+    active_column = "page"
+
+    class Column:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.previous = "page"
+
+        def __enter__(self):
+            nonlocal active_column
+            self.previous = active_column
+            active_column = self.name
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            nonlocal active_column
+            active_column = self.previous
+            return False
+
+    columns = [Column("left"), Column("right")]
+
+    def markdown(value: str) -> None:
+        events.append((active_column, "markdown", value))
+
+    def chart(value: object, **kwargs) -> None:
+        events.append((active_column, "chart", value))
+
+    fake_streamlit = SimpleNamespace(
+        markdown=markdown,
+        caption=lambda value: events.append((active_column, "caption", value)),
+        altair_chart=chart,
+        columns=lambda count: columns if count == 2 else None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(results, "_line_chart", lambda *args, **kwargs: "round-line")
+    monkeypatch.setattr(
+        results,
+        "_profile_contribution_bar_chart",
+        lambda rows: f"round-{rows[0]['Build']}",
+    )
+    monkeypatch.setattr(
+        results,
+        "_profile_combat_contribution_bar_chart",
+        lambda rows: f"combat-{rows[0]['Build']}",
+    )
+
+    # Build B intentionally deals more damage: result totals must not drive layout.
+    comparison = compare_builds(
+        first_build=BuildConfig("Build A", 20, "1", 1),
+        second_build=BuildConfig("Build B", 20, "10", 1),
+        scenario=ScenarioConfig(target_armor_class=1, rounds=1, simulations=1),
+        seed=2,
+    )
+
+    results._render_comparison_charts(comparison)
+
+    assert comparison.second_result.average_damage_per_round > (
+        comparison.first_result.average_damage_per_round
+    )
+    assert [event for event in events if event[1] == "chart"] == [
+        ("page", "chart", "round-line"),
+        ("left", "chart", "round-Build A"),
+        ("left", "chart", "combat-Build A"),
+        ("right", "chart", "round-Build B"),
+        ("right", "chart", "combat-Build B"),
+    ]
+    assert [
+        event for event in events if event[2] in {"##### Build A", "##### Build B"}
+    ] == [
+        ("left", "markdown", "##### Build A"),
+        ("right", "markdown", "##### Build B"),
+    ]
+    # Streamlit stacks columns in declaration order responsively, making this also
+    # the narrow-screen sequence: Build A and both charts, then Build B and both.
+    assert [column.name for column in columns] == ["left", "right"]
+
+
+def test_single_build_contribution_charts_keep_side_by_side_layout(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import dnd_combat_simulator.ui.results as results
+
+    build, result = _mixed_profile_result()
+    column_specs: list[int] = []
+
+    class Column:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    fake_streamlit = SimpleNamespace(
+        markdown=lambda *args, **kwargs: None,
+        caption=lambda *args, **kwargs: None,
+        altair_chart=lambda *args, **kwargs: None,
+        columns=lambda count: column_specs.append(count) or [Column(), Column()],
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(results, "_line_chart", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        results, "_profile_contribution_bar_chart", lambda *args: object()
+    )
+    monkeypatch.setattr(
+        results, "_profile_combat_contribution_bar_chart", lambda *args: object()
+    )
+
+    results._render_single_build_charts(build, result)
+
+    assert column_specs == [2]
+
+
 def test_feature_expander_is_collapsed_and_uses_helpful_stable_checkbox_keys(
     monkeypatch,
 ) -> None:
