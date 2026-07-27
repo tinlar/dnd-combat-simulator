@@ -2134,7 +2134,7 @@ def test_simulation_settings_keep_existing_widget_keys(monkeypatch) -> None:
         "Number of simulations",
         {
             "min_value": 1,
-            "value": 10_000,
+            "value": 1_000,
             "step": 1,
             "key": app.SCENARIO_WIDGET_KEYS["simulations"],
         },

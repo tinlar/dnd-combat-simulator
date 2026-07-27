@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from functools import lru_cache
+from itertools import combinations
 from random import Random
 
 from dnd_combat_simulator.build_math import BuildMathDefaults
@@ -619,47 +621,79 @@ def _select_empowered_damage_dice(
 def _match_probability_after_reroll(
     dice: tuple[EmpoweredDie, ...], indexes: tuple[int, ...]
 ) -> float:
-    retained = [die.face for i, die in enumerate(dice) if i not in indexes]
-    if _has_matching_pair(tuple(retained)):
+    rerolled = set(indexes)
+    retained = tuple(
+        sorted(die.face for i, die in enumerate(dice) if i not in rerolled)
+    )
+    sides = tuple(sorted(dice[i].sides for i in indexes))
+    return _cached_match_probability_after_reroll(retained, sides)
+
+
+@lru_cache(maxsize=8192)
+def _cached_match_probability_after_reroll(
+    retained_faces: tuple[int, ...], rerolled_sides: tuple[int, ...]
+) -> float:
+    """Return the exact matching probability for immutable roll characteristics."""
+    if _has_matching_pair(retained_faces):
         return 1.0
+    if not rerolled_sides:
+        return 0.0
+
+    # Count outcomes with no repeated face. Each state records the already-used
+    # faces and its exact integer multiplicity after processing the current dice.
+    states: dict[frozenset[int], int] = {frozenset(retained_faces): 1}
     total = 1
-    success = 0
-    sides = [dice[i].sides for i in indexes]
+    for sides in rerolled_sides:
+        total *= sides
+        next_states: dict[frozenset[int], int] = {}
+        for used, outcome_count in states.items():
+            for face in range(1, sides + 1):
+                if face in used:
+                    continue
+                next_used = used | {face}
+                next_states[next_used] = next_states.get(next_used, 0) + outcome_count
+        states = next_states
+    no_match = sum(states.values())
+    return (total - no_match) / total
 
-    def rec(pos: int, rolls: list[int]):
-        nonlocal success
-        if pos == len(sides):
-            success += int(_has_matching_pair(tuple(retained + rolls)))
-            return
-        for face in range(1, sides[pos] + 1):
-            rec(pos + 1, rolls + [face])
 
-    for side in sides:
-        total *= side
-    rec(0, [])
-    return success / total if total else 0
+@lru_cache(maxsize=4096)
+def _cached_empowered_rescue_indexes(
+    signature: tuple[tuple[int, int], ...], max_dice: int
+) -> tuple[int, ...]:
+    """Select rescue indexes without retaining damage-breakdown objects."""
+    best: tuple[tuple[float, tuple[int, ...], float, int], tuple[int, ...]] | None = (
+        None
+    )
+    n = len(signature)
+    for count in range(1, min(max_dice, n) + 1):
+        for indexes in combinations(range(n), count):
+            rerolled = set(indexes)
+            retained = tuple(
+                sorted(
+                    face for i, (face, _) in enumerate(signature) if i not in rerolled
+                )
+            )
+            sides = tuple(sorted(signature[i][1] for i in indexes))
+            prob = _cached_match_probability_after_reroll(retained, sides)
+            if prob <= 0:
+                continue
+            low = tuple(sorted(signature[i][0] for i in indexes))
+            improvement = sum(
+                (signature[i][1] + 1) / 2 - signature[i][0] for i in indexes
+            )
+            key = (prob, tuple(-v for v in low), improvement, -count)
+            if best is None or key > best[0]:
+                best = (key, indexes)
+    return best[1] if best else ()
 
 
 def _select_empowered_rescue_dice(
     dice: tuple[EmpoweredDie, ...], max_dice: int
 ) -> tuple[EmpoweredDie, ...]:
-    from itertools import combinations
-
-    best: tuple[tuple[float, tuple[int, ...], float, int], tuple[int, ...]] | None = (
-        None
-    )
-    n = len(dice)
-    for count in range(1, min(max_dice, n) + 1):
-        for indexes in combinations(range(n), count):
-            prob = _match_probability_after_reroll(dice, indexes)
-            if prob <= 0:
-                continue
-            low = tuple(sorted(dice[i].face for i in indexes))
-            improvement = sum((dice[i].sides + 1) / 2 - dice[i].face for i in indexes)
-            key = (prob, tuple(-v for v in low), improvement, -count)
-            if best is None or key > best[0]:
-                best = (key, indexes)
-    return tuple(dice[i] for i in best[1]) if best else ()
+    signature = tuple((die.face, die.sides) for die in dice)
+    indexes = _cached_empowered_rescue_indexes(signature, max_dice)
+    return tuple(dice[i] for i in indexes)
 
 
 def _profile_id(profile: AttackProfile) -> str:

@@ -1,4 +1,5 @@
 from dataclasses import replace
+from itertools import combinations, product
 
 from dnd_combat_simulator.dice import (
     parse_damage_expression,
@@ -8,10 +9,14 @@ from dnd_combat_simulator.sharing import SharedAttackProfileConfiguration
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
+    EmpoweredDie,
     ManagedResource,
     ScenarioConfig,
+    _cached_empowered_rescue_indexes,
+    _cached_match_probability_after_reroll,
     _has_matching_pair,
     _included_empowered_dice,
+    _match_probability_after_reroll,
     _select_empowered_damage_dice,
     _select_empowered_rescue_dice,
     run_damage_simulations,
@@ -36,6 +41,104 @@ def _dice(formula, rolls):
             parse_damage_expression(formula), rng=SeqRng(rolls)
         )
     )
+
+
+def _exhaustive_probability(dice, indexes):
+    retained = [die.face for i, die in enumerate(dice) if i not in indexes]
+    sides = [dice[i].sides for i in indexes]
+    outcomes = product(*(range(1, side + 1) for side in sides))
+    successes = sum(_has_matching_pair(tuple(retained) + rolls) for rolls in outcomes)
+    total = 1
+    for side in sides:
+        total *= side
+    return successes / total if total else 0
+
+
+def _legacy_rescue_indexes(dice, max_dice):
+    best = None
+    for count in range(1, min(max_dice, len(dice)) + 1):
+        for indexes in combinations(range(len(dice)), count):
+            probability = _exhaustive_probability(dice, indexes)
+            if probability <= 0:
+                continue
+            low = tuple(sorted(dice[i].face for i in indexes))
+            improvement = sum((dice[i].sides + 1) / 2 - dice[i].face for i in indexes)
+            key = (probability, tuple(-face for face in low), improvement, -count)
+            if best is None or key > best[0]:
+                best = (key, indexes)
+    return best[1] if best else ()
+
+
+def _selected_indexes(dice, selected):
+    return tuple(
+        i for i, die in enumerate(dice) if any(die is item for item in selected)
+    )
+
+
+def test_matching_probability_matches_exhaustive_reference():
+    cases = [
+        (_dice("4d8", [1, 2, 3, 4]), (0, 1, 2, 3)),
+        (_dice("5d8", [1, 2, 3, 4, 5]), (0,)),
+        (_dice("5d8", [1, 2, 3, 4, 5]), (0, 1, 2, 3)),
+        (_dice("1d6+1d8", [1, 7]), (0, 1)),
+        (_dice("3d8", [5, 5, 7]), (2,)),
+        (_dice("1d6+1d8", [6, 8]), (0,)),
+    ]
+    for dice, indexes in cases:
+        assert _match_probability_after_reroll(
+            dice, indexes
+        ) == _exhaustive_probability(dice, indexes)
+
+
+def test_rescue_selection_matches_exhaustive_reference_and_tie_breaking():
+    cases = [
+        (_dice("5d8", faces), max_dice)
+        for faces in ([1, 2, 3, 4, 5], [1, 3, 5, 7, 8], [2, 4, 6, 7, 8])
+        for max_dice in (1, 2, 4, 9)
+    ]
+    cases.extend(
+        [
+            (_dice("1d6+1d8+1d8", [2, 3, 7]), 2),
+            (_dice("4d8", [1, 2, 3, 4]), 4),
+            (_dice("2d6", [1, 2]), 1),
+        ]
+    )
+    for dice, max_dice in cases:
+        selected = _select_empowered_rescue_dice(dice, max_dice)
+        assert _selected_indexes(dice, selected) == _legacy_rescue_indexes(
+            dice, max_dice
+        )
+
+
+def test_rescue_selection_maps_cached_indexes_to_exploding_chain_dice():
+    dice = (
+        EmpoweredDie(0, 0, 0, 8, 2, 2),
+        EmpoweredDie(0, 0, 1, 8, 8, 8),
+        EmpoweredDie(0, 1, 0, 8, 3, 3),
+        EmpoweredDie(0, 1, 1, 6, 6, 6),
+    )
+    selected = _select_empowered_rescue_dice(dice, 3)
+    assert _selected_indexes(dice, selected) == _legacy_rescue_indexes(dice, 3)
+    assert all(any(item is die for die in dice) for item in selected)
+
+
+def test_empowered_probability_and_selection_caches_record_hits():
+    _cached_match_probability_after_reroll.cache_clear()
+    _cached_empowered_rescue_indexes.cache_clear()
+    dice = _dice("5d8", [1, 2, 3, 4, 5])
+
+    _match_probability_after_reroll(dice, (0, 1, 2, 3))
+    first_probability = _cached_match_probability_after_reroll.cache_info()
+    _match_probability_after_reroll(dice, (0, 1, 2, 3))
+    assert (
+        _cached_match_probability_after_reroll.cache_info().hits
+        > first_probability.hits
+    )
+
+    _select_empowered_rescue_dice(dice, 4)
+    first_selection = _cached_empowered_rescue_indexes.cache_info()
+    _select_empowered_rescue_dice(dice, 4)
+    assert _cached_empowered_rescue_indexes.cache_info().hits > first_selection.hits
 
 
 def test_normal_empowered_rerolls_lowest_eligible_identical_dice():
