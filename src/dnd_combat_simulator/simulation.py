@@ -110,8 +110,11 @@ class AttackProfile:
     empowered_matching_rescue_enabled: bool = False
     empowered_resource_id: str = ""
     empowered_max_dice_rerolled: int = 1
+    card_color: str | None = None
 
     def __post_init__(self) -> None:
+        if self.card_color not in {None, "rose", "amber", "green", "blue", "violet"}:
+            raise ValueError("card_color must be a supported palette color or None")
         for field_name in (
             "use_build_attack_bonus",
             "use_build_save_dc",

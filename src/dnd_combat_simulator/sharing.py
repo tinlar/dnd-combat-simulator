@@ -77,6 +77,7 @@ class SharedAttackProfileConfiguration:
     empowered_matching_rescue_enabled: bool = False
     empowered_resource_id: str = ""
     empowered_max_dice_rerolled: int = 1
+    card_color: str | None = None
 
     @classmethod
     def from_attack_profile(
@@ -111,6 +112,7 @@ class SharedAttackProfileConfiguration:
             empowered_matching_rescue_enabled=profile.empowered_matching_rescue_enabled,
             empowered_resource_id=profile.empowered_resource_id,
             empowered_max_dice_rerolled=profile.empowered_max_dice_rerolled,
+            card_color=profile.card_color,
         )
 
     def to_attack_profile(self) -> AttackProfile:
@@ -143,6 +145,7 @@ class SharedAttackProfileConfiguration:
             empowered_matching_rescue_enabled=self.empowered_matching_rescue_enabled,
             empowered_resource_id=self.empowered_resource_id,
             empowered_max_dice_rerolled=self.empowered_max_dice_rerolled,
+            card_color=self.card_color,
         )
 
     def to_json_dict(self) -> dict[str, object]:
@@ -179,6 +182,7 @@ class SharedAttackProfileConfiguration:
             "empowered_matching_rescue_enabled": self.empowered_matching_rescue_enabled,
             "empowered_resource_id": self.empowered_resource_id,
             "empowered_max_dice_rerolled": self.empowered_max_dice_rerolled,
+            "card_color": self.card_color,
         }
 
 
@@ -692,6 +696,13 @@ def _optional_bool(obj: dict[str, object], key: str, ctx: str) -> bool:
     return value
 
 
+def _optional_card_color(obj: dict[str, object], ctx: str) -> str | None:
+    value = obj.get("card_color")
+    if value not in {None, "rose", "amber", "green", "blue", "violet"}:
+        raise SharedConfigurationError(f"{ctx}.card_color is not supported.")
+    return value
+
+
 def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguration:
     obj = _required_dict(raw, ctx)
     features_raw = _expect(obj, "features", list, ctx)
@@ -731,6 +742,7 @@ def _profile_from_json(raw: object, ctx: str) -> SharedAttackProfileConfiguratio
         _optional_bool(obj, "empowered_matching_rescue_enabled", ctx),
         obj.get("empowered_resource_id", ""),
         obj.get("empowered_max_dice_rerolled", 1),
+        _optional_card_color(obj, ctx),
     )
 
 

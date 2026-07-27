@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import zlib
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -715,3 +716,34 @@ def test_stage44_shared_profile_rejects_non_boolean_inheritance() -> None:
 
     with pytest.raises(SharedConfigurationError, match="must be a boolean"):
         deserialize_shared_configuration(token)
+
+
+def test_attack_card_color_round_trip_and_legacy_default() -> None:
+    configuration = shared()
+    colored = replace(
+        configuration,
+        build_a=replace(
+            configuration.build_a,
+            attack_profiles=(
+                replace(configuration.build_a.attack_profiles[0], card_color="blue"),
+                configuration.build_a.attack_profiles[1],
+            ),
+        ),
+    )
+    raw = colored.to_json_dict()
+    assert raw["build_a"]["attack_profiles"][0]["card_color"] == "blue"
+
+    decoded = deserialize_shared_configuration(serialize_shared_configuration(colored))
+    assert decoded.build_a.attack_profiles[0].card_color == "blue"
+
+    for build in ("build_a", "build_b"):
+        for attack in raw[build]["attack_profiles"]:
+            attack.pop("card_color", None)
+    token = (
+        base64.urlsafe_b64encode(zlib.compress(json.dumps(raw).encode()))
+        .decode()
+        .rstrip("=")
+    )
+    legacy = deserialize_shared_configuration(token)
+    assert all(profile.card_color is None for profile in legacy.build_a.attack_profiles)
+    assert all(profile.card_color is None for profile in legacy.build_b.attack_profiles)

@@ -3043,6 +3043,37 @@ def test_next_default_attack_name_ignores_order_and_existing_case() -> None:
     assert next_default_attack_name(["Custom", "Attack 1"]) == "Attack 2"
 
 
+def test_attack_card_color_can_be_copied_and_cleared_without_other_changes() -> None:
+    import copy
+
+    import ui_test_api as app
+
+    from dnd_combat_simulator.ui.inputs import _set_attack_card_color
+
+    source = app.attack_widget_prefix("first", "source")
+    destination = app.attack_widget_prefix("first", "copy")
+    state = {
+        app.profile_widget_key(source, "name"): "Blade",
+        app.profile_widget_key(source, "damage_formula"): "2d6+3",
+        app.profile_widget_key(source, "card_color"): "violet",
+    }
+    app._copy_attack_widget_state(state, source, destination)
+    assert state[app.profile_widget_key(destination, "card_color")] == "violet"
+
+    before = copy.deepcopy(state)
+    _set_attack_card_color(state, source, None)
+    assert state[app.profile_widget_key(source, "card_color")] is None
+    assert {
+        key: value
+        for key, value in state.items()
+        if key != app.profile_widget_key(source, "card_color")
+    } == {
+        key: value
+        for key, value in before.items()
+        if key != app.profile_widget_key(source, "card_color")
+    }
+
+
 def test_attack_action_toolbar_uses_single_horizontal_tertiary_container(
     monkeypatch,
 ) -> None:
@@ -4045,6 +4076,7 @@ def _rich_clone_build(name="Build A"):
         resource_costs=(ResourceCost("ki", 1),),
         use_build_attack_bonus=True,
         require_matching_damage_dice_to_continue=True,
+        card_color="blue",
     )
     triggered = AttackProfile(
         "Flame Burst",
@@ -4168,6 +4200,7 @@ def test_clone_build_a_confirm_completely_replaces_build_b_and_deep_copies(monke
     assert cloned_b.name == build_a.name
     assert [p.attack_id for p in cloned_b.attack_profiles] != ["opener", "burst"]
     assert len({p.attack_id for p in cloned_b.attack_profiles}) == 2
+    assert cloned_b.attack_profiles[0].card_color == "blue"
     assert (
         cloned_b.attack_profiles[1].trigger_source_attack_id
         == cloned_b.attack_profiles[0].attack_id
