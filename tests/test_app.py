@@ -1591,6 +1591,9 @@ def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
 
     assert "gap: 8px" in toolbar_css
     assert "gap: 8px" in share_css
+    assert ".st-key-configuration-toolbar {\n    width: 100%;" in toolbar_css
+    assert "justify-content: flex-end" in toolbar_css
+    assert "flex-wrap: wrap" in toolbar_css
     assert "width: max-content" in toolbar_css
     assert "width: max-content" in share_css
     assert "height: 42px" in toolbar_css
@@ -1667,6 +1670,68 @@ def test_configuration_toolbar_renders_bug_report_after_share_in_fallback(
     assert events == ["css", "share", "bug"]
 
 
+def test_configuration_toolbar_places_bug_button_in_right_column(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import dnd_combat_simulator.ui.inputs as inputs
+
+    events = []
+    column_calls = []
+
+    class Area:
+        def __init__(self, name):
+            self.name = name
+
+        def __enter__(self):
+            events.append(f"enter:{self.name}")
+            return self
+
+        def __exit__(self, *_args):
+            events.append(f"exit:{self.name}")
+
+    container_calls = []
+
+    def container(**kwargs):
+        container_calls.append(kwargs)
+        name = "toolbar" if len(container_calls) == 1 else "left"
+        return Area(name)
+
+    def columns(spec, **kwargs):
+        column_calls.append((spec, kwargs))
+        return Area("left-column"), Area("right-column")
+
+    fake_streamlit = SimpleNamespace(
+        markdown=lambda *_args, **_kwargs: events.append("css"),
+        container=container,
+        columns=columns,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(
+        inputs,
+        "_render_simulation_settings",
+        lambda: events.append("settings") or (123, 456),
+    )
+    monkeypatch.setattr(
+        inputs,
+        "_render_share_configuration_button",
+        lambda: events.append("share"),
+    )
+    monkeypatch.setattr(
+        inputs, "_render_report_bug_button", lambda: events.append("bug")
+    )
+
+    assert inputs._render_configuration_toolbar() == (123, 456)
+    assert container_calls[0] == {
+        "key": "configuration-toolbar",
+        "width": "stretch",
+    }
+    assert column_calls == [([1, "content"], {"vertical_alignment": "center"})]
+    assert events.index("settings") < events.index("share") < events.index("bug")
+    assert events.index("enter:right-column") < events.index("bug")
+    assert events.index("bug") < events.index("exit:right-column")
+
+
 def test_report_bug_button_supports_older_streamlit_signature(monkeypatch) -> None:
     import sys
     from types import SimpleNamespace
@@ -1694,7 +1759,7 @@ def test_report_bug_button_supports_older_streamlit_signature(monkeypatch) -> No
     ]
 
 
-def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
+def test_main_uses_full_width_two_section_configuration_toolbar() -> None:
     from pathlib import Path
 
     source = Path("src/dnd_combat_simulator/ui/page.py").read_text()
@@ -1705,7 +1770,9 @@ def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
     ]
 
     assert 'key="configuration-toolbar"' in toolbar_source
-    assert 'width="content"' in toolbar_source
+    assert 'width="stretch"' in toolbar_source
+    assert '[1, "content"]' in toolbar_source
+    assert "columns([10, 1]" in toolbar_source
     assert "horizontal=True" in toolbar_source
     assert 'vertical_alignment="center"' in toolbar_source
     assert "gap=None" in toolbar_source
