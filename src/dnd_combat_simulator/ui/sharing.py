@@ -302,6 +302,29 @@ def _current_shared_configuration_url() -> str:
     return _legacy_current_shared_configuration_url()
 
 
+def get_or_create_current_share_url() -> str:
+    """Return a cached valid share URL, storing the current configuration if needed."""
+    import streamlit as st
+
+    store = get_streamlit_share_store()
+    if store is None:
+        raise ShareStoreError("Share links are not configured")
+    state = getattr(st, "session_state", {})
+    configuration = _current_shared_configuration()
+    fingerprint = _share_configuration_fingerprint(configuration)
+    if state.get(GENERATED_SHARE_FINGERPRINT_KEY) == fingerprint and state.get(
+        GENERATED_SHARE_URL_KEY
+    ):
+        return str(state[GENERATED_SHARE_URL_KEY])
+    share_id = save_shared_configuration(store, configuration)
+    url = build_short_share_url(
+        getattr(getattr(st, "context", None), "url", ""), share_id
+    )
+    state[GENERATED_SHARE_URL_KEY] = url
+    state[GENERATED_SHARE_FINGERPRINT_KEY] = fingerprint
+    return url
+
+
 def _share_configuration_fingerprint(configuration: SharedConfiguration) -> str:
     return serialize_shared_configuration(configuration)
 

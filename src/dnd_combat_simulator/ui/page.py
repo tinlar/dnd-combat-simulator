@@ -358,7 +358,7 @@ def _main_tracked(st) -> None:
                         SIMULATION_DURATION_MESSAGE_KEY
                     )
                 )
-                _render_comparison_results(comparison)
+                _render_comparison_results(comparison, seed=int(seed))
     else:
         first_state_build = _build_from_state("first", "Build A")
         pre_render_errors = validation_errors_by_key(
@@ -437,4 +437,4 @@ def _main_tracked(st) -> None:
                 st.error(_friendly_validation_message(error))
             else:
                 st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
-                _render_single_build_results(first_build, result)
+                _render_single_build_results(first_build, result, seed=int(seed))
