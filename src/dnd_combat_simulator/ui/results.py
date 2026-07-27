@@ -416,7 +416,7 @@ def _render_single_build_charts(build: BuildConfig, result: SimulationResult) ->
 
 
 def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
-    """Render focused comparison charts while keeping profiles separate."""
+    """Render focused comparison charts in stable, build-first columns."""
     import streamlit as st
 
     st.markdown("##### Damage per Round")
@@ -431,13 +431,17 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
         width="stretch",
     )
 
-    for build, result in (
-        (comparison.first_build, comparison.first_result),
-        (comparison.second_build, comparison.second_result),
+    build_columns = st.columns(2)
+    for column, build, result in zip(
+        build_columns,
+        (comparison.first_build, comparison.second_build),
+        (comparison.first_result, comparison.second_result),
+        strict=True,
     ):
-        st.markdown(f"##### {build.name}")
-        first_col, second_col = st.columns(2)
-        with first_col:
+        # Streamlit preserves column order when it stacks columns on narrow screens,
+        # so the first configured build remains first at every viewport width.
+        with column:
+            st.markdown(f"##### {build.name}")
             st.markdown("###### Attack Contribution to Damage per Round")
             st.caption(
                 "How much each attack adds to the build's overall average "
@@ -449,7 +453,6 @@ def _render_comparison_charts(comparison: BuildComparisonResult) -> None:
                 ),
                 width="stretch",
             )
-        with second_col:
             st.markdown("###### Attack Contribution to Damage per Combat")
             st.caption(
                 "Average total damage each attack contributes across a simulated "
