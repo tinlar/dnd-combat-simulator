@@ -15,6 +15,7 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ManagedResource,
     ResourceCost,
+    ResourceResetTiming,
     ScenarioConfig,
     TriggerFrequency,
     TriggerType,
@@ -43,7 +44,9 @@ def test_no_resources_configured_has_no_usage_results() -> None:
 
 
 def test_resource_serializes_and_restores_renamed_stable_id() -> None:
-    resource = ManagedResource("spell-slots", "Spell Slots", 2)
+    resource = ManagedResource(
+        "spell-slots", "Spell Slots", 2, ResourceResetTiming.START_OF_ROUND
+    )
     profile = AttackProfile(
         "Smite", 5, "1", 1, resource_costs=(ResourceCost("spell-slots", 1),)
     )
@@ -65,6 +68,7 @@ def test_resource_serializes_and_restores_renamed_stable_id() -> None:
 
     assert restored_resource.resource_id == "spell-slots"
     assert restored_resource.name == "Spell Slots"
+    assert restored_resource.reset_timing is ResourceResetTiming.START_OF_ROUND
     assert restored.build_a.attack_profiles[0].resource_costs[0].resource_id == (
         "spell-slots"
     )
@@ -114,6 +118,76 @@ def test_resource_deduction_multiple_uses_and_insufficient_skip() -> None:
     assert usage.average_remaining_per_combat == 0
     assert usage.exhausted_combat_rate == 1
     assert usage.average_skipped_executions_per_combat == 1
+
+
+def test_start_of_combat_resource_is_initialized_once_across_rounds() -> None:
+    resource = ManagedResource("focus", "Focus", 2)
+    profile = AttackProfile(
+        "Focus hit",
+        None,
+        "1",
+        1,
+        resolution_type="automatic_damage",
+        resource_costs=(ResourceCost("focus", 1),),
+    )
+
+    result = simulate_build(
+        resource_build(profile),
+        ScenarioConfig(15, 3, 1, managed_resources=(resource,)),
+        1,
+    )
+
+    assert result.total_attacks_made == 2
+    assert result.total_skipped_profile_uses == 1
+    assert result.resource_usage_results[0].average_consumed_per_combat == 2
+
+
+def test_start_of_round_resource_resets_without_accumulating() -> None:
+    resource = ManagedResource("focus", "Focus", 2, ResourceResetTiming.START_OF_ROUND)
+    # Three configured uses prove each round has exactly two points: spent points
+    # are restored next round, while the unused/replaced balance never accumulates.
+    profile = AttackProfile(
+        "Focus hit",
+        None,
+        "1",
+        3,
+        resolution_type="automatic_damage",
+        resource_costs=(ResourceCost("focus", 1),),
+    )
+
+    result = simulate_build(
+        resource_build(profile),
+        ScenarioConfig(15, 3, 1, managed_resources=(resource,)),
+        1,
+    )
+
+    assert result.total_attacks_made == 6
+    assert result.total_skipped_profile_uses == 3
+    assert result.resource_usage_results[0].average_consumed_per_combat == 6
+
+
+def test_saved_resource_without_reset_timing_defaults_to_start_of_combat() -> None:
+    resource = ManagedResource("focus", "Focus", 2)
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 2, 1, managed_resources=(resource,)),
+        seed=7,
+        build_a=resource_build(
+            AttackProfile("A", None, "1", 1, resolution_type="automatic_damage")
+        ),
+        build_b=resource_build(
+            AttackProfile("B", None, "1", 1, resolution_type="automatic_damage")
+        ),
+    )
+    raw = config.to_json_dict()
+    del raw["scenario"]["managed_resources"][0]["reset_timing"]
+
+    restored = deserialize_shared_configuration(_encode_raw(raw))
+
+    assert (
+        restored.scenario.managed_resources[0].reset_timing
+        is ResourceResetTiming.START_OF_COMBAT
+    )
 
 
 def test_trigger_frequency_limit_prevents_resource_consumption() -> None:

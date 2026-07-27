@@ -27,6 +27,7 @@ from dnd_combat_simulator.simulation import (
     BuildConfig,
     ManagedResource,
     ResourceCost,
+    ResourceResetTiming,
     TriggerFrequency,
     TriggerType,
 )
@@ -420,6 +421,14 @@ def _managed_resources_from_state(
                     0,
                 )
             ),
+            reset_timing=ResourceResetTiming(
+                state.get(
+                    managed_resource_widget_key(
+                        resource_id, "reset-timing", build_prefix
+                    ),
+                    ResourceResetTiming.START_OF_COMBAT.value,
+                )
+            ),
         )
         for index, resource_id in enumerate(ids)
     )
@@ -686,6 +695,11 @@ def clone_build_session_state(
                 resource.resource_id, "starting-value", dest_prefix
             )
         ] = resource.starting_value
+        session_state[
+            managed_resource_widget_key(
+                resource.resource_id, "reset-timing", dest_prefix
+            )
+        ] = resource.reset_timing.value
     _hydrate_build_session_state(session_state, dest_prefix, cloned)
 
 
@@ -721,6 +735,11 @@ def hydrate_session_state_from_shared_configuration(
                     resource.resource_id, "starting-value", build_prefix
                 )
             ] = resource.starting_value
+            session_state[
+                managed_resource_widget_key(
+                    resource.resource_id, "reset-timing", build_prefix
+                )
+            ] = resource.reset_timing.value
     _hydrate_build_session_state(
         session_state,
         "first",

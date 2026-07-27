@@ -46,6 +46,13 @@ class TriggerFrequency(StrEnum):
     ONCE_IF_ANY = "once_if_any"
 
 
+class ResourceResetTiming(StrEnum):
+    """When a managed resource is restored to its configured value."""
+
+    START_OF_COMBAT = "start_of_combat"
+    START_OF_ROUND = "start_of_round"
+
+
 def _normalized_trigger_frequency(value: TriggerFrequency | str) -> TriggerFrequency:
     frequency = TriggerFrequency(value)
     if frequency is TriggerFrequency.ONCE_IF_ANY:
@@ -60,6 +67,10 @@ class ManagedResource:
     resource_id: str
     name: str
     starting_value: int
+    reset_timing: ResourceResetTiming = ResourceResetTiming.START_OF_COMBAT
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "reset_timing", ResourceResetTiming(self.reset_timing))
 
 
 @dataclass(frozen=True)
@@ -714,7 +725,8 @@ def _validate_managed_resources(resources: tuple[ManagedResource, ...]) -> None:
         names.append(resource.name.strip().casefold())
     if len(set(ids)) != len(ids):
         raise ValueError("Managed resource IDs must be unique.")
-    # Display names are intentionally allowed to duplicate; profile references use IDs.
+    if len(set(names)) != len(names):
+        raise ValueError("Managed resource names must be unique.")
 
 
 def _validate_resource_costs(
@@ -1450,6 +1462,11 @@ def run_damage_simulations(
             critical_queue_by_profile=[[] for _ in profiles],
         )
         for round_number in range(1, rounds + 1):
+            # Round-based pools are replaced, rather than topped up, before any
+            # profile or trigger gets an opportunity to spend them.
+            for index, resource in enumerate(managed_resources):
+                if resource.reset_timing is ResourceResetTiming.START_OF_ROUND:
+                    remaining_resources[index] = resource.starting_value
             for profile_index in range(len(profiles)):
                 combat_trigger_state.successful_resolutions_by_profile[
                     profile_index
