@@ -4541,9 +4541,16 @@ def test_copy_button_preserves_empowered_attack_profile_through_reruns(
     )
     run_button = _run_button(at)
     assert run_button.disabled is False
+    # This regression exercises state hydration and request construction, not Monte
+    # Carlo throughput. Keep one real iteration so AppTest still proves the copied
+    # profile can be validated and simulated without spending its timeout rendering
+    # the default 10,000 iterations.
+    at.session_state[app.SCENARIO_WIDGET_KEYS["simulations"]] = 1
     run_button.click()
     at.run(timeout=10)
     assert not at.exception
+    assert at.session_state[app.SIMULATION_PENDING_KEY] is False
+    assert at.session_state[app.SIMULATION_RUNNING_KEY] is False
 
 
 def test_duplicate_valid_attack_has_no_global_validation_error_and_run_enabled(
