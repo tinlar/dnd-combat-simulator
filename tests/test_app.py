@@ -830,7 +830,7 @@ def test_profile_contribution_percentages_zero_when_dpr_is_zero() -> None:
     assert rows[0]["Contribution percentage"] == 0
 
 
-def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
+def test_profile_combat_contribution_uses_total_damage_per_simulation() -> None:
     from dnd_combat_simulator.combat import ResolutionType
     from dnd_combat_simulator.simulation import (
         AttackProfile,
@@ -838,7 +838,7 @@ def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
         ScenarioConfig,
         simulate_build,
     )
-    from dnd_combat_simulator.ui.results import _profile_damage_per_use_chart_data
+    from dnd_combat_simulator.ui.results import _profile_combat_contribution_chart_data
 
     build = BuildConfig(
         "Limited",
@@ -858,35 +858,95 @@ def test_profile_damage_per_use_chart_uses_average_damage_per_use() -> None:
     )
     result = simulate_build(build, ScenarioConfig(10, rounds=2, simulations=1), seed=4)
 
-    row = _profile_damage_per_use_chart_data(result, build.name)[0]
+    row = _profile_combat_contribution_chart_data(result, build.name)[0]
 
     assert (
-        row["Average damage per use"]
-        == result.attack_profile_results[0].average_damage_per_use
+        row["Average damage contributed per combat"]
+        == result.attack_profile_results[0].average_total_damage_per_simulation
     )
     assert (
-        row["Average damage per use"]
+        row["Average damage contributed per combat"]
         != result.attack_profile_results[0].average_damage_per_round
     )
 
 
+def test_combat_contributions_include_repeated_triggered_and_multitarget_damage() -> (
+    None
+):
+    import pytest
+
+    from dnd_combat_simulator.combat import ResolutionType
+    from dnd_combat_simulator.simulation import (
+        AttackProfile,
+        BuildConfig,
+        ScenarioConfig,
+        TriggerType,
+        simulate_build,
+    )
+    from dnd_combat_simulator.ui.results import (
+        _profile_combat_contribution_chart_data,
+    )
+
+    build = BuildConfig(
+        "Contributors",
+        0,
+        "1",
+        0,
+        attack_profiles=(
+            AttackProfile(
+                "Repeated blast",
+                None,
+                "1",
+                3,
+                affected_targets=2,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+            ),
+            AttackProfile(
+                "Triggered pulse",
+                None,
+                "1",
+                1,
+                affected_targets=4,
+                resolution_type=ResolutionType.AUTOMATIC_DAMAGE,
+                trigger_type=TriggerType.SOMETIMES,
+                trigger_chance_percent=100,
+            ),
+        ),
+    )
+    result = simulate_build(
+        build, ScenarioConfig(target_armor_class=10, rounds=2, simulations=3), seed=1
+    )
+
+    rows = _profile_combat_contribution_chart_data(result, build.name)
+
+    # 3 executions x 2 targets x 2 rounds, plus one triggered execution with
+    # 4 targets in each round. Each deterministic target takes one damage.
+    assert [row["Average damage contributed per combat"] for row in rows] == [12, 8]
+    assert result.attack_profile_results[0].total_profile_uses == 18
+    assert result.attack_profile_results[1].triggered_profile_uses == 6
+    assert sum(row["Average damage contributed per combat"] for row in rows) == (
+        pytest.approx(result.average_total_damage_per_simulation)
+    )
+    assert sum(row["Combat damage percentage"] for row in rows) == pytest.approx(100)
+
+
 def test_attack_roll_saving_throw_and_automatic_profiles_appear_in_chart_data() -> None:
     from dnd_combat_simulator.ui.results import (
+        _profile_combat_contribution_chart_data,
         _profile_contribution_chart_data,
-        _profile_damage_per_use_chart_data,
     )
 
     build, result = _mixed_profile_result()
 
     contribution_rows = _profile_contribution_chart_data(result, build.name)
-    use_rows = _profile_damage_per_use_chart_data(result, build.name)
+    combat_rows = _profile_combat_contribution_chart_data(result, build.name)
 
     assert {row["Resolution type"] for row in contribution_rows} == {
         "Attack Roll",
         "Saving Throw",
         "Automatic Damage",
     }
-    assert [row["Build"] for row in use_rows] == [build.name, build.name, build.name]
+    assert [row["Build"] for row in combat_rows] == [build.name, build.name, build.name]
 
 
 def test_stop_on_miss_feature_input_is_unavailable_when_ineligible(monkeypatch) -> None:
@@ -5238,8 +5298,8 @@ def test_deleting_one_managed_resource_preserves_other_resource_references(
 
 def test_bar_charts_label_stack_segments_and_totals() -> None:
     from dnd_combat_simulator.ui.results import (
+        _profile_combat_contribution_bar_chart,
         _profile_contribution_bar_chart,
-        _profile_damage_per_use_bar_chart,
     )
 
     rows = [
@@ -5249,7 +5309,8 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
             "Build": "Test build",
             "Damage per Round contribution": 0,
             "Contribution percentage": 0,
-            "Average damage per use": 1234.5,
+            "Average damage contributed per combat": 1234.5,
+            "Combat damage percentage": 100,
             "Resolution type": "Attack Roll",
             "Active Rounds": "Every round",
             "Maximum attacks per active round": 1,
@@ -5261,7 +5322,7 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
 
     for chart in (
         _profile_contribution_bar_chart(rows),
-        _profile_damage_per_use_bar_chart(rows),
+        _profile_combat_contribution_bar_chart(rows),
     ):
         spec = chart.to_dict()
         assert [layer["mark"]["type"] for layer in spec["layer"]] == [
@@ -5272,7 +5333,7 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
         ]
         assert spec["layer"][0]["transform"][0]["stack"] in {
             "Damage per Round contribution",
-            "Average damage per use",
+            "Average damage contributed per combat",
         }
         assert spec["layer"][0]["encoding"]["y2"]["field"] == "stack_start"
         assert spec["layer"][1]["encoding"]["y"]["field"] == "stack_midpoint"
@@ -5315,7 +5376,11 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
             for dataset in spec["datasets"].values()
             for row in dataset
             for field, value in row.items()
-            if field in {"Damage per Round contribution", "Average damage per use"}
+            if field
+            in {
+                "Damage per Round contribution",
+                "Average damage contributed per combat",
+            }
         )
         calculate_expressions = [
             transform["calculate"]
@@ -5325,6 +5390,19 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
         ]
         assert all("-" not in expression for expression in calculate_expressions)
         assert spec["padding"]["top"] >= 60
+
+    combat_spec = _profile_combat_contribution_bar_chart(rows).to_dict()
+    assert combat_spec["layer"][0]["encoding"]["y"]["title"] == (
+        "Average Damage per Combat"
+    )
+    assert [
+        item["title"] for item in combat_spec["layer"][0]["encoding"]["tooltip"]
+    ] == [
+        "Build name",
+        "Attack name",
+        "Average damage contributed per combat",
+        "Percentage of build total combat damage",
+    ]
 
 
 def test_line_chart_adds_formatted_label_for_every_point() -> None:
@@ -5379,7 +5457,7 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
 def test_non_negative_chart_scales_use_positive_fallback_for_zero_data() -> None:
     from dnd_combat_simulator.ui.results import (
         _line_chart,
-        _profile_contribution_bar_chart,
+        _profile_combat_contribution_bar_chart,
     )
 
     line_rows = [{"Round": 1, "Average total damage": 0, "Build": "A"}]
@@ -5388,7 +5466,8 @@ def test_non_negative_chart_scales_use_positive_fallback_for_zero_data() -> None
             "Profile": "No damage",
             "Order": 1,
             "Build": "A",
-            "Damage per Round contribution": 0,
+            "Average damage contributed per combat": 0,
+            "Combat damage percentage": 0,
         }
     ]
     charts = [
@@ -5398,7 +5477,7 @@ def test_non_negative_chart_scales_use_positive_fallback_for_zero_data() -> None
             y="Average total damage:Q",
             color="Build:N",
         ),
-        _profile_contribution_bar_chart(bar_rows),
+        _profile_combat_contribution_bar_chart(bar_rows),
     ]
 
     for chart in charts:
