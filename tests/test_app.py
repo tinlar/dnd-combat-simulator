@@ -5258,7 +5258,47 @@ def test_bar_charts_generate_labels_for_all_bar_values() -> None:
         spec = chart.to_dict()
         assert [layer["mark"]["type"] for layer in spec["layer"]] == ["bar", "text"]
         assert spec["layer"][1]["encoding"]["text"]["format"] == ".2f"
-        assert spec["padding"]["top"] >= 24
+        assert spec["layer"][1]["mark"] == {
+            "type": "text",
+            "align": "center",
+            "baseline": "bottom",
+            "clip": False,
+            "color": "#F8FAFC",
+            "dy": -8,
+            "fontSize": 12,
+            "fontWeight": "bold",
+        }
+        assert spec["layer"][0]["encoding"]["y"]["scale"]["padding"] >= 24
+        assert spec["padding"]["top"] >= 32
+
+
+def test_line_chart_adds_formatted_label_for_every_point() -> None:
+    from dnd_combat_simulator.ui.results import _line_chart
+
+    rows = [
+        {"Round": 1, "Average total damage": 12.345, "Build": "A"},
+        {"Round": 2, "Average total damage": 0.0, "Build": "A"},
+    ]
+
+    spec = _line_chart(
+        rows,
+        x="Round:O",
+        y="Average total damage:Q",
+        color="Build:N",
+    ).to_dict()
+
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["line", "text"]
+    assert spec["datasets"][next(iter(spec["datasets"]))] == rows
+    assert spec["layer"][1]["encoding"]["text"] == {
+        "field": "Average total damage",
+        "format": ".2f",
+        "type": "quantitative",
+    }
+    assert spec["layer"][1]["mark"]["dy"] < 0
+    assert spec["layer"][1]["mark"]["fontSize"] == 11
+    assert spec["layer"][1]["mark"]["fontWeight"] == "bold"
+    assert spec["layer"][1]["mark"]["color"] == "#F8FAFC"
+    assert spec["padding"]["top"] >= 30
 
 
 def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:

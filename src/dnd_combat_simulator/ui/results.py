@@ -141,19 +141,40 @@ def _line_chart(data, *, x: str, y: str, color: str):
     import altair as alt
     import pandas as pd
 
-    return (
-        alt.Chart(pd.DataFrame(data))
-        .mark_line(point=True)
-        .encode(
-            x=alt.X(x, title="Round number", axis=alt.Axis(format="d")),
-            y=alt.Y(y, title="Average total damage"),
-            color=alt.Color(color, title="Build"),
-            tooltip=[
-                alt.Tooltip(x, title="Round"),
-                alt.Tooltip(y, title="Average damage", format=".2f"),
-                alt.Tooltip(color, title="Build"),
-            ],
-        )
+    tooltip = [
+        alt.Tooltip(x, title="Round"),
+        alt.Tooltip(y, title="Average damage", format=".2f"),
+        alt.Tooltip(color, title="Build"),
+    ]
+    base = alt.Chart(pd.DataFrame(data)).encode(
+        x=alt.X(
+            x,
+            title="Round number",
+            axis=alt.Axis(format="d"),
+            scale=alt.Scale(padding=0.15),
+        ),
+        y=alt.Y(
+            y,
+            title="Average total damage",
+            scale=alt.Scale(zero=True, nice=True, padding=24),
+        ),
+        color=alt.Color(color, title="Build"),
+    )
+    line = base.mark_line(point=True).encode(tooltip=tooltip)
+    labels = base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-9,
+        color="#F8FAFC",
+        fontSize=11,
+        fontWeight="bold",
+        clip=False,
+    ).encode(
+        text=alt.Text(y, format=".2f"),
+        tooltip=tooltip,
+    )
+    return (line + labels).properties(
+        padding={"top": 30, "left": 12, "right": 12, "bottom": 5}
     )
 
 
@@ -175,22 +196,25 @@ def _bar_chart_with_value_labels(
         y=alt.Y(
             f"{y_field}:Q",
             title=y_title,
-            scale=alt.Scale(zero=True, nice=True, padding=16),
+            scale=alt.Scale(zero=True, nice=True, padding=24),
         ),
     )
     bars = base.mark_bar().encode(tooltip=tooltip)
     labels = base.mark_text(
         align="center",
         baseline="bottom",
-        dy=-4,
-        color="#262730",
-        fontSize=11,
+        dy=-8,
+        color="#F8FAFC",
+        fontSize=12,
         fontWeight="bold",
+        clip=False,
     ).encode(
         text=alt.Text(f"{y_field}:Q", format=label_format),
         tooltip=tooltip,
     )
-    return (bars + labels).properties(padding={"top": 24})
+    return (bars + labels).properties(
+        padding={"top": 32, "left": 8, "right": 8, "bottom": 5}
+    )
 
 
 def _profile_contribution_bar_chart(data):
