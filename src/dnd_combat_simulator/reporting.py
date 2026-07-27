@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -32,11 +32,27 @@ class ReportSection:
     """One named tabular section shared by CSV and PDF output."""
 
     title: str
-    rows: tuple[dict[str, object], ...]
+    rows: tuple[Mapping[str, object], ...]
 
 
-def _rows(rows: Iterable[dict[str, object]]) -> tuple[dict[str, object], ...]:
+def _rows(
+    rows: Iterable[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
     return tuple(rows)
+
+
+def _to_float(value: object) -> float:
+    """Convert the scalar values supported by report chart rows to a float."""
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return float(stripped) if stripped else 0.0
+    raise TypeError(f"Unsupported numeric report value: {type(value).__name__}")
 
 
 def build_report_sections(
@@ -192,7 +208,7 @@ def generate_pdf_report(
                 None,
             )
             values = (
-                [float(r.get(numeric, 0) or 0) for r in section.rows] if numeric else []
+                [_to_float(r.get(numeric, 0)) for r in section.rows] if numeric else []
             )
             maximum = max(values, default=0)
             for row, value in zip(section.rows, values, strict=True):
@@ -218,7 +234,6 @@ def generate_pdf_report(
     pages_id = add("")
     font_id = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     page_ids = []
-    link_objects: list[tuple[int, int]] = []
     for page_lines in pages:
         commands = ["BT", "/F1 10 Tf", "36 570 Td"]
         share_y = None
@@ -249,20 +264,21 @@ def generate_pdf_report(
             )
         page_id = add("")
         page_ids.append(page_id)
-        link_objects.append((page_id, annotation_id or 0))
         annots = f" /Annots [{annotation_id} 0 R]" if annotation_id else ""
-        objects[page_id - 1] = (
+        page_object = (
             f"<< /Type /Page /Parent {pages_id} 0 R /MediaBox [0 0 792 612] "
             f"/Resources << /Font << /F1 {font_id} 0 R >> >> "
             f"/Contents {content_id} 0 R{annots} >>"
         )
-        objects[page_id - 1] = objects[page_id - 1].encode()
-    objects[pages_id - 1] = (
+        objects[page_id - 1] = page_object.encode("latin-1")
+    pages_object = (
         f"<< /Type /Pages /Count {len(page_ids)} "
         f"/Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] >>"
     )
-    objects[pages_id - 1] = objects[pages_id - 1].encode()
-    objects[catalog_id - 1] = f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode()
+    objects[pages_id - 1] = pages_object.encode("latin-1")
+    objects[catalog_id - 1] = f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode(
+        "latin-1"
+    )
     output = io.BytesIO()
     output.write(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets = [0]
