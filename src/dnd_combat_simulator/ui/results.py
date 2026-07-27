@@ -161,22 +161,34 @@ def _line_chart(data, *, x: str, y: str, color: str):
         color=alt.Color(color, title="Build"),
     )
     line = base.mark_line(point=True).encode(tooltip=tooltip)
-    labels = base.mark_text(
+    label_halo = base.mark_text(
         align="center",
         baseline="bottom",
-        dy=-9,
-        color="#F8FAFC",
-        fontSize=12,
+        dy=-14,
+        color="#FFFFFF",
+        fontSize=14,
         fontWeight="bold",
-        stroke="#0F172A",
-        strokeWidth=2,
+        stroke="#020617",
+        strokeWidth=2.5,
         clip=False,
     ).encode(
         text=alt.Text(y, format=".2f"),
         tooltip=tooltip,
     )
-    return (line + labels).properties(
-        padding={"top": 30, "left": 12, "right": 12, "bottom": 5}
+    labels = base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-14,
+        color="#FFFFFF",
+        fontSize=14,
+        fontWeight="bold",
+        clip=False,
+    ).encode(
+        text=alt.Text(y, format=".2f"),
+        tooltip=tooltip,
+    )
+    return (line + label_halo + labels).properties(
+        padding={"top": 40, "left": 12, "right": 12, "bottom": 5}
     )
 
 
@@ -244,34 +256,43 @@ def _bar_chart_with_value_labels(
             text=alt.Text(f"{y_field}:Q", format=label_format),
             tooltip=tooltip,
         )
-        .transform_filter("datum.segment_fraction >= 0.08")
+        .transform_filter("datum.segment_fraction >= 0.04")
     )
-    totals = (
+    total_base = (
         alt.Chart(frame)
         .transform_aggregate(total=f"sum({y_field})", groupby=["Build"])
-        .mark_text(
-            align="center",
-            baseline="bottom",
-            dy=-12,
-            color="#F8FAFC",
-            fontSize=15,
-            fontWeight="bold",
-            stroke="#0F172A",
-            strokeWidth=3,
-            clip=False,
-        )
         .encode(
             x=alt.X("Build:N", title=None),
             y=alt.Y(
                 "total:Q",
                 title=y_title,
-                scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=30),
+                scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=38),
             ),
             text=alt.Text("total:Q", format=label_format),
         )
     )
-    return (bars + segment_labels + totals).properties(
-        padding={"top": 46, "left": 8, "right": 8, "bottom": 5}
+    total_halo = total_base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-18,
+        color="#FFFFFF",
+        fontSize=18,
+        fontWeight="bold",
+        stroke="#020617",
+        strokeWidth=3,
+        clip=False,
+    )
+    totals = total_base.mark_text(
+        align="center",
+        baseline="bottom",
+        dy=-18,
+        color="#FFFFFF",
+        fontSize=18,
+        fontWeight="bold",
+        clip=False,
+    )
+    return (bars + segment_labels + total_halo + totals).properties(
+        padding={"top": 60, "left": 8, "right": 8, "bottom": 5}
     )
 
 

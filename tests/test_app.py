@@ -5268,6 +5268,7 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
             "bar",
             "text",
             "text",
+            "text",
         ]
         assert spec["layer"][0]["transform"][0]["stack"] in {
             "Damage per Round contribution",
@@ -5286,7 +5287,7 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
             "fontWeight": "bold",
         }
         assert spec["layer"][1]["transform"][-1] == {
-            "filter": "datum.segment_fraction >= 0.08"
+            "filter": "datum.segment_fraction >= 0.04"
         }
         assert spec["layer"][2]["transform"][0]["aggregate"][0]["op"] == "sum"
         assert spec["layer"][2]["encoding"]["text"]["format"] == ".2f"
@@ -5296,13 +5297,15 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
             spec["layer"][2]["mark"]["fontSize"] > spec["layer"][1]["mark"]["fontSize"]
         )
         assert spec["layer"][2]["mark"]["fontWeight"] == "bold"
-        assert spec["layer"][2]["mark"]["color"] == "#F8FAFC"
-        assert spec["layer"][2]["mark"]["color"] != spec["layer"][1]["mark"]["color"]
-        assert spec["layer"][2]["mark"]["stroke"] == "#0F172A"
+        assert spec["layer"][2]["mark"]["color"] == "#FFFFFF"
+        assert spec["layer"][2]["mark"]["stroke"] == "#020617"
         assert spec["layer"][2]["mark"]["strokeWidth"] == 3
+        assert spec["layer"][3]["mark"]["color"] == "#FFFFFF"
+        assert "stroke" not in spec["layer"][3]["mark"]
+        assert spec["layer"][3]["mark"]["fontSize"] == 18
         assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
         assert spec["layer"][2]["encoding"]["y"]["scale"]["domainMin"] == 0
-        assert spec["padding"]["top"] >= 46
+        assert spec["padding"]["top"] >= 60
 
 
 def test_line_chart_adds_formatted_label_for_every_point() -> None:
@@ -5320,7 +5323,11 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
         color="Build:N",
     ).to_dict()
 
-    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["line", "text"]
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == [
+        "line",
+        "text",
+        "text",
+    ]
     assert spec["datasets"][next(iter(spec["datasets"]))] == rows
     assert spec["layer"][1]["encoding"]["text"] == {
         "field": "Average total damage",
@@ -5328,13 +5335,15 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
         "type": "quantitative",
     }
     assert spec["layer"][1]["mark"]["dy"] < 0
-    assert spec["layer"][1]["mark"]["fontSize"] == 12
+    assert spec["layer"][1]["mark"]["fontSize"] == 14
     assert spec["layer"][1]["mark"]["fontWeight"] == "bold"
-    assert spec["layer"][1]["mark"]["color"] == "#F8FAFC"
-    assert spec["layer"][1]["mark"]["stroke"] == "#0F172A"
-    assert spec["layer"][1]["mark"]["strokeWidth"] == 2
+    assert spec["layer"][1]["mark"]["color"] == "#FFFFFF"
+    assert spec["layer"][1]["mark"]["stroke"] == "#020617"
+    assert spec["layer"][1]["mark"]["strokeWidth"] == 2.5
+    assert spec["layer"][2]["mark"]["color"] == "#FFFFFF"
+    assert "stroke" not in spec["layer"][2]["mark"]
     assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
-    assert spec["padding"]["top"] >= 30
+    assert spec["padding"]["top"] >= 40
 
 
 def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:
