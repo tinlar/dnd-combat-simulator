@@ -98,7 +98,10 @@ class SharedAttackProfileConfiguration:
             trigger_source_attack_id=profile.trigger_source_attack_id,
             trigger_frequency=TriggerFrequency(profile.trigger_frequency),
             trigger_chance_percent=profile.trigger_chance_percent,
-            resource_costs=profile.resource_costs,
+            resource_costs=tuple(
+                ResourceCost(cost.resource_id, cost.amount)
+                for cost in profile.resource_costs
+            ),
             use_build_attack_bonus=profile.use_build_attack_bonus,
             use_build_save_dc=profile.use_build_save_dc,
             inherit_triggering_critical=profile.inherit_triggering_critical,
@@ -127,7 +130,10 @@ class SharedAttackProfileConfiguration:
             trigger_source_attack_id=self.trigger_source_attack_id,
             trigger_frequency=self.trigger_frequency,
             trigger_chance_percent=self.trigger_chance_percent,
-            resource_costs=self.resource_costs,
+            resource_costs=tuple(
+                ResourceCost(cost.resource_id, cost.amount)
+                for cost in self.resource_costs
+            ),
             use_build_attack_bonus=self.use_build_attack_bonus,
             use_build_save_dc=self.use_build_save_dc,
             inherit_triggering_critical=self.inherit_triggering_critical,

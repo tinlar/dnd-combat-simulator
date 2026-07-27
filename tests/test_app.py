@@ -3405,6 +3405,53 @@ def test_copy_attack_widget_state_copies_persistent_prefix_state_only() -> None:
     )
 
 
+def test_copy_attack_resource_selections_are_complete_and_independent() -> None:
+    import ui_test_api as app
+
+    source = app.attack_widget_prefix("first", "attack-source")
+    dest = app.attack_widget_prefix("first", "attack-copy")
+    fields = {
+        "resource_enabled": True,
+        "resource_id": "ki",
+        "resource_amount": 2,
+        "empowered_spell_enabled": True,
+        "empowered_matching_rescue_enabled": True,
+        "empowered_resource_id": "sorcery",
+        "empowered_max_dice_rerolled": 3,
+        # Exercise the generic copier's deep-copy guarantee for future nested
+        # feature configuration fields as well as today's scalar fields.
+        "future_resource_configuration": {"ids": ["ki", "sorcery"]},
+    }
+    state = {
+        app.profile_widget_key(source, field): value
+        for field, value in fields.items()
+        if field != "future_resource_configuration"
+    }
+    state[f"{source}-future-resource-configuration"] = fields[
+        "future_resource_configuration"
+    ]
+
+    copied = app._duplicate_attack_state(
+        state,
+        source,
+        dest,
+        source_attack_id="attack-source",
+        dest_attack_id="attack-copy",
+    )
+    state.update(copied)
+
+    for field, value in fields.items():
+        if field == "future_resource_configuration":
+            continue
+        assert state[app.profile_widget_key(source, field)] == value
+        assert state[app.profile_widget_key(dest, field)] == value
+    copied_nested = state[f"{dest}-future-resource-configuration"]
+    copied_nested["ids"].append("new-resource")
+    assert state[f"{source}-future-resource-configuration"] == {
+        "ids": ["ki", "sorcery"]
+    }
+
+
 def test_duplicate_state_resets_self_trigger_and_copies_advanced_fields() -> None:
     import ui_test_api as app
 
@@ -4146,6 +4193,62 @@ def test_clone_build_a_confirm_completely_replaces_build_b_and_deep_copies(monke
     assert _build_from_state("second", "Build B").attack_profiles[0].name == "Edited B"
 
 
+def test_clone_build_preserves_all_resource_references_in_both_builds(monkeypatch):
+    import copy
+    import sys
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from dnd_combat_simulator.ui.state import (
+        _build_from_state,
+        clone_build_session_state,
+    )
+
+    build = _rich_clone_build("A")
+    build = replace(
+        build,
+        attack_profiles=(
+            replace(
+                build.attack_profiles[0],
+                empowered_spell_enabled=True,
+                empowered_resource_id="slot",
+            ),
+            replace(
+                build.attack_profiles[1],
+                attacks_per_round=2,
+                require_matching_damage_dice_to_continue=True,
+                empowered_matching_rescue_enabled=True,
+                empowered_resource_id="ki",
+            ),
+        ),
+    )
+    state = {}
+    _hydrate_build(state, "first", build)
+    source_state = copy.deepcopy(state)
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(session_state=state))
+
+    clone_build_session_state(state, "first", "second")
+
+    original = _build_from_state("first", "Build A")
+    cloned = _build_from_state("second", "Build B")
+    assert all(state[key] == value for key, value in source_state.items())
+    assert [resource.resource_id for resource in cloned.managed_resources] == [
+        "ki",
+        "slot",
+    ]
+    assert original.attack_profiles[0].resource_costs[0].resource_id == "ki"
+    assert cloned.attack_profiles[0].resource_costs[0].resource_id == "ki"
+    assert original.attack_profiles[0].empowered_resource_id == "slot"
+    assert cloned.attack_profiles[0].empowered_resource_id == "slot"
+    assert original.attack_profiles[1].resource_costs[0].resource_id == "slot"
+    assert cloned.attack_profiles[1].resource_costs[0].resource_id == "slot"
+    assert original.attack_profiles[1].empowered_resource_id == "ki"
+    assert cloned.attack_profiles[1].empowered_resource_id == "ki"
+    assert cloned.attack_profiles[0].resource_costs is not (
+        original.attack_profiles[0].resource_costs
+    )
+
+
 def test_clone_build_a_remaps_card_triggers_without_mutating_source(monkeypatch):
     import copy
     import sys
@@ -4309,9 +4412,13 @@ def test_clone_uses_central_shared_build_configuration_for_future_fields(monkeyp
     monkeypatch.setattr(state_module, "_build_from_json", recording_build_from_json)
     state_module.clone_build_session_state(state, "first", "second")
 
-    expected = SharedBuildConfiguration.from_build_config(
+    shared = SharedBuildConfiguration.from_build_config(
         state_module._build_from_state("first", "Build A")
-    ).to_json_dict()
+    )
+    expected = shared.to_json_dict()
+    expected["managed_resources"] = [
+        resource.to_json_dict() for resource in shared.managed_resources
+    ]
     assert calls == [(expected, "second")]
 
 
@@ -5066,13 +5173,20 @@ def test_deleting_one_managed_resource_preserves_other_resource_references(
         state[app.profile_widget_key(prefix, "resource_enabled")] = True
         state[app.profile_widget_key(prefix, "resource_id")] = resource_id
         state[app.profile_widget_key(prefix, "resource_amount")] = 1
+        state[app.profile_widget_key(prefix, "empowered_spell_enabled")] = True
+        state[app.profile_widget_key(prefix, "empowered_resource_id")] = resource_id
 
     app._clear_resource_from_profiles("ki", "first")
 
     first_prefix = app.attack_widget_prefix("first", "attack-1")
     second_prefix = app.attack_widget_prefix("first", "attack-2")
     assert state[app.profile_widget_key(first_prefix, "resource_id")] == ""
+    assert state[app.profile_widget_key(first_prefix, "empowered_resource_id")] == ""
     assert state[app.profile_widget_key(second_prefix, "resource_id")] == "sorcery"
+    assert (
+        state[app.profile_widget_key(second_prefix, "empowered_resource_id")]
+        == "sorcery"
+    )
 
 
 def test_bar_charts_generate_labels_for_all_bar_values() -> None:
