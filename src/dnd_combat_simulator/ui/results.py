@@ -16,6 +16,105 @@ from dnd_combat_simulator.ui.components import _render_section_container
 from dnd_combat_simulator.ui.inputs import format_features
 
 
+def _render_download_report_control(
+    *,
+    build: BuildConfig | None = None,
+    result: SimulationResult | None = None,
+    comparison: BuildComparisonResult | None = None,
+    seed: int | None = None,
+) -> None:
+    """Render report preparation/download controls for a completed result only."""
+    import re
+    from datetime import UTC, datetime
+
+    import streamlit as st
+
+    from dnd_combat_simulator.reporting import (
+        build_report_sections,
+        generate_csv_report,
+        generate_pdf_report,
+    )
+    from dnd_combat_simulator.ui.sharing import (
+        get_or_create_current_share_url,
+        share_store_ui_message,
+    )
+
+    simulation_result = comparison.first_result if comparison else result
+    if simulation_result is None or not hasattr(st, "radio"):
+        return
+    import hashlib
+
+    report_source = comparison if comparison is not None else (build, result)
+    source_fingerprint = hashlib.sha256(repr(report_source).encode()).hexdigest()
+    if st.session_state.get("completed-result-report-source") != source_fingerprint:
+        st.session_state.pop("completed-result-report", None)
+        st.session_state["completed-result-report-source"] = source_fingerprint
+    count = simulation_result.simulations_run
+    popover = getattr(st, "popover", None)
+    container = (
+        popover("Download Report") if popover else st.expander("Download Report")
+    )
+    with container:
+        report_type = st.radio(
+            "Report format",
+            ("PDF Report", "CSV Report"),
+            horizontal=True,
+            key="completed-result-report-format",
+        )
+        if st.button("Prepare download", key="prepare-completed-result-report"):
+            try:
+                with st.spinner("Generating report…"):
+                    share_url = get_or_create_current_share_url()
+                    generated_at = datetime.now(UTC)
+                    sections = build_report_sections(build, result, comparison)
+                    if report_type == "PDF Report":
+                        payload = generate_pdf_report(
+                            sections,
+                            simulation_count=count,
+                            seed=seed,
+                            share_url=share_url,
+                            generated_at=generated_at,
+                        )
+                        extension, mime = "pdf", "application/pdf"
+                    else:
+                        payload = generate_csv_report(
+                            sections,
+                            simulation_count=count,
+                            seed=seed,
+                            share_url=share_url,
+                            generated_at=generated_at,
+                        )
+                        extension, mime = "csv", "text/csv"
+                    timestamp = generated_at.strftime("%Y%m%d-%H%M%S")
+                    filename = re.sub(
+                        r"[^A-Za-z0-9._-]",
+                        "-",
+                        f"dnd-combat-report-{timestamp}.{extension}",
+                    )
+                    st.session_state["completed-result-report"] = (
+                        payload,
+                        filename,
+                        mime,
+                    )
+            except (
+                Exception
+            ) as error:  # report and remote-store failures are recoverable
+                st.session_state.pop("completed-result-report", None)
+                st.error(
+                    f"Unable to generate the report. {share_store_ui_message(error)}"
+                )
+        prepared = st.session_state.get("completed-result-report")
+        if prepared:
+            payload, filename, mime = prepared
+            st.download_button(
+                "Download prepared report",
+                payload,
+                file_name=filename,
+                mime=mime,
+                key="download-completed-result-report",
+            )
+
+
 def format_damage(value: float) -> str:
     """Format a damage value for display."""
     return f"{value:.2f}"
@@ -970,13 +1069,16 @@ def _resource_limited_metric(result: SimulationResult) -> tuple[str, str]:
     )
 
 
-def _render_single_build_results(build: BuildConfig, result: SimulationResult) -> None:
+def _render_single_build_results(
+    build: BuildConfig, result: SimulationResult, seed: int | None = None
+) -> None:
     """Render complete results for one build without comparison labels or deltas."""
     import streamlit as st
 
     heading = build.name.strip() or "Simulation"
     with _render_section_container():
         st.subheader(f"{heading} results")
+        _render_download_report_control(build=build, result=result, seed=seed)
         metric_rows = st.columns(5)
         metric_rows[0].metric(
             "Average damage per round", format_damage(result.average_damage_per_round)
@@ -1013,12 +1115,15 @@ def _render_single_build_results(build: BuildConfig, result: SimulationResult) -
             st.table(_profile_breakdown_rows(result))
 
 
-def _render_comparison_results(comparison: BuildComparisonResult) -> None:
+def _render_comparison_results(
+    comparison: BuildComparisonResult, seed: int | None = None
+) -> None:
     """Render two build results side by side with deltas."""
     import streamlit as st
 
     with _render_section_container():
         st.subheader("Build comparison")
+        _render_download_report_control(comparison=comparison, seed=seed)
         if comparison.higher_average_damage_build_name is None:
             st.success("Both builds have the same average damage per round.")
         else:
