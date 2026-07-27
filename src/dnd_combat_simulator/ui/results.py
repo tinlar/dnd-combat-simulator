@@ -250,10 +250,12 @@ def _bar_chart_with_value_labels(
         .mark_text(
             align="center",
             baseline="bottom",
-            dy=-10,
-            color="#FFFFFF",
-            fontSize=12,
+            dy=-12,
+            color="#FDE68A",
+            fontSize=15,
             fontWeight="bold",
+            stroke="#0F172A",
+            strokeWidth=3,
             clip=False,
         )
         .encode(
@@ -267,7 +269,7 @@ def _bar_chart_with_value_labels(
         )
     )
     return (bars + segment_labels + totals).properties(
-        padding={"top": 38, "left": 8, "right": 8, "bottom": 5}
+        padding={"top": 46, "left": 8, "right": 8, "bottom": 5}
     )
 
 

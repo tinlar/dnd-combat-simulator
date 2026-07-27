@@ -5292,8 +5292,17 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
         assert spec["layer"][2]["encoding"]["text"]["format"] == ".2f"
         assert spec["layer"][2]["mark"]["dy"] < 0
         assert spec["layer"][2]["mark"]["clip"] is False
+        assert (
+            spec["layer"][2]["mark"]["fontSize"] > spec["layer"][1]["mark"]["fontSize"]
+        )
+        assert spec["layer"][2]["mark"]["fontWeight"] == "bold"
+        assert spec["layer"][2]["mark"]["color"] == "#FDE68A"
+        assert spec["layer"][2]["mark"]["color"] != spec["layer"][1]["mark"]["color"]
+        assert spec["layer"][2]["mark"]["stroke"] == "#0F172A"
+        assert spec["layer"][2]["mark"]["strokeWidth"] == 3
         assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
-        assert spec["padding"]["top"] >= 38
+        assert spec["layer"][2]["encoding"]["y"]["scale"]["domainMin"] == 0
+        assert spec["padding"]["top"] >= 46
 
 
 def test_line_chart_adds_formatted_label_for_every_point() -> None:
