@@ -156,7 +156,10 @@ def _line_chart(data, *, x: str, y: str, color: str):
         y=alt.Y(
             y,
             title="Average total damage",
-            scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=24),
+            # Continuous-scale padding is applied at both ends of the domain and
+            # can therefore put the first tick below zero.  The chart-level top
+            # padding below reserves label room without changing the data domain.
+            scale=alt.Scale(domainMin=0, zero=True, nice=True),
         ),
         color=alt.Color(color, title="Build"),
     )
@@ -226,7 +229,7 @@ def _bar_chart_with_value_labels(
         y=alt.Y(
             "stack_end:Q",
             title=y_title,
-            scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=30),
+            scale=alt.Scale(domainMin=0, zero=True, nice=True),
         ),
     )
     bars = base.mark_bar().encode(
@@ -266,7 +269,10 @@ def _bar_chart_with_value_labels(
             y=alt.Y(
                 "total:Q",
                 title=y_title,
-                scale=alt.Scale(domainMin=0, zero=True, nice=True, padding=38),
+                # Keep the data domain zero-based.  The unclipped total labels
+                # render into the chart's top padding instead of expanding both
+                # ends of this continuous scale.
+                scale=alt.Scale(domainMin=0, zero=True, nice=True),
             ),
             text=alt.Text("total:Q", format=label_format),
         )

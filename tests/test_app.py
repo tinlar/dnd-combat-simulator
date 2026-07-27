@@ -5303,8 +5303,12 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
         assert spec["layer"][3]["mark"]["color"] == "#FFFFFF"
         assert "stroke" not in spec["layer"][3]["mark"]
         assert spec["layer"][3]["mark"]["fontSize"] == 18
-        assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
-        assert spec["layer"][2]["encoding"]["y"]["scale"]["domainMin"] == 0
+        for layer_index in (0, 2):
+            y_scale = spec["layer"][layer_index]["encoding"]["y"]["scale"]
+            assert y_scale["domainMin"] == 0
+            assert y_scale["zero"] is True
+            assert "domainMax" not in y_scale
+            assert "padding" not in y_scale
         assert spec["padding"]["top"] >= 60
 
 
@@ -5342,7 +5346,11 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
     assert spec["layer"][1]["mark"]["strokeWidth"] == 2.5
     assert spec["layer"][2]["mark"]["color"] == "#FFFFFF"
     assert "stroke" not in spec["layer"][2]["mark"]
-    assert spec["layer"][0]["encoding"]["y"]["scale"]["domainMin"] == 0
+    y_scale = spec["layer"][0]["encoding"]["y"]["scale"]
+    assert y_scale["domainMin"] == 0
+    assert y_scale["zero"] is True
+    assert "domainMax" not in y_scale
+    assert "padding" not in y_scale
     assert spec["padding"]["top"] >= 40
 
 
