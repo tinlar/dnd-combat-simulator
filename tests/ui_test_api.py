@@ -17,7 +17,10 @@ from dnd_combat_simulator.ui.components import (  # noqa: F401
 )
 from dnd_combat_simulator.ui.constants import *  # noqa: F403
 from dnd_combat_simulator.ui.inputs import (  # noqa: F401
+    BUG_REPORT_URL,
     _build_inputs,
+    _render_configuration_toolbar,
+    _render_report_bug_button,
     _render_simulation_settings,
     _trigger_settings_expander,
     _trigger_source_options,

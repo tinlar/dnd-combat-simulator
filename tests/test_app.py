@@ -1607,6 +1607,93 @@ def test_configuration_toolbar_css_keeps_settings_and_share_compact() -> None:
     assert "focus-visible" in share_css
 
 
+def test_report_bug_button_uses_exact_github_template_url(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    calls = []
+
+    def link_button(label, url, **kwargs):
+        calls.append((label, url, kwargs))
+
+    monkeypatch.setitem(
+        sys.modules, "streamlit", SimpleNamespace(link_button=link_button)
+    )
+
+    app._render_report_bug_button()
+
+    assert calls == [
+        (
+            "Report a Bug",
+            "https://github.com/tinlar/dnd-combat-simulator/issues/new?"
+            "template=bug_report.md&labels=bug&title=%5BBug%5D%20",
+            {
+                "icon": ":material/bug_report:",
+                "help": "Report a problem on GitHub.",
+                "type": "secondary",
+                "width": "content",
+            },
+        )
+    ]
+
+
+def test_configuration_toolbar_renders_bug_report_after_share_in_fallback(
+    monkeypatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import dnd_combat_simulator.ui.inputs as inputs
+
+    events = []
+    fake_streamlit = SimpleNamespace(
+        markdown=lambda *_args, **_kwargs: events.append("css"),
+        container=None,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    monkeypatch.setattr(inputs, "_render_simulation_settings", lambda: (123, 456))
+    monkeypatch.setattr(
+        inputs,
+        "_render_share_configuration_button",
+        lambda: events.append("share"),
+    )
+    monkeypatch.setattr(
+        inputs, "_render_report_bug_button", lambda: events.append("bug")
+    )
+
+    assert inputs._render_configuration_toolbar() == (123, 456)
+    assert events == ["css", "share", "bug"]
+
+
+def test_report_bug_button_supports_older_streamlit_signature(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    import ui_test_api as app
+
+    calls = []
+
+    def link_button(label, url, *, help, type):
+        calls.append((label, url, help, type))
+
+    monkeypatch.setitem(
+        sys.modules, "streamlit", SimpleNamespace(link_button=link_button)
+    )
+
+    app._render_report_bug_button()
+
+    assert calls == [
+        (
+            "Report a Bug",
+            app.BUG_REPORT_URL,
+            "Report a problem on GitHub.",
+            "secondary",
+        )
+    ]
+
+
 def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
     from pathlib import Path
 
@@ -1624,6 +1711,7 @@ def test_main_uses_content_width_horizontal_toolbar_not_wide_columns() -> None:
     assert "gap=None" in toolbar_source
     assert "_render_simulation_settings()" in toolbar_source
     assert "_render_share_configuration_button()" in toolbar_source
+    assert "_render_report_bug_button()" in toolbar_source
     assert "st.columns([1, 8])" not in main_toolbar_source
     assert "_render_configuration_toolbar()" in main_toolbar_source
 
