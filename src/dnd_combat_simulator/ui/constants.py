@@ -128,6 +128,10 @@ SIMULATION_PENDING_KEY = "_simulation_pending"
 
 SIMULATION_DURATION_MESSAGE_KEY = "_simulation_duration_message"
 
+COMPLETED_SIMULATION_REQUEST_KEY = "_completed_simulation_request"
+
+COMPLETED_SIMULATION_RESULT_KEY = "_completed_simulation_result"
+
 TRIGGER_EXPANDED_KEY_SUFFIX = "trigger-expanded"
 
 MANAGED_RESOURCE_COUNT_KEY = "scenario-managed-resource-count"
