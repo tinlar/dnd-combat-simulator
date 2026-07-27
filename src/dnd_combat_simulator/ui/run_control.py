@@ -401,6 +401,7 @@ def _render_run_simulation_button(disabled: bool) -> bool:
         "Run Simulation",
         disabled=disabled or simulation_running,
         on_click=_mark_simulation_pending,
+        use_container_width=True,
     )
     if clicked and not simulation_running and not disabled:
         state[SIMULATION_PENDING_KEY] = True

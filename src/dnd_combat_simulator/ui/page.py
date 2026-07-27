@@ -14,6 +14,8 @@ from dnd_combat_simulator.ui.components import (
 )
 from dnd_combat_simulator.ui.constants import (
     COMPARE_WIDGET_KEY,
+    COMPLETED_SIMULATION_REQUEST_KEY,
+    COMPLETED_SIMULATION_RESULT_KEY,
     SCENARIO_WIDGET_KEYS,
     SIMULATION_DURATION_MESSAGE_KEY,
     SIMULATION_PENDING_KEY,
@@ -24,14 +26,18 @@ from dnd_combat_simulator.ui.inputs import (
 )
 from dnd_combat_simulator.ui.results import (
     _render_comparison_results,
+    _render_download_report_control,
     _render_single_build_results,
 )
 from dnd_combat_simulator.ui.run_control import (
+    CanonicalSimulationRequest,
     ComparisonInputs,
     SingleBuildInputs,
     _render_run_simulation_button,
     _run_comparison_with_feedback,
     _run_single_build_with_feedback,
+    canonical_comparison_request,
+    canonical_single_build_request,
 )
 from dnd_combat_simulator.ui.sharing import (
     INVALID_SHARED_CONFIG_MESSAGE_KEY,
@@ -155,6 +161,60 @@ def _render_validation_diagnostics(errors, rendered_keys, builds):
 
 
 logger = logging.getLogger(__name__)
+
+
+def _clear_completed_simulation(state) -> None:
+    """Discard results and prepared downloads that are no longer current."""
+    state.pop(COMPLETED_SIMULATION_REQUEST_KEY, None)
+    state.pop(COMPLETED_SIMULATION_RESULT_KEY, None)
+    state.pop("completed-result-report", None)
+    state.pop("completed-result-report-source", None)
+
+
+def _current_completed_result(state, request: CanonicalSimulationRequest):
+    """Return a result only when it belongs to the exact current request."""
+    if state.get(COMPLETED_SIMULATION_REQUEST_KEY) != request:
+        _clear_completed_simulation(state)
+        return None
+    return state.get(COMPLETED_SIMULATION_RESULT_KEY)
+
+
+def _store_completed_simulation(state, request, result) -> None:
+    state[COMPLETED_SIMULATION_REQUEST_KEY] = request
+    state[COMPLETED_SIMULATION_RESULT_KEY] = result
+
+
+def _render_simulation_control_row(
+    *,
+    disabled: bool,
+    build=None,
+    result=None,
+    comparison=None,
+    seed: int,
+) -> bool:
+    """Keep run and report controls together at every viewport width."""
+    from contextlib import nullcontext
+
+    import streamlit as st
+
+    run_column, report_column, _ = st.columns([1, 1, 2])
+    run_context = run_column if hasattr(run_column, "__enter__") else nullcontext()
+    report_context = (
+        report_column if hasattr(report_column, "__enter__") else nullcontext()
+    )
+    with run_context:
+        should_run = _render_run_simulation_button(disabled)
+    with report_context:
+        _render_download_report_control(
+            build=build,
+            result=result,
+            comparison=comparison,
+            seed=seed,
+            disabled=(
+                disabled or should_run or (result is None and comparison is None)
+            ),
+        )
+    return should_run
 
 
 def main() -> None:
@@ -303,11 +363,27 @@ def _main_tracked(st) -> None:
                 {"first": first_build, "second": second_build},
             )
             getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
+        state = getattr(st, "session_state", {})
+        inputs = ComparisonInputs(
+            first_build=first_build,
+            second_build=second_build,
+            scenario=scenario,
+            seed=int(seed),
+        )
+        request = canonical_comparison_request(inputs)
+        if active_errors:
+            _clear_completed_simulation(state)
+        completed_comparison = _current_completed_result(state, request)
         if message := getattr(st, "session_state", {}).pop(
             SIMULATION_DURATION_MESSAGE_KEY, None
         ):
             st.success(message)
-        if _render_run_simulation_button(bool(active_errors)):
+        if _render_simulation_control_row(
+            disabled=bool(active_errors),
+            comparison=completed_comparison,
+            seed=int(seed),
+        ):
+            _clear_completed_simulation(state)
             fallback_errors = _active_rendered_validation_errors(
                 [
                     *validate_scenario_fields(scenario),
@@ -340,25 +416,24 @@ def _main_tracked(st) -> None:
                 )
                 _render_build_level_validation_errors(fallback_errors)
                 getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
-                return
-            inputs = ComparisonInputs(
-                first_build=first_build,
-                second_build=second_build,
-                scenario=scenario,
-                seed=int(seed),
-            )
-            try:
-                comparison = _run_comparison_with_feedback(inputs)
-            except (ValueError, SharedConfigurationError) as error:
-                logger.exception("Comparison simulation failed during Streamlit run.")
-                st.error(_friendly_validation_message(error))
             else:
-                st.success(
-                    getattr(st, "session_state", {}).pop(
-                        SIMULATION_DURATION_MESSAGE_KEY
+                try:
+                    comparison = _run_comparison_with_feedback(inputs)
+                except (ValueError, SharedConfigurationError) as error:
+                    _clear_completed_simulation(state)
+                    logger.exception(
+                        "Comparison simulation failed during Streamlit run."
                     )
-                )
-                _render_comparison_results(comparison, seed=int(seed))
+                    st.error(_friendly_validation_message(error))
+                else:
+                    _store_completed_simulation(state, request, comparison)
+                    completed_comparison = comparison
+                    rerun = getattr(st, "rerun", None)
+                    if rerun is not None:
+                        rerun()
+                    st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
+        if completed_comparison is not None:
+            _render_comparison_results(completed_comparison, seed=int(seed))
     else:
         first_state_build = _build_from_state("first", "Build A")
         pre_render_errors = validation_errors_by_key(
@@ -403,7 +478,22 @@ def _main_tracked(st) -> None:
             st.success(message)
 
         state = getattr(st, "session_state", {})
-        if _render_run_simulation_button(bool(active_errors)):
+        single_inputs = SingleBuildInputs(
+            build=first_build,
+            scenario=scenario,
+            seed=int(seed),
+        )
+        request = canonical_single_build_request(single_inputs)
+        if active_errors:
+            _clear_completed_simulation(state)
+        completed_result = _current_completed_result(state, request)
+        if _render_simulation_control_row(
+            disabled=bool(active_errors),
+            build=first_build,
+            result=completed_result,
+            seed=int(seed),
+        ):
+            _clear_completed_simulation(state)
             fallback_build = _build_from_state("first", "Build A")
             fallback_errors = _active_rendered_validation_errors(
                 [
@@ -424,17 +514,21 @@ def _main_tracked(st) -> None:
                 )
                 _render_build_level_validation_errors(fallback_errors)
                 getattr(st, "session_state", {}).pop(SIMULATION_PENDING_KEY, None)
-                return
-            single_inputs = SingleBuildInputs(
-                build=first_build,
-                scenario=scenario,
-                seed=int(seed),
-            )
-            try:
-                result = _run_single_build_with_feedback(single_inputs)
-            except (ValueError, SharedConfigurationError) as error:
-                logger.exception("Single-build simulation failed during Streamlit run.")
-                st.error(_friendly_validation_message(error))
             else:
-                st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
-                _render_single_build_results(first_build, result, seed=int(seed))
+                try:
+                    result = _run_single_build_with_feedback(single_inputs)
+                except (ValueError, SharedConfigurationError) as error:
+                    _clear_completed_simulation(state)
+                    logger.exception(
+                        "Single-build simulation failed during Streamlit run."
+                    )
+                    st.error(_friendly_validation_message(error))
+                else:
+                    _store_completed_simulation(state, request, result)
+                    completed_result = result
+                    rerun = getattr(st, "rerun", None)
+                    if rerun is not None:
+                        rerun()
+                    st.success(state.pop(SIMULATION_DURATION_MESSAGE_KEY))
+        if completed_result is not None:
+            _render_single_build_results(first_build, completed_result, seed=int(seed))
