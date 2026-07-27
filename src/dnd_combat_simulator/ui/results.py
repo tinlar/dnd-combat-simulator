@@ -1208,8 +1208,3 @@ def _render_comparison_results(
             st.markdown(f"##### {comparison.second_build.name} attack breakdown")
             st.table(_profile_breakdown_rows(comparison.second_result))
             _render_resource_usage(comparison.second_result)
-            st.caption(
-                f"Difference uses {_result_difference_column_label(comparison)} for "
-                "every metric row. Both builds used separate random-number-generator "
-                "instances initialized with the same seed."
-            )
