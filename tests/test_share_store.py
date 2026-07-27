@@ -21,7 +21,13 @@ from dnd_combat_simulator.sharing import (
     serialize_shared_configuration,
     shared_configuration_from_configs,
 )
-from dnd_combat_simulator.simulation import AttackProfile, BuildConfig, ScenarioConfig
+from dnd_combat_simulator.simulation import (
+    AttackProfile,
+    BuildConfig,
+    ManagedResource,
+    ResourceCost,
+    ScenarioConfig,
+)
 
 
 def shared_configuration() -> SharedConfiguration:
@@ -66,6 +72,39 @@ def test_save_and_load_restores_exact_shared_configuration():
     config = shared_configuration()
 
     assert store.load(store.save(config)) == config
+
+
+def test_save_and_load_shared_link_with_managed_resources():
+    resource = ManagedResource("ki", "Ki", 4)
+    attack = AttackProfile(
+        "Flurry",
+        7,
+        "1d6+4",
+        2,
+        resource_costs=(ResourceCost("ki", 1),),
+    )
+    config = shared_configuration_from_configs(
+        compare_enabled=False,
+        scenario=ScenarioConfig(15, 3, 100),
+        seed=123,
+        build_a=BuildConfig(
+            "Monk",
+            7,
+            "1d6+4",
+            2,
+            attack_profiles=(attack,),
+            managed_resources=(resource,),
+        ),
+        build_b=BuildConfig("Mage", 5, "2d6", 1),
+    )
+    store = InMemoryShareStore(id_generator=lambda _: "managed")
+
+    loaded = store.load(store.save(config))
+
+    assert loaded.version == SHARED_CONFIGURATION_VERSION
+    assert loaded == config
+    assert loaded.build_a.managed_resources[0].to_managed_resource() == resource
+    assert loaded.build_a.attack_profiles[0].resource_costs == (ResourceCost("ki", 1),)
 
 
 def test_separate_saves_produce_separate_ids():

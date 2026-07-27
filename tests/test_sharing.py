@@ -15,9 +15,11 @@ from dnd_combat_simulator.combat import (
     SuccessfulSaveDamage,
 )
 from dnd_combat_simulator.sharing import (
+    LEGACY_SHARED_CONFIGURATION_VERSION,
     MAX_ATTACK_PROFILES_PER_BUILD,
     MAX_DECOMPRESSED_JSON_BYTES,
     MAX_ENCODED_TOKEN_LENGTH,
+    SHARED_CONFIGURATION_VERSION,
     SharedConfigurationError,
     build_share_url,
     build_short_share_url,
@@ -106,6 +108,7 @@ def test_round_trip_default_configuration_and_deterministic_token():
         build_b=BuildConfig("Build B", 5, "1d8+3", 1),
     )
     token = serialize_shared_configuration(config)
+    assert config.version == SHARED_CONFIGURATION_VERSION
     assert deserialize_shared_configuration(token) == config
     assert serialize_shared_configuration(config) == token
 
@@ -164,6 +167,7 @@ def test_managed_resources_and_all_profile_references_round_trip_by_build():
 
     loaded = deserialize_shared_configuration(serialize_shared_configuration(config))
 
+    assert loaded.version == SHARED_CONFIGURATION_VERSION
     assert loaded == config
     assert loaded.build_a.to_build_config().managed_resources == resources_a
     assert loaded.build_b.to_build_config().managed_resources == resources_b
@@ -183,14 +187,17 @@ def test_managed_resources_and_all_profile_references_round_trip_by_build():
     )
 
 
-def test_legacy_link_without_managed_resources_still_loads():
+def test_legacy_version_migrates_to_current_without_managed_resources():
     raw = shared().to_json_dict()
+    raw["version"] = LEGACY_SHARED_CONFIGURATION_VERSION
     raw["scenario"].pop("managed_resources", None)
     raw["build_a"].pop("managed_resources", None)
     raw["build_b"].pop("managed_resources", None)
 
     loaded = deserialize_shared_configuration(token_for_raw(json.dumps(raw).encode()))
 
+    assert loaded.version == SHARED_CONFIGURATION_VERSION
+    assert loaded.scenario.managed_resources == ()
     assert loaded.build_a.managed_resources == ()
     assert loaded.build_b.managed_resources == ()
 
@@ -323,8 +330,11 @@ def test_invalid_json_and_unsupported_version_and_missing_fields():
     with pytest.raises(SharedConfigurationError, match="JSON"):
         deserialize_shared_configuration(token_for_raw(b"{"))
     raw = shared().to_json_dict()
-    raw["version"] = 999
-    with pytest.raises(SharedConfigurationError, match="Unsupported"):
+    raw["version"] = 3
+    with pytest.raises(
+        SharedConfigurationError,
+        match="Unsupported shared configuration version: 3",
+    ):
         deserialize_shared_configuration(token_for_raw(json.dumps(raw).encode()))
     del raw["scenario"]
     with pytest.raises(SharedConfigurationError):
