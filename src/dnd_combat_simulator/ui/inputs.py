@@ -472,7 +472,10 @@ def _render_managed_resources(
             with card(border=True) if card is not None else nullcontext():
                 id_key = managed_resource_widget_key(resource_id, "id", build_prefix)
                 state[id_key] = resource_id
-                cols = st.columns([3, 2, 2, 1])
+                # Align the icon-only action with the control surfaces rather than
+                # their labels. Streamlit preserves this alignment as columns wrap
+                # or resize at narrower viewport widths.
+                cols = st.columns([3, 2, 2, 1], vertical_alignment="bottom")
             name = cols[0].text_input(
                 "Resource Name",
                 key=managed_resource_widget_key(resource_id, "name", build_prefix),
@@ -514,7 +517,9 @@ def _render_managed_resources(
                 ":material/delete:",
                 key=managed_resource_widget_key(resource_id, "delete", build_prefix),
                 help=f"Delete {name}. Requires confirmation.",
-                type="secondary",
+                # Tertiary keeps the native button semantics, focus treatment,
+                # tooltip, and hover/disabled feedback without drawing a box.
+                type="tertiary",
             ):
                 state[RESOURCE_DELETE_CONFIRMATION_KEY] = resource_id
             if state.get(RESOURCE_DELETE_CONFIRMATION_KEY) == resource_id:
