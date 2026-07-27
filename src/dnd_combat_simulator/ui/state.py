@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from dataclasses import replace
 from secrets import randbelow
 from uuid import uuid4
@@ -94,7 +95,10 @@ def _copied_attack_widget_state(
         suffix = key_text[len(source_prefix_text) :]
         if suffix in ATTACK_WIDGET_TRANSIENT_SUFFIXES:
             continue
-        copied[f"{dest_prefix_text}{suffix}"] = value
+        # Session state can contain collections and configuration objects.  In
+        # particular, resource selections must not be shared with the source
+        # while Streamlit normalizes the newly-created widgets on the next run.
+        copied[f"{dest_prefix_text}{suffix}"] = deepcopy(value)
     return copied
 
 
@@ -435,11 +439,26 @@ def _resource_usage_profile_keys(
             _attack_ids_from_state(state, current_build_prefix)
         ):
             widget_prefix = _state_widget_prefix(current_build_prefix, attack_id)
-            if (
+            uses_directly = (
                 state.get(profile_widget_key(widget_prefix, "resource_enabled"), False)
                 and state.get(profile_widget_key(widget_prefix, "resource_id"))
                 == resource_id
-            ):
+            )
+            uses_for_empowered = state.get(
+                profile_widget_key(widget_prefix, "empowered_resource_id")
+            ) == resource_id and (
+                state.get(
+                    profile_widget_key(widget_prefix, "empowered_spell_enabled"),
+                    False,
+                )
+                or state.get(
+                    profile_widget_key(
+                        widget_prefix, "empowered_matching_rescue_enabled"
+                    ),
+                    False,
+                )
+            )
+            if uses_directly or uses_for_empowered:
                 default_name = _default_attack_name(index)
                 used_by.append(
                     str(
@@ -469,6 +488,11 @@ def _clear_resource_from_profiles(
             ):
                 state[profile_widget_key(widget_prefix, "resource_enabled")] = False
                 state[profile_widget_key(widget_prefix, "resource_id")] = ""
+            if (
+                state.get(profile_widget_key(widget_prefix, "empowered_resource_id"))
+                == resource_id
+            ):
+                state[profile_widget_key(widget_prefix, "empowered_resource_id")] = ""
 
 
 def _resolution_type_label(resolution_type: ResolutionType) -> str:
@@ -607,7 +631,14 @@ def _clone_shared_build_for_destination(
     shared_source: SharedBuildConfiguration, dest_prefix: str
 ) -> SharedBuildConfiguration:
     """Return an independent clone with destination-owned attack identifiers."""
-    serialized_clone = _build_from_json(shared_source.to_json_dict(), dest_prefix)
+    serialized = shared_source.to_json_dict()
+    # Build JSON normally omits legacy build-owned resources because shared
+    # links store them at scenario level.  A build-to-build clone is different:
+    # its cards and resources must be reconstructed as one complete snapshot.
+    serialized["managed_resources"] = [
+        resource.to_json_dict() for resource in shared_source.managed_resources
+    ]
+    serialized_clone = _build_from_json(serialized, dest_prefix)
     id_mapping = {
         profile.attack_id: _new_attack_id(dest_prefix, index)
         for index, profile in enumerate(serialized_clone.attack_profiles)
@@ -624,11 +655,7 @@ def _clone_shared_build_for_destination(
         )
         for profile in serialized_clone.attack_profiles
     )
-    return replace(
-        serialized_clone,
-        attack_profiles=cloned_profiles,
-        managed_resources=shared_source.managed_resources,
-    )
+    return replace(serialized_clone, attack_profiles=cloned_profiles)
 
 
 def clone_build_session_state(
