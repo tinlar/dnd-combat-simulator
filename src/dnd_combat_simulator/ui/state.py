@@ -724,13 +724,12 @@ def hydrate_session_state_from_shared_configuration(
         ("first", configuration.build_a),
         ("second", configuration.build_b),
     ):
+        resources = shared_build.managed_resources or scenario.managed_resources
         ids_key = build_managed_resource_ids_key(build_prefix)
         count_key = build_managed_resource_count_key(build_prefix)
-        session_state[ids_key] = [
-            resource.resource_id for resource in shared_build.managed_resources
-        ]
-        session_state[count_key] = len(shared_build.managed_resources)
-        for resource in shared_build.managed_resources:
+        session_state[ids_key] = [resource.resource_id for resource in resources]
+        session_state[count_key] = len(resources)
+        for resource in resources:
             session_state[
                 managed_resource_widget_key(resource.resource_id, "name", build_prefix)
             ] = resource.name

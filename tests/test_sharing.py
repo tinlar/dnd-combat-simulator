@@ -28,6 +28,9 @@ from dnd_combat_simulator.sharing import (
 from dnd_combat_simulator.simulation import (
     AttackProfile,
     BuildConfig,
+    ManagedResource,
+    ResourceCost,
+    ResourceResetTiming,
     ScenarioConfig,
     TriggerType,
     compare_builds,
@@ -105,6 +108,91 @@ def test_round_trip_default_configuration_and_deterministic_token():
     token = serialize_shared_configuration(config)
     assert deserialize_shared_configuration(token) == config
     assert serialize_shared_configuration(config) == token
+
+
+def test_managed_resources_and_all_profile_references_round_trip_by_build():
+    resources_a = (
+        ManagedResource("sorcery", "Sorcery Points", 7),
+        ManagedResource(
+            "round-charge",
+            "Round Charge",
+            2,
+            ResourceResetTiming.START_OF_ROUND,
+        ),
+    )
+    resources_b = (ManagedResource("sorcery", "Other Build Pool", 3),)
+    shared_a = profile(
+        "Shared consumer",
+        resource_costs=(ResourceCost("sorcery", 2),),
+        empowered_spell_enabled=True,
+        empowered_resource_id="sorcery",
+        empowered_max_dice_rerolled=2,
+    )
+    rescue = profile(
+        "Matching rescue",
+        resource_costs=(ResourceCost("sorcery", 1),),
+        empowered_matching_rescue_enabled=True,
+        empowered_resource_id="sorcery",
+        empowered_max_dice_rerolled=3,
+    )
+    config = shared_configuration_from_configs(
+        compare_enabled=True,
+        scenario=ScenarioConfig(15, 4, 10),
+        seed=7,
+        build_a=BuildConfig(
+            "A",
+            7,
+            "1d8",
+            1,
+            attack_profiles=(shared_a, rescue),
+            managed_resources=resources_a,
+        ),
+        build_b=BuildConfig(
+            "B",
+            7,
+            "1d8",
+            1,
+            attack_profiles=(
+                profile(
+                    "Build B consumer",
+                    resource_costs=(ResourceCost("sorcery", 3),),
+                ),
+            ),
+            managed_resources=resources_b,
+        ),
+    )
+
+    loaded = deserialize_shared_configuration(serialize_shared_configuration(config))
+
+    assert loaded == config
+    assert loaded.build_a.to_build_config().managed_resources == resources_a
+    assert loaded.build_b.to_build_config().managed_resources == resources_b
+    assert [resource.resource_id for resource in loaded.build_a.managed_resources] == [
+        "sorcery",
+        "round-charge",
+    ]
+    profiles = loaded.build_a.attack_profiles
+    assert profiles[0].resource_costs == (ResourceCost("sorcery", 2),)
+    assert profiles[0].empowered_resource_id == "sorcery"
+    assert profiles[0].empowered_max_dice_rerolled == 2
+    assert profiles[1].resource_costs == (ResourceCost("sorcery", 1),)
+    assert profiles[1].empowered_resource_id == "sorcery"
+    assert profiles[1].empowered_max_dice_rerolled == 3
+    assert loaded.build_b.attack_profiles[0].resource_costs == (
+        ResourceCost("sorcery", 3),
+    )
+
+
+def test_legacy_link_without_managed_resources_still_loads():
+    raw = shared().to_json_dict()
+    raw["scenario"].pop("managed_resources", None)
+    raw["build_a"].pop("managed_resources", None)
+    raw["build_b"].pop("managed_resources", None)
+
+    loaded = deserialize_shared_configuration(token_for_raw(json.dumps(raw).encode()))
+
+    assert loaded.build_a.managed_resources == ()
+    assert loaded.build_b.managed_resources == ()
 
 
 def test_round_trip_preserves_comparison_hidden_build_b_profiles_order_and_fields():
@@ -473,7 +561,7 @@ def test_math_defaults_round_trip_and_legacy_default() -> None:
     )
     token = serialize_shared_configuration(config)
     payload = _decode_payload(token)
-    assert payload["version"] == 1
+    assert payload["version"] == 2
     assert payload["build_a"]["math_defaults"] == {
         "ability_modifier": 5,
         "proficiency_bonus": 4,
