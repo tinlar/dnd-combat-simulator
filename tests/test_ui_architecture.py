@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import ast
 import importlib
+import sys
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 UI_MODULES = (
     "constants",
@@ -42,3 +45,54 @@ def test_app_main_remains_available() -> None:
     from dnd_combat_simulator import app
 
     assert callable(app.main)
+
+
+def test_managed_resource_delete_is_bottom_aligned_icon_button(monkeypatch) -> None:
+    from dnd_combat_simulator.ui.inputs import _render_managed_resources
+    from dnd_combat_simulator.ui.widget_keys import build_managed_resource_ids_key
+
+    column_calls = []
+    button_calls = []
+
+    class Column:
+        def text_input(self, _label, **_kwargs):
+            return "Focus"
+
+        def number_input(self, _label, **_kwargs):
+            return 1
+
+        def selectbox(self, _label, **kwargs):
+            return kwargs["options"][0]
+
+        def button(self, label, **kwargs):
+            button_calls.append((label, kwargs))
+            return False
+
+    def columns(spec, **kwargs):
+        column_calls.append((spec, kwargs))
+        return [Column() for _ in spec]
+
+    state = {build_managed_resource_ids_key("first"): ["focus"]}
+    fake_streamlit = SimpleNamespace(
+        session_state=state,
+        expander=lambda *args, **kwargs: nullcontext(),
+        container=lambda *args, **kwargs: nullcontext(),
+        caption=lambda *args, **kwargs: None,
+        columns=columns,
+        button=lambda *args, **kwargs: False,
+    )
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+
+    _render_managed_resources(build_prefix="first")
+
+    assert column_calls == [([3, 2, 2, 1], {"vertical_alignment": "bottom"})]
+    assert button_calls == [
+        (
+            ":material/delete:",
+            {
+                "key": "first-managed-resource-focus-delete",
+                "help": "Delete Focus. Requires confirmation.",
+                "type": "tertiary",
+            },
+        )
+    ]
