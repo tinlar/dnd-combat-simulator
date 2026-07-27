@@ -51,6 +51,17 @@ class SharedConfigurationError(ValueError):
     """Raised when a shared configuration cannot be decoded or validated."""
 
 
+def _validate_shared_configuration_version(version: int) -> None:
+    """Reject schema versions that this application cannot safely interpret."""
+    if version not in (
+        LEGACY_SHARED_CONFIGURATION_VERSION,
+        SHARED_CONFIGURATION_VERSION,
+    ):
+        raise SharedConfigurationError(
+            f"Unsupported shared configuration version: {version}."
+        )
+
+
 @dataclass(frozen=True)
 class SharedAttackProfileConfiguration:
     name: str
@@ -557,13 +568,7 @@ def _append_legacy_damage_modifier(formula: str, modifier: int) -> str:
 def _configuration_from_json(raw: object) -> SharedConfiguration:
     obj = _required_dict(raw, "Shared configuration")
     version = _expect(obj, "version", int, "Shared configuration")
-    if version not in (
-        LEGACY_SHARED_CONFIGURATION_VERSION,
-        SHARED_CONFIGURATION_VERSION,
-    ):
-        raise SharedConfigurationError(
-            f"Unsupported shared configuration version: {version}."
-        )
+    _validate_shared_configuration_version(version)
     scenario_raw = _required_dict(obj.get("scenario"), "scenario")
     scenario_resources = tuple(
         _resource_from_json(resource, f"scenario managed resource {i}")
@@ -595,7 +600,7 @@ def _configuration_from_json(raw: object) -> SharedConfiguration:
         build_a = replace(build_a, managed_resources=())
         build_b = replace(build_b, managed_resources=())
     return SharedConfiguration(
-        version,
+        SHARED_CONFIGURATION_VERSION,
         _expect(obj, "compare_enabled", bool, "Shared configuration"),
         scenario,
         build_a,
@@ -776,13 +781,7 @@ def _resource_cost_from_json(raw: object, ctx: str) -> ResourceCost:
 
 
 def _validate_shared_configuration(config: SharedConfiguration) -> None:
-    if config.version not in (
-        LEGACY_SHARED_CONFIGURATION_VERSION,
-        SHARED_CONFIGURATION_VERSION,
-    ):
-        raise SharedConfigurationError(
-            f"Unsupported shared configuration version: {config.version}."
-        )
+    _validate_shared_configuration_version(config.version)
     scenario = config.scenario
     if (
         scenario.target_armor_class < 1
