@@ -5303,12 +5303,27 @@ def test_bar_charts_label_stack_segments_and_totals() -> None:
         assert spec["layer"][3]["mark"]["color"] == "#FFFFFF"
         assert "stroke" not in spec["layer"][3]["mark"]
         assert spec["layer"][3]["mark"]["fontSize"] == 18
-        for layer_index in (0, 2):
-            y_scale = spec["layer"][layer_index]["encoding"]["y"]["scale"]
+        for layer in spec["layer"]:
+            y_scale = layer["encoding"]["y"]["scale"]
             assert y_scale["domainMin"] == 0
-            assert y_scale["zero"] is True
-            assert "domainMax" not in y_scale
+            assert y_scale["nice"] is False
+            assert y_scale["domainMax"] > 0
+            assert "domain" not in y_scale
             assert "padding" not in y_scale
+        assert all(
+            value >= 0
+            for dataset in spec["datasets"].values()
+            for row in dataset
+            for field, value in row.items()
+            if field in {"Damage per Round contribution", "Average damage per use"}
+        )
+        calculate_expressions = [
+            transform["calculate"]
+            for layer in spec["layer"]
+            for transform in layer.get("transform", [])
+            if "calculate" in transform
+        ]
+        assert all("-" not in expression for expression in calculate_expressions)
         assert spec["padding"]["top"] >= 60
 
 
@@ -5346,12 +5361,61 @@ def test_line_chart_adds_formatted_label_for_every_point() -> None:
     assert spec["layer"][1]["mark"]["strokeWidth"] == 2.5
     assert spec["layer"][2]["mark"]["color"] == "#FFFFFF"
     assert "stroke" not in spec["layer"][2]["mark"]
-    y_scale = spec["layer"][0]["encoding"]["y"]["scale"]
-    assert y_scale["domainMin"] == 0
-    assert y_scale["zero"] is True
-    assert "domainMax" not in y_scale
-    assert "padding" not in y_scale
+    for layer in spec["layer"]:
+        y_scale = layer["encoding"]["y"]["scale"]
+        assert y_scale["domainMin"] == 0
+        assert y_scale["nice"] is False
+        assert y_scale["domainMax"] == 12.345 * 1.10
+        assert "domain" not in y_scale
+        assert "padding" not in y_scale
+    assert all(
+        row["Average total damage"] >= 0
+        for dataset in spec["datasets"].values()
+        for row in dataset
+    )
     assert spec["padding"]["top"] >= 40
+
+
+def test_non_negative_chart_scales_use_positive_fallback_for_zero_data() -> None:
+    from dnd_combat_simulator.ui.results import (
+        _line_chart,
+        _profile_contribution_bar_chart,
+    )
+
+    line_rows = [{"Round": 1, "Average total damage": 0, "Build": "A"}]
+    bar_rows = [
+        {
+            "Profile": "No damage",
+            "Order": 1,
+            "Build": "A",
+            "Damage per Round contribution": 0,
+        }
+    ]
+    charts = [
+        _line_chart(
+            line_rows,
+            x="Round:O",
+            y="Average total damage:Q",
+            color="Build:N",
+        ),
+        _profile_contribution_bar_chart(bar_rows),
+    ]
+
+    for chart in charts:
+        spec = chart.to_dict()
+        for layer in spec["layer"]:
+            scale = layer["encoding"]["y"]["scale"]
+            # These bounds make a negative rendered tick impossible: Vega-Lite
+            # cannot round the fixed lower bound and receives no negative data.
+            assert scale["domainMin"] == 0
+            assert scale["domainMax"] == 1
+            assert scale["nice"] is False
+        assert all(
+            not isinstance(value, (int, float)) or value >= 0
+            for dataset in spec["datasets"].values()
+            for row in dataset
+            for value in row.values()
+        )
 
 
 def test_simulation_running_state_resets_after_exception(monkeypatch) -> None:

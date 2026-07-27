@@ -141,12 +141,18 @@ def _line_chart(data, *, x: str, y: str, color: str):
     import altair as alt
     import pandas as pd
 
+    frame = pd.DataFrame(data)
+    y_field = y.split(":", maxsplit=1)[0]
+    max_value = float(frame[y_field].max()) if not frame.empty else 0.0
+    display_max = max_value * 1.10 if max_value > 0 else 1.0
+    y_scale = alt.Scale(domainMin=0, domainMax=display_max, nice=False)
+
     tooltip = [
         alt.Tooltip(x, title="Round"),
         alt.Tooltip(y, title="Average damage", format=".2f"),
         alt.Tooltip(color, title="Build"),
     ]
-    base = alt.Chart(pd.DataFrame(data)).encode(
+    base = alt.Chart(frame).encode(
         x=alt.X(
             x,
             title="Round number",
@@ -156,14 +162,11 @@ def _line_chart(data, *, x: str, y: str, color: str):
         y=alt.Y(
             y,
             title="Average total damage",
-            # Continuous-scale padding is applied at both ends of the domain and
-            # can therefore put the first tick below zero.  The chart-level top
-            # padding below reserves label room without changing the data domain.
-            scale=alt.Scale(domainMin=0, zero=True, nice=True),
+            scale=y_scale,
         ),
         color=alt.Color(color, title="Build"),
     )
-    line = base.mark_line(point=True).encode(tooltip=tooltip)
+    line = base.mark_line(point=True).encode(y=alt.Y(y, scale=y_scale), tooltip=tooltip)
     label_halo = base.mark_text(
         align="center",
         baseline="bottom",
@@ -175,6 +178,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
         strokeWidth=2.5,
         clip=False,
     ).encode(
+        y=alt.Y(y, scale=y_scale),
         text=alt.Text(y, format=".2f"),
         tooltip=tooltip,
     )
@@ -187,6 +191,7 @@ def _line_chart(data, *, x: str, y: str, color: str):
         fontWeight="bold",
         clip=False,
     ).encode(
+        y=alt.Y(y, scale=y_scale),
         text=alt.Text(y, format=".2f"),
         tooltip=tooltip,
     )
@@ -208,6 +213,10 @@ def _bar_chart_with_value_labels(
     import pandas as pd
 
     frame = pd.DataFrame(data)
+    totals_by_build = frame.groupby("Build", dropna=False)[y_field].sum()
+    max_value = float(totals_by_build.max()) if not totals_by_build.empty else 0.0
+    display_max = max_value * 1.10 if max_value > 0 else 1.0
+    y_scale = alt.Scale(domainMin=0, domainMax=display_max, nice=False)
     stack = (
         alt.Chart(frame)
         .transform_stack(
@@ -229,10 +238,11 @@ def _bar_chart_with_value_labels(
         y=alt.Y(
             "stack_end:Q",
             title=y_title,
-            scale=alt.Scale(domainMin=0, zero=True, nice=True),
+            scale=y_scale,
         ),
     )
     bars = base.mark_bar().encode(
+        y=alt.Y("stack_end:Q", title=y_title, scale=y_scale),
         y2=alt.Y2("stack_start:Q"),
         color=alt.Color(
             f"{x_field}:N",
@@ -255,7 +265,7 @@ def _bar_chart_with_value_labels(
             clip=True,
         )
         .encode(
-            y=alt.Y("stack_midpoint:Q"),
+            y=alt.Y("stack_midpoint:Q", scale=y_scale),
             text=alt.Text(f"{y_field}:Q", format=label_format),
             tooltip=tooltip,
         )
@@ -269,10 +279,7 @@ def _bar_chart_with_value_labels(
             y=alt.Y(
                 "total:Q",
                 title=y_title,
-                # Keep the data domain zero-based.  The unclipped total labels
-                # render into the chart's top padding instead of expanding both
-                # ends of this continuous scale.
-                scale=alt.Scale(domainMin=0, zero=True, nice=True),
+                scale=y_scale,
             ),
             text=alt.Text("total:Q", format=label_format),
         )
