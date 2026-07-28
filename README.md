@@ -1,6 +1,6 @@
 # DnD Combat Simulator
 
-Initial project setup for a browser-based DnD combat simulator built with Python 3.12 and Streamlit.
+Compare D&D combat builds using configurable attacks, resources, triggers, feats, and detailed simulation results.
 
 ## Combat rules
 
